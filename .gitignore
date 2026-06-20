@@ -1,0 +1,27 @@
+# compiled output
+/dist
+/node_modules
+/build
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea
+.vscode
+
+# Tests
+/coverage
+.nyc_output
+
+# Secrets — NEVER commit. Service-role key lives here.
+.env
+.env.*
+!.env.example
+
+# Supabase local
+supabase/.branches
+supabase/.temp

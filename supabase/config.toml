@@ -1,0 +1,13 @@
+# Supabase CLI config. Link to the project with:
+#   supabase link --project-ref <project-ref>
+# Apply migrations:
+#   supabase db push          # apply to linked project
+#   supabase db reset         # rebuild local DB from migrations/ + seed.sql
+project_id = "ssms-api"
+
+[db]
+# Local dev DB port (used by `supabase start`). Adjust if it clashes.
+port = 54322
+
+[db.migrations]
+schema_paths = []

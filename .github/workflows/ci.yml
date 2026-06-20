@@ -1,0 +1,110 @@
+name: CI
+
+# T10.2 — CI pipeline (TESTING_STRATEGY.md § CI; backend-architecture.md §6).
+# Gates every PR on: lint, a clean-from-scratch migration apply on Postgres 16
+# (+ optional schema-drift check), and the test suite with an 80% coverage floor
+# (enforced by jest `coverageThreshold` in package.json).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint + test (coverage ≥ 80%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Run eslint WITHOUT --fix so CI fails on any lint error or warning
+      # (the `npm run lint` script auto-fixes, which would mask problems in CI).
+      - name: Lint
+        run: npx eslint "{src,test}/**/*.ts" --max-warnings 0
+
+      - name: Build
+        run: npm run build
+
+      - name: Test with coverage
+        run: npm run test:cov
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  migrations:
+    name: Migrations apply cleanly (Postgres 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ssms_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ssms_ci
+    steps:
+      - uses: actions/checkout@v4
+
+      # Apply every migration from scratch, in lexical order, failing on the
+      # first error — proves the migrations directory builds an empty DB cleanly
+      # (the `supabase db reset` equivalent, no Docker stack required).
+      - name: Apply migrations from scratch
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            echo "── applying $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Apply seed (idempotent)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/seed.sql
+
+      # Optional schema-drift gate against the linked Supabase project. Runs only
+      # when the maintainer secrets are present (skipped on fork PRs), so the
+      # required checks above never depend on secrets.
+      - name: Schema-drift check (linked project)
+        if: ${{ secrets.SUPABASE_DB_URL != '' }}
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin supabase
+          diff="$(supabase db diff --db-url "$SUPABASE_DB_URL" --schema public)"
+          if [ -n "$diff" ]; then
+            echo "::error::Schema drift detected between migrations and the linked DB:"
+            echo "$diff"
+            exit 1
+          fi
+          echo "No schema drift."

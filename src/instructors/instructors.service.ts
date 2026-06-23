@@ -128,8 +128,15 @@ export class InstructorsService {
    */
   private buildPatch(dto: UpdateInstructorProfileDto): InstructorProfilePatch {
     const patch: InstructorProfilePatch = {};
+    // A key counts as "present" only when it carries a real value. The global
+    // ValidationPipe transforms the body into a class instance, which (per TS
+    // class-field semantics) materializes every declared optional field as an
+    // own property set to `undefined` — so `hasOwnProperty` alone would treat
+    // omitted fields as present and clobber them (e.g. wiping profile_photo_url
+    // to null on every profile save). JSON has no `undefined`, so an explicit
+    // `null` (intentional clear) is still correctly detected as present.
     const has = (key: keyof UpdateInstructorProfileDto): boolean =>
-      Boolean(Object.prototype.hasOwnProperty.call(dto, key));
+      dto[key] !== undefined;
 
     if (has('displayNameEn')) patch.display_name_en = dto.displayNameEn;
     if (has('displayNameZh')) patch.display_name_zh = dto.displayNameZh ?? null;

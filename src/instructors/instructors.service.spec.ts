@@ -9,6 +9,7 @@ import {
   TrainerStatusRow,
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
+import { plainToInstance } from 'class-transformer';
 import { TranslationQueuePort } from './translation-queue.port';
 
 function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
@@ -176,6 +177,25 @@ describe('InstructorsService', () => {
         bio_en: 'hi',
       });
       expect(repo.lastPatch).not.toHaveProperty('email');
+    });
+
+    it('does NOT clobber omitted fields when given a transformed DTO instance', async () => {
+      // Reproduces the photo-wipe bug: the ValidationPipe turns the body into a
+      // class instance whose declared optional fields exist as own properties
+      // set to `undefined`. Only the field actually sent must end up in the
+      // patch — profile_photo_url (never sent here) must be left untouched.
+      const dto = plainToInstance(UpdateInstructorProfileDto, {
+        displayNameEn: 'Jane',
+      });
+      await service.updateOwnProfile('auth-1', dto);
+      expect(repo.lastPatch).toEqual({ display_name_en: 'Jane' });
+      expect(repo.lastPatch).not.toHaveProperty('profile_photo_url');
+    });
+
+    it('treats an explicit null as present (intentional clear)', async () => {
+      const dto = { displayNameZh: null } as UpdateInstructorProfileDto;
+      await service.updateOwnProfile('auth-1', dto);
+      expect(repo.lastPatch).toEqual({ display_name_zh: null });
     });
 
     it('treats an empty relation array as "clear" (key present)', async () => {

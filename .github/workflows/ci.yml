@@ -78,6 +78,11 @@ jobs:
       # Apply every migration from scratch, in lexical order, failing on the
       # first error — proves the migrations directory builds an empty DB cleanly
       # (the `supabase db reset` equivalent, no Docker stack required).
+      # Bare Postgres has no Supabase `auth` schema/roles, which the migrations
+      # reference. Apply the CI-only shim first (never applied to real projects).
+      - name: Apply Supabase CI shim
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/000_supabase_shim.sql
+
       - name: Apply migrations from scratch
         run: |
           set -euo pipefail

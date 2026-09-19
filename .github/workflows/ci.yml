@@ -94,11 +94,14 @@ jobs:
       # when the maintainer secrets are present (skipped on fork PRs), so the
       # required checks above never depend on secrets.
       - name: Schema-drift check (linked project)
-        if: ${{ secrets.SUPABASE_DB_URL != '' }}
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "SUPABASE_DB_URL not set — skipping schema-drift check."
+            exit 0
+          fi
           curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
             | tar -xz -C /usr/local/bin supabase
           diff="$(supabase db diff --db-url "$SUPABASE_DB_URL" --schema public)"

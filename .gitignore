@@ -25,3 +25,6 @@ npm-debug.log*
 # Supabase local
 supabase/.branches
 supabase/.temp
+
+# lean-ctx local agent cache (machine-local; never committed)
+.lean-ctx/

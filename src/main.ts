@@ -24,6 +24,9 @@ async function bootstrap() {
     Logger.log('CORS disabled (no CORS_ALLOWED_ORIGINS set)', 'Bootstrap');
   }
 
-  await app.listen(process.env.PORT ?? 3000);
+  // Bind to 0.0.0.0, not the default loopback-ish behaviour — Fly (and any
+  // container platform) routes to the machine's external interface, so a
+  // localhost-only bind looks like "app not responding" to health checks.
+  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 void bootstrap();

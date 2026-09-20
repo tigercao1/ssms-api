@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InstructorsModule } from '../instructors/instructors.module';
+import { MailerModule } from '../mailer/mailer.module';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -14,11 +15,13 @@ import { AdminService } from './admin.service';
  * the AdminRepository, which is bound behind an abstract token so tests can
  * swap an in-memory fake.
  *
- * Audit (T6.8) and notification (T8.1) wiring are added later by the
- * integration agent; this module deliberately carries no dependency on them.
+ * MailerModule is imported for T8.1: on approve / reject / deactivate the
+ * service fires a fire-and-forget notification via MailerService. Failures are
+ * audited by the mailer as `notification.failure` and MUST NOT roll back the
+ * admin action.
  */
 @Module({
-  imports: [InstructorsModule],
+  imports: [InstructorsModule, MailerModule],
   controllers: [AdminController],
   providers: [
     AdminService,

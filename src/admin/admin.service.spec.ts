@@ -8,6 +8,7 @@ import { InstructorsService } from '../instructors/instructors.service';
 import { AuditService } from '../audit/audit.service';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
+import { MailerService } from '../mailer/mailer.service';
 import {
   AdminInstructorRow,
   ListInstructorsFilter,
@@ -48,6 +49,9 @@ describe('AdminService', () => {
   };
   const instructors = { updateProfileById: jest.fn() };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const mailer = {
+    sendInstructorNotification: jest.fn().mockResolvedValue('sent'),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -57,6 +61,7 @@ describe('AdminService', () => {
         { provide: AdminRepository, useValue: repo },
         { provide: InstructorsService, useValue: instructors },
         { provide: AuditService, useValue: audit },
+        { provide: MailerService, useValue: mailer },
       ],
     }).compile();
 
@@ -123,6 +128,16 @@ describe('AdminService', () => {
           actor: { userId: 'admin-1', role: 'admin' },
         }),
       );
+      // T8.1 — approval notification fires with instructor's language + name.
+      expect(mailer.sendInstructorNotification).toHaveBeenCalledTimes(1);
+      expect(mailer.sendInstructorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'approved',
+          to: 'jane@example.com',
+          language: 'en',
+          reason: null,
+        }),
+      );
     });
 
     it('rejects a pending instructor', async () => {
@@ -140,6 +155,10 @@ describe('AdminService', () => {
           metadata: { from: 'pending', to: 'rejected', reason: 'why' },
         }),
       );
+      // T8.1 — rejection notification carries the reason.
+      expect(mailer.sendInstructorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'rejected', reason: 'why' }),
+      );
     });
 
     it('refuses an invalid transition from a non-pending state (400)', async () => {
@@ -150,8 +169,9 @@ describe('AdminService', () => {
         service.setApprovalStatus('id', 'rejected'),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(repo.updateInstructor).not.toHaveBeenCalled();
-      // No state change ⇒ no audit row.
+      // No state change ⇒ no audit row and no notification.
       expect(audit.record).not.toHaveBeenCalled();
+      expect(mailer.sendInstructorNotification).not.toHaveBeenCalled();
     });
 
     it('throws 404 for an unknown instructor', async () => {
@@ -183,6 +203,18 @@ describe('AdminService', () => {
           actor: { userId: 'admin-1', role: 'admin' },
         }),
       );
+      // T8.1 — deactivation notifies.
+      expect(mailer.sendInstructorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'deactivated' }),
+      );
+    });
+
+    it('does NOT notify on (re)activation', async () => {
+      // was inactive, now active — silent admin correction.
+      repo.findInstructorById.mockResolvedValue(makeRow({ is_active: false }));
+      repo.updateInstructor.mockResolvedValue(makeRow({ is_active: true }));
+      await service.setActive('id', true);
+      expect(mailer.sendInstructorNotification).not.toHaveBeenCalled();
     });
 
     it('throws 404 for an unknown instructor', async () => {

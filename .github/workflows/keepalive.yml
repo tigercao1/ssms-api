@@ -1,0 +1,33 @@
+# Keep-alive — prevents the Supabase Free project pausing, and doubles as
+# uptime monitoring.
+#
+# Supabase Free pauses a project after ~7 days of low DB activity. The API's
+# /health endpoint runs a real `count` against `instructors`, so a ping counts
+# as genuine database activity rather than just an HTTP hit.
+#
+# The job fails if `db` stops reporting `ok`, so a red run here is a real
+# production signal, not just a missed ping.
+
+name: Keep-alive
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # every 6 hours
+  workflow_dispatch:
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping /health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 30 "${{ secrets.API_HEALTH_URL }}")"
+          echo "$body"
+          echo "$body" | grep -q '"db":"ok"'   || { echo "::error::db not ok";   exit 1; }
+          echo "$body" | grep -q '"jwks":"ok"' || { echo "::error::jwks not ok"; exit 1; }

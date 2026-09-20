@@ -1,0 +1,81 @@
+# Daily logical backup — the Supabase Free tier has no automated backups.
+#
+# Dumps the public schema to a GitHub Actions artifact (30-day retention).
+# This is a substitute for real PITR, not an equivalent: artifacts expire, and
+# a dump is only as good as the restore you have actually tested.
+#
+# Postgres version note: the production project runs PG 17. Ubuntu's default
+# `postgresql-client` package is 16, and pg_dump refuses to dump a server newer
+# than itself ("server version mismatch"). We therefore install the client from
+# the PGDG apt repository and pin version 17.
+
+name: DB backup
+
+on:
+  schedule:
+    - cron: '0 9 * * *' # 09:00 UTC daily
+  workflow_dispatch:
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: pg_dump public schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install postgresql-client-17 (PGDG)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          # Ubuntu images ship pg_wrapper at /usr/bin/pg_dump which resolves
+          # to the pre-installed 16, not the 17 we just added. Call the
+          # versioned binary directly to avoid the wrapper.
+          PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump
+          test -x "$PG_DUMP"
+          "$PG_DUMP" --version
+          echo "PG_DUMP=$PG_DUMP" >> "$GITHUB_ENV"
+
+      - name: pg_dump
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::PROD_DATABASE_URL secret is not set"
+            exit 1
+          fi
+          out="ssms-prod-$(date -u +%Y%m%d).sql"
+          # --clean --if-exists: emits DROP TABLE / DROP FUNCTION / DROP SCHEMA
+          # IF EXISTS ahead of each CREATE, so the artifact restores cleanly
+          # into a database that already has a `public` schema (which every
+          # PostgreSQL >= 15 database ships with). Without this, restore aborts
+          # on line ~26 with `schema "public" already exists`.
+          "$PG_DUMP" "$DATABASE_URL" \
+            --schema=public --no-owner --no-privileges \
+            --clean --if-exists \
+            -f "$out"
+          # A dump that produced almost nothing means the connection or schema
+          # is wrong — fail loudly rather than archiving an empty "backup".
+          bytes=$(wc -c < "$out")
+          echo "wrote $out ($bytes bytes)"
+          if [ "$bytes" -lt 10000 ]; then
+            echo "::error::dump is suspiciously small ($bytes bytes)"
+            exit 1
+          fi
+          grep -q 'CREATE TABLE public.instructors' "$out" \
+            || { echo "::error::dump is missing the instructors table"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: ssms-prod-*.sql
+          retention-days: 30

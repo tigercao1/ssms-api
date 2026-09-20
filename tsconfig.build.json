@@ -1,4 +1,8 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // `scripts/` must be excluded: including it makes TypeScript infer rootDir as
+  // the repo root, so output lands at dist/src/main.js instead of dist/main.js
+  // — which silently breaks `npm run start:prod` (`node dist/main`).
+  // scripts/bootstrap-admin.ts is run directly via ts-node, never compiled.
+  "exclude": ["node_modules", "test", "dist", "scripts", "**/*spec.ts"]
 }

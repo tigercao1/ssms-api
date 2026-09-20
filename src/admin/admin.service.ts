@@ -9,6 +9,11 @@ import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instr
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import { MailerService } from '../mailer/mailer.service';
+import type {
+  InstructorNotificationContext,
+  NotificationType,
+} from '../mailer/mailer.types';
 import { AdminRepository } from './admin.repository';
 import {
   AdminInstructorRecord,
@@ -43,7 +48,38 @@ export class AdminService {
      */
     private readonly instructors: InstructorsService,
     private readonly audit: AuditService,
+    /**
+     * T8.1 — transactional email on approve / reject / deactivate. The mailer
+     * is fire-and-forget: it resolves (never rejects) to a `SendOutcome` and a
+     * failure never rolls back the admin transition or bubbles to the client.
+     */
+    private readonly mailer: MailerService,
   ) {}
+
+  /**
+   * Fires an instructor notification without letting a mailer failure surface
+   * to the caller. The mailer already retries + audits `notification.failure`;
+   * this wrapper adds the fire-and-forget guarantee at the call site.
+   */
+  private notifyInstructor(
+    row: AdminInstructorRow,
+    type: NotificationType,
+    extra: Partial<InstructorNotificationContext> = {},
+  ): void {
+    void this.mailer
+      .sendInstructorNotification({
+        to: row.email,
+        type,
+        language: row.preferred_language,
+        displayName: row.display_name_en,
+        instructorId: row.id,
+        ...extra,
+      })
+      .catch(() => {
+        // MailerService is contracted never to reject, but be defensive so a
+        // regression there can never break an admin action.
+      });
+  }
 
   /** T6.3 — list every instructor, optionally narrowed by status / active. */
   async listInstructors(
@@ -109,6 +145,10 @@ export class AdminService {
       },
     });
 
+    // T8.1 — fire-and-forget notification (approved / rejected). Failures are
+    // audited by the mailer and MUST NOT roll back the transition.
+    this.notifyInstructor(updated, status, { reason: reason ?? null });
+
     return this.toRecord(updated);
   }
 
@@ -143,6 +183,12 @@ export class AdminService {
       targetId: id,
       metadata: { from: current.is_active, to: isActive },
     });
+
+    // T8.1 — notify only on deactivation. Reactivation is a silent admin
+    // correction (the instructor may not know they were ever deactivated).
+    if (!isActive && current.is_active) {
+      this.notifyInstructor(updated, 'deactivated');
+    }
 
     return this.toRecord(updated);
   }

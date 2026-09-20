@@ -1,0 +1,45 @@
+# Deploy to Fly.io — gated on green CI.
+#
+# Deliberately NOT `on: push`. The generated `fly launch` workflow deployed on
+# every push to main with no gate, so a commit that failed lint/tests/migrations
+# would still ship to production while CI failed alongside it, ignored.
+#
+# `workflow_run` fires only after the CI workflow *completes*, and the job's
+# `if:` requires that it completed successfully AND was on main.
+
+name: Fly Deploy
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  # Manual escape hatch (e.g. re-deploying an unchanged commit after a secrets
+  # rotation). Use sparingly — it bypasses the gate by design.
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy app
+    runs-on: ubuntu-latest
+    # For workflow_run, require CI success. For workflow_dispatch there is no
+    # triggering run, so `conclusion` is empty — allow it through explicitly.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      # workflow_run checks out the default branch by default, NOT the commit
+      # that passed CI. Pin to the exact SHA so we deploy what was tested.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

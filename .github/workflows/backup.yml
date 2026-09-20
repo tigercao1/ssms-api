@@ -36,7 +36,13 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17
-          pg_dump --version
+          # Ubuntu images ship pg_wrapper at /usr/bin/pg_dump which resolves
+          # to the pre-installed 16, not the 17 we just added. Call the
+          # versioned binary directly to avoid the wrapper.
+          PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump
+          test -x "$PG_DUMP"
+          "$PG_DUMP" --version
+          echo "PG_DUMP=$PG_DUMP" >> "$GITHUB_ENV"
 
       - name: pg_dump
         env:
@@ -48,7 +54,7 @@ jobs:
             exit 1
           fi
           out="ssms-prod-$(date -u +%Y%m%d).sql"
-          pg_dump "$DATABASE_URL" \
+          "$PG_DUMP" "$DATABASE_URL" \
             --schema=public --no-owner --no-privileges \
             -f "$out"
           # A dump that produced almost nothing means the connection or schema

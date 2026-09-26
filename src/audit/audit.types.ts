@@ -15,6 +15,8 @@ export const AUDIT_ACTIONS = {
   // Emitted by PATCH /admin/users/:id/role (AdminService.setUserRole).
   userRoleChange: 'user.role_change',
   userInvite: 'user.invite',
+  referenceUpdate: 'reference.update',
+  referenceDelete: 'reference.delete',
   apiKeyCreate: 'api_key.create',
   apiKeyRevoke: 'api_key.revoke',
   apiKeyRotate: 'api_key.rotate',
@@ -42,7 +44,7 @@ export interface AuditActor {
 export interface AuditEntry {
   action: AuditAction;
   actor?: AuditActor | null;
-  targetType?: 'instructor' | 'user' | 'api_key' | null;
+  targetType?: 'instructor' | 'user' | 'api_key' | 'reference' | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;
 }

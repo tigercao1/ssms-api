@@ -11,6 +11,8 @@ import {
   AuthUserRole,
   CreateReferenceInput,
   ListInstructorsFilter,
+  ReferenceJunction,
+  ReferencePatch,
   ReferenceRow,
   UserRole,
 } from './admin.types';
@@ -43,6 +45,24 @@ export abstract class AdminRepository {
     table: string,
     input: CreateReferenceInput,
   ): Promise<ReferenceRow>;
+  abstract listReferences(table: string): Promise<ReferenceRow[]>;
+  abstract findReferenceById(
+    table: string,
+    id: string,
+  ): Promise<ReferenceRow | null>;
+  abstract updateReference(
+    table: string,
+    id: string,
+    patch: ReferencePatch,
+  ): Promise<ReferenceRow | null>;
+  abstract countReferenceLinks(
+    junction: ReferenceJunction,
+    id: string,
+  ): Promise<number>;
+  abstract deleteReference(
+    table: string,
+    id: string,
+  ): Promise<ReferenceRow | null>;
   /** Read an auth user's current `app_metadata.role` (Supabase Admin API). */
   abstract getUserRole(authUserId: string): Promise<AuthUserRole>;
   /** Set an auth user's `app_metadata.role`, preserving other metadata keys. */
@@ -138,6 +158,90 @@ export class SupabaseAdminRepository extends AdminRepository {
       throw error;
     }
     return data;
+  }
+
+  async listReferences(table: string): Promise<ReferenceRow[]> {
+    const { data, error } = await this.supabase
+      .from(table)
+      .select(REFERENCE_COLUMNS)
+      .order('sort_order', { ascending: true })
+      .order('key', { ascending: true });
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to list ${table}: ${error.message}`,
+      );
+    }
+    return data ?? [];
+  }
+
+  async findReferenceById(
+    table: string,
+    id: string,
+  ): Promise<ReferenceRow | null> {
+    const { data, error } = await this.supabase
+      .from(table)
+      .select(REFERENCE_COLUMNS)
+      .eq('id', id)
+      .maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to load ${table} row: ${error.message}`,
+      );
+    }
+    return data ?? null;
+  }
+
+  async updateReference(
+    table: string,
+    id: string,
+    patch: ReferencePatch,
+  ): Promise<ReferenceRow | null> {
+    const { data, error } = await this.supabase
+      .from(table)
+      .update(patch)
+      .eq('id', id)
+      .select(REFERENCE_COLUMNS)
+      .maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to update ${table} row: ${error.message}`,
+      );
+    }
+    return data ?? null;
+  }
+
+  async countReferenceLinks(
+    junction: ReferenceJunction,
+    id: string,
+  ): Promise<number> {
+    const { count, error } = await this.supabase
+      .from(junction.table)
+      .select('instructor_id', { count: 'exact', head: true })
+      .eq(junction.column, id);
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to count ${junction.table} links: ${error.message}`,
+      );
+    }
+    return count ?? 0;
+  }
+
+  async deleteReference(
+    table: string,
+    id: string,
+  ): Promise<ReferenceRow | null> {
+    const { data, error } = await this.supabase
+      .from(table)
+      .delete()
+      .eq('id', id)
+      .select(REFERENCE_COLUMNS)
+      .maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to delete ${table} row: ${error.message}`,
+      );
+    }
+    return data ?? null;
   }
 
   async getUserRole(authUserId: string): Promise<AuthUserRole> {

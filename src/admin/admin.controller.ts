@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -20,12 +21,15 @@ import type { InstructorProfile } from '../instructors/instructors.types';
 import { AdminService } from './admin.service';
 import {
   AdminInstructorRecord,
+  DeletedReferenceRecord,
   REFERENCE_SLUG_TO_TABLE,
   ReferenceRecord,
   ReferenceSlug,
+  ReferenceUsage,
   UserRoleRecord,
 } from './admin.types';
 import { CreateReferenceDto } from './dto/create-reference.dto';
+import { UpdateReferenceDto } from './dto/update-reference.dto';
 import { ListInstructorsQueryDto } from './dto/list-instructors-query.dto';
 import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateApprovalStatusDto } from './dto/update-approval-status.dto';
@@ -35,6 +39,16 @@ import { Roles, RolesGuard } from './roles.guard';
 /** Builds the audit actor from the verified admin JWT + request user-agent. */
 function toActor(user: SupabaseJwtPayload, userAgent?: string): AuditActor {
   return { userId: user.sub, role: 'admin', userAgent: userAgent ?? null };
+}
+
+function parseReferenceSlug(type: string): ReferenceSlug {
+  if (!(type in REFERENCE_SLUG_TO_TABLE)) {
+    throw new BadRequestException(
+      `Unknown reference type '${type}'. Expected one of: ` +
+        Object.keys(REFERENCE_SLUG_TO_TABLE).join(', '),
+    );
+  }
+  return type as ReferenceSlug;
 }
 
 /**
@@ -127,5 +141,48 @@ export class AdminController {
       );
     }
     return this.admin.addReference(type as ReferenceSlug, dto);
+  }
+
+  @Get('reference/:type')
+  listReferences(@Param('type') type: string): Promise<ReferenceRecord[]> {
+    return this.admin.listReferences(parseReferenceSlug(type));
+  }
+
+  @Patch('reference/:type/:id')
+  updateReference(
+    @Param('type') type: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateReferenceDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<ReferenceRecord> {
+    return this.admin.updateReference(
+      parseReferenceSlug(type),
+      id,
+      dto,
+      toActor(user, userAgent),
+    );
+  }
+
+  @Get('reference/:type/:id/usage')
+  getReferenceUsage(
+    @Param('type') type: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<ReferenceUsage> {
+    return this.admin.getReferenceUsage(parseReferenceSlug(type), id);
+  }
+
+  @Delete('reference/:type/:id')
+  deleteReference(
+    @Param('type') type: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<DeletedReferenceRecord> {
+    return this.admin.deleteReference(
+      parseReferenceSlug(type),
+      id,
+      toActor(user, userAgent),
+    );
   }
 }

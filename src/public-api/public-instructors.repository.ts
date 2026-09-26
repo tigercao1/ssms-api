@@ -21,7 +21,7 @@ export interface ListPage {
 
 /** Public columns only — internal columns never selected here. */
 const PUBLIC_INSTRUCTOR_COLUMNS =
-  'id, display_name_en, display_name_zh, bio_en, bio_zh, profile_photo_url';
+  'id, display_name_en, display_name_zh, bio_en, bio_zh, profile_photo_url, min_student_age';
 
 /**
  * Read boundary for the Public API. Abstract so tests can bind an in-memory

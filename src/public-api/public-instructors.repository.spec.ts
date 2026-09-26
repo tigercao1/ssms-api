@@ -104,6 +104,9 @@ describe('SupabasePublicInstructorsRepository', () => {
       const result = await repo.findVisibleById('a');
 
       expect(result).toEqual({ id: 'a' });
+      expect(builder.select).toHaveBeenCalledWith(
+        expect.stringContaining('min_student_age'),
+      );
       expect(calls.eq).toEqual([
         ['id', 'a'],
         ['approval_status', 'approved'],

@@ -18,7 +18,7 @@ import {
 const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
-  'is_active, inserted_at, updated_at';
+  'is_active, min_student_age, inserted_at, updated_at';
 
 const REFERENCE_COLUMNS = 'id, key, name, sort_order, is_active';
 

@@ -62,6 +62,17 @@ describe('SupabaseInstructorsRepository', () => {
     });
   });
 
+  it('findByAuthUserId selects min_student_age', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: { id: 'inst-1' }, error: null };
+    const select = jest.spyOn(QueryBuilder.prototype, 'select');
+    await repo.findByAuthUserId('auth-1');
+    expect(select).toHaveBeenCalledWith(
+      expect.stringContaining('min_student_age'),
+    );
+    select.mockRestore();
+  });
+
   it('findByAuthUserId returns null when absent', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: null, error: null };

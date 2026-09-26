@@ -147,6 +147,7 @@ export class InstructorsService {
       patch.preferred_language = dto.preferredLanguage;
     if (has('profilePhotoUrl'))
       patch.profile_photo_url = dto.profilePhotoUrl ?? null;
+    if (has('minStudentAge')) patch.min_student_age = dto.minStudentAge;
     if (has('teachingLocationIds'))
       patch.teaching_location_ids = dto.teachingLocationIds ?? [];
     if (has('languageIds')) patch.language_ids = dto.languageIds ?? [];
@@ -216,6 +217,7 @@ export class InstructorsService {
       approvalStatus: row.approval_status,
       isActive: row.is_active,
       profilePhotoUrl: row.profile_photo_url,
+      minStudentAge: row.min_student_age,
       teachingLocations,
       languages,
       courseLevelsOffered,

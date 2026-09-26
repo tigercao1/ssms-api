@@ -86,6 +86,15 @@ describe('SupabaseAdminRepository', () => {
     ]);
   });
 
+  it('listInstructors selects min_student_age', async () => {
+    const stub = makeSupabaseStub({ data: [] });
+    const repo = await build(stub);
+
+    await repo.listInstructors({});
+
+    expect(String(stub.calls.select?.[0])).toContain('min_student_age');
+  });
+
   it('listInstructors narrows by status and isActive', async () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);

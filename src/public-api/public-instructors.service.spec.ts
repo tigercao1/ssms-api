@@ -95,6 +95,7 @@ function row(
     bio_en: null,
     bio_zh: null,
     profile_photo_url: null,
+    min_student_age: 5,
     ...over,
   };
 }
@@ -184,6 +185,7 @@ describe('PublicInstructorsService', () => {
               bio_en: 'Hello',
               bio_zh: '你好',
               profile_photo_url: 'https://img/a.png',
+              min_student_age: 10,
             }),
           ],
         },
@@ -195,6 +197,7 @@ describe('PublicInstructorsService', () => {
       expect(dto.display_name).toBe('简');
       expect(dto.bio).toBe('你好');
       expect(dto.profile_photo_url).toBe('https://img/a.png');
+      expect(dto.min_student_age).toBe(10);
       // No internal fields leak through.
       expect(dto).not.toHaveProperty('email');
       expect(dto).not.toHaveProperty('approval_status');
@@ -327,6 +330,7 @@ describe('PublicInstructorsService', () => {
       const dto = await service.getById('a', 'en');
       expect(dto.id).toBe('a');
       expect(dto.display_name).toBe('Jane');
+      expect(dto.min_student_age).toBe(5);
     });
 
     it('throws 404 for a non-visible / unknown id', async () => {

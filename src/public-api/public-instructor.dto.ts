@@ -41,6 +41,7 @@ export interface PublicInstructorDto {
   display_name: string;
   bio: string | null;
   profile_photo_url: string | null;
+  min_student_age: number;
   teaching_locations: PublicRefItem[];
   languages: PublicRefItem[];
   course_levels_offered: PublicRefItem[];

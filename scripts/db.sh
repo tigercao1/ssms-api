@@ -89,7 +89,8 @@ case "$cmd" in
       select relname, relrowsecurity, relforcerowsecurity
       from pg_class
       where relname in ('instructors','instructor_certifications',
-                        'instructor_trainer_status','audit_log','api_keys')
+                        'instructor_trainer_status','audit_log','api_keys',
+                        'instructor_sync_queue','instructor_shopify_state')
       order by relname;"
     ;;
   dump)

@@ -42,6 +42,7 @@ class FakeRepo extends InstructorsRepository {
   patchError: unknown = null;
   certs: CertificationRow[] = [];
   trainers: TrainerStatusRow[] = [];
+  photoVersionBumps: string[] = [];
 
   findByAuthUserId(authUserId: string): Promise<InstructorRow | null> {
     return Promise.resolve(
@@ -95,6 +96,10 @@ class FakeRepo extends InstructorsRepository {
       if (patch.display_name_en !== undefined)
         row.display_name_en = patch.display_name_en;
     }
+    return Promise.resolve();
+  }
+  bumpProfilePhotoVersion(id: string): Promise<void> {
+    this.photoVersionBumps.push(id);
     return Promise.resolve();
   }
 }
@@ -340,6 +345,13 @@ describe('InstructorsService', () => {
         'CSIA Level 2 Trainer',
         null,
       ]);
+    });
+  });
+
+  describe('bumpProfilePhotoVersion', () => {
+    it('bumps the photo version for the given instructor', async () => {
+      await service.bumpProfilePhotoVersion('inst-1');
+      expect(repo.photoVersionBumps).toEqual(['inst-1']);
     });
   });
 

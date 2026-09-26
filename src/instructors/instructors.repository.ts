@@ -39,6 +39,7 @@ export abstract class InstructorsRepository {
     instructorId: string,
     patch: InstructorProfilePatch,
   ): Promise<void>;
+  abstract bumpProfilePhotoVersion(instructorId: string): Promise<void>;
 }
 
 const INSTRUCTOR_COLUMNS =
@@ -203,6 +204,17 @@ export class SupabaseInstructorsRepository extends InstructorsRepository {
     });
     if (error) {
       throw error;
+    }
+  }
+
+  async bumpProfilePhotoVersion(instructorId: string): Promise<void> {
+    const { error } = await this.supabase.rpc('bump_profile_photo_version', {
+      p_instructor_id: instructorId,
+    });
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to bump profile photo version: ${error.message}`,
+      );
     }
   }
 }

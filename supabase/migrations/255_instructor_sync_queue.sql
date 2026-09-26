@@ -44,6 +44,9 @@ create trigger instructors_set_profile_photo_version
   when (old.profile_photo_url is distinct from new.profile_photo_url)
   execute function public.set_profile_photo_version();
 
+revoke all on function public.set_profile_photo_version()
+  from public, anon, authenticated;
+
 create or replace function public.bump_profile_photo_version(
   p_instructor_id uuid
 ) returns void
@@ -55,7 +58,9 @@ as $$
 $$;
 
 revoke all on function public.bump_profile_photo_version(uuid)
-  from anon, authenticated;
+  from public, anon, authenticated;
+grant execute on function public.bump_profile_photo_version(uuid)
+  to service_role;
 
 create or replace function public.enqueue_instructor_sync()
 returns trigger
@@ -75,6 +80,9 @@ begin
   return null;
 end;
 $$;
+
+revoke all on function public.enqueue_instructor_sync()
+  from public, anon, authenticated;
 
 drop trigger if exists instructors_enqueue_sync on instructors;
 create trigger instructors_enqueue_sync
@@ -127,6 +135,9 @@ begin
   return null;
 end;
 $$;
+
+revoke all on function public.enqueue_instructor_sync_for_reference()
+  from public, anon, authenticated;
 
 drop trigger if exists teaching_locations_enqueue_sync on teaching_locations;
 create trigger teaching_locations_enqueue_sync

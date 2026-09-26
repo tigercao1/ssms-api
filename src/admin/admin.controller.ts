@@ -20,6 +20,7 @@ import type { InstructorProfile } from '../instructors/instructors.types';
 import { AdminService } from './admin.service';
 import {
   AdminInstructorRecord,
+  CurrentUserRoleRecord,
   REFERENCE_SLUG_TO_TABLE,
   ReferenceRecord,
   ReferenceSlug,
@@ -67,6 +68,13 @@ export class AdminController {
     return this.admin.getInstructor(id);
   }
 
+  @Get('instructors/:id/profile')
+  getInstructorProfile(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<InstructorProfile> {
+    return this.admin.getInstructorProfile(id);
+  }
+
   /** T6.4 — approve / reject a pending instructor (valid transitions only). */
   @Patch('instructors/:id/approval')
   setApproval(
@@ -92,6 +100,13 @@ export class AdminController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<AdminInstructorRecord> {
     return this.admin.setActive(id, dto.isActive, toActor(user, userAgent));
+  }
+
+  @Get('users/:id/role')
+  getUserRole(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<CurrentUserRoleRecord> {
+    return this.admin.getUserRole(id);
   }
 
   /** v1.x — promote / demote a user (sets server-only `app_metadata.role`). */

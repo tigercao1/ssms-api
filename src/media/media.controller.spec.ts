@@ -52,6 +52,7 @@ describe('MediaController', () => {
     expect(instructors.getOrCreateForUser).toHaveBeenCalledWith(
       'auth-1',
       'a@b.com',
+      { firstName: undefined, lastName: undefined, nickname: null },
     );
     expect(media.createAvatarUploadUrl).toHaveBeenCalledWith(
       'inst-1',

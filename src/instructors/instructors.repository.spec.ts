@@ -93,22 +93,24 @@ describe('SupabaseInstructorsRepository', () => {
   it('insertPending returns the created row', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: { id: 'inst-3' }, error: null };
-    await expect(repo.insertPending('auth-3', 'a@b.com')).resolves.toEqual({
-      id: 'inst-3',
-    });
+    await expect(
+      repo.insertPending('auth-3', 'a@b.com', 'Jane', 'Doe', 'JD'),
+    ).resolves.toEqual({ id: 'inst-3' });
   });
 
   it('insertPending returns null on unique-violation (race)', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: null, error: { code: '23505', message: 'dup' } };
-    await expect(repo.insertPending('auth-3', 'a@b.com')).resolves.toBeNull();
+    await expect(
+      repo.insertPending('auth-3', 'a@b.com', 'Jane', 'Doe', null),
+    ).resolves.toBeNull();
   });
 
   it('insertPending throws on other errors', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: null, error: { code: '23502', message: 'notnull' } };
     await expect(
-      repo.insertPending('auth-3', 'a@b.com'),
+      repo.insertPending('auth-3', 'a@b.com', 'Jane', 'Doe', null),
     ).rejects.toBeInstanceOf(InternalServerErrorException);
   });
 

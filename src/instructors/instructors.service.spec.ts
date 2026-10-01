@@ -17,6 +17,9 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     id: 'inst-1',
     auth_user_id: 'auth-1',
     email: 'a@b.com',
+    first_name: '',
+    last_name: '',
+    nickname: null,
     display_name_en: '',
     display_name_zh: null,
     bio_en: null,
@@ -54,12 +57,18 @@ class FakeRepo extends InstructorsRepository {
   insertPending(
     authUserId: string,
     email: string,
+    firstName: string,
+    lastName: string,
+    nickname: string | null,
   ): Promise<InstructorRow | null> {
     this.insertCalls += 1;
     const row = makeRow({
       id: `inst-${this.rows.length + 1}`,
       auth_user_id: authUserId,
       email,
+      first_name: firstName,
+      last_name: lastName,
+      nickname,
     });
     this.rows.push(row);
     return Promise.resolve(row);
@@ -133,8 +142,30 @@ describe('InstructorsService', () => {
       expect(profile.approvalStatus).toBe('pending');
       expect(profile.email).toBe('a@b.com');
       expect(profile.displayNameEn).toBe('');
+      expect(profile.firstName).toBe('');
+      expect(profile.lastName).toBe('');
+      expect(profile.nickname).toBeNull();
       expect(profile.teachingLocations).toEqual([]);
       expect(profile.certifications).toEqual([]);
+    });
+
+    it('stores the sign-up names (nickname optional) on the created row', async () => {
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com', {
+        firstName: 'Jane',
+        lastName: 'Doe',
+        nickname: 'JD',
+      });
+      expect(profile.firstName).toBe('Jane');
+      expect(profile.lastName).toBe('Doe');
+      expect(profile.nickname).toBe('JD');
+    });
+
+    it('defaults nickname to null when omitted', async () => {
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com', {
+        firstName: 'Jane',
+        lastName: 'Doe',
+      });
+      expect(profile.nickname).toBeNull();
     });
 
     it('is idempotent — subsequent calls return the same row without re-inserting', async () => {

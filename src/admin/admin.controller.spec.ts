@@ -1,10 +1,11 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import type { AdminInstructorRecord } from './admin.types';
-import { RolesGuard } from './roles.guard';
+import { ROLES_KEY, RolesGuard } from './roles.guard';
 
 const fakeRecord = { id: 'inst-1' } as AdminInstructorRecord;
 
@@ -13,6 +14,8 @@ describe('AdminController', () => {
   const service = {
     listInstructors: jest.fn().mockResolvedValue([fakeRecord]),
     getInstructor: jest.fn().mockResolvedValue(fakeRecord),
+    getInstructorProfile: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+    getUserRole: jest.fn().mockResolvedValue({ role: 'instructor' }),
     setApprovalStatus: jest.fn().mockResolvedValue(fakeRecord),
     setActive: jest.fn().mockResolvedValue(fakeRecord),
     setUserRole: jest
@@ -54,6 +57,42 @@ describe('AdminController', () => {
   it('GET /admin/instructors/:id → getInstructor(id)', async () => {
     await expect(controller.getInstructor('inst-1')).resolves.toBe(fakeRecord);
     expect(service.getInstructor).toHaveBeenCalledWith('inst-1');
+  });
+
+  it('GET /admin/instructors/:id/profile → getInstructorProfile(id)', async () => {
+    await expect(controller.getInstructorProfile('inst-1')).resolves.toEqual({
+      id: 'inst-1',
+    });
+    expect(service.getInstructorProfile).toHaveBeenCalledWith('inst-1');
+  });
+
+  it('GET /admin/instructors/:id/profile → propagates 404', async () => {
+    service.getInstructorProfile.mockRejectedValueOnce(new NotFoundException());
+    await expect(
+      controller.getInstructorProfile('ghost'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('GET /admin/users/:id/role → getUserRole(id)', async () => {
+    await expect(controller.getUserRole('user-9')).resolves.toEqual({
+      role: 'instructor',
+    });
+    expect(service.getUserRole).toHaveBeenCalledWith('user-9');
+  });
+
+  it('GET /admin/users/:id/role → propagates 404', async () => {
+    service.getUserRole.mockRejectedValueOnce(new NotFoundException());
+    await expect(controller.getUserRole('ghost')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('is guarded by SupabaseAuthGuard + RolesGuard requiring admin', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, AdminController)).toEqual([
+      SupabaseAuthGuard,
+      RolesGuard,
+    ]);
+    expect(Reflect.getMetadata(ROLES_KEY, AdminController)).toEqual(['admin']);
   });
 
   const adminUser = {

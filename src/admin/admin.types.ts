@@ -16,6 +16,10 @@ export interface AuthUserRole {
   role: UserRole | null;
 }
 
+export interface CurrentUserRoleRecord {
+  role: UserRole;
+}
+
 /** Result of a role change returned to the admin caller. */
 export interface UserRoleRecord {
   userId: string;

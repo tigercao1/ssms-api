@@ -52,7 +52,10 @@ describe('AdminService', () => {
     getUserRole: jest.fn(),
     setUserRole: jest.fn(),
   };
-  const instructors = { updateProfileById: jest.fn() };
+  const instructors = {
+    updateProfileById: jest.fn(),
+    getProfileById: jest.fn(),
+  };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const mailer = {
     sendInstructorNotification: jest.fn().mockResolvedValue('sent'),
@@ -225,6 +228,48 @@ describe('AdminService', () => {
     it('throws 404 for an unknown instructor', async () => {
       repo.findInstructorById.mockResolvedValue(null);
       await expect(service.setActive('id', true)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('getInstructorProfile', () => {
+    it('returns the rich profile built by InstructorsService', async () => {
+      const profile = { id: 'id', certifications: [], trainerStatus: [] };
+      instructors.getProfileById.mockResolvedValue(profile);
+
+      await expect(service.getInstructorProfile('id')).resolves.toBe(profile);
+      expect(instructors.getProfileById).toHaveBeenCalledWith('id');
+    });
+
+    it('propagates 404 for an unknown instructor', async () => {
+      instructors.getProfileById.mockRejectedValue(new NotFoundException());
+      await expect(
+        service.getInstructorProfile('ghost'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('getUserRole', () => {
+    it.each(['admin', 'instructor'] as const)(
+      'returns the stored %s role',
+      async (role) => {
+        repo.getUserRole.mockResolvedValue({ found: true, role });
+        await expect(service.getUserRole('user-9')).resolves.toEqual({ role });
+        expect(repo.getUserRole).toHaveBeenCalledWith('user-9');
+      },
+    );
+
+    it('maps a missing role claim to instructor', async () => {
+      repo.getUserRole.mockResolvedValue({ found: true, role: null });
+      await expect(service.getUserRole('user-9')).resolves.toEqual({
+        role: 'instructor',
+      });
+    });
+
+    it('throws 404 for an unknown user', async () => {
+      repo.getUserRole.mockResolvedValue({ found: false, role: null });
+      await expect(service.getUserRole('ghost')).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });

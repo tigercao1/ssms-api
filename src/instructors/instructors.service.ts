@@ -70,6 +70,14 @@ export class InstructorsService {
     return this.buildProfile(raced);
   }
 
+  async getProfileById(instructorId: string): Promise<InstructorProfile> {
+    const row = await this.repo.findById(instructorId);
+    if (!row) {
+      throw new NotFoundException('Instructor profile not found');
+    }
+    return this.buildProfile(row);
+  }
+
   /**
    * T3.2 — Update the caller's own profile (resolved via JWT subject). Editable
    * in every approval_status; email is not part of the DTO so it stays immutable.

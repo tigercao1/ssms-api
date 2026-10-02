@@ -19,6 +19,7 @@ import {
   AdminInstructorRecord,
   AdminInstructorRow,
   CreateReferenceInput,
+  CurrentUserRoleRecord,
   ListInstructorsFilter,
   REFERENCE_SLUG_TO_TABLE,
   ReferenceRecord,
@@ -96,6 +97,18 @@ export class AdminService {
       throw new NotFoundException('Instructor not found');
     }
     return this.toRecord(row);
+  }
+
+  async getInstructorProfile(id: string): Promise<InstructorProfile> {
+    return this.instructors.getProfileById(id);
+  }
+
+  async getUserRole(authUserId: string): Promise<CurrentUserRoleRecord> {
+    const current = await this.repo.getUserRole(authUserId);
+    if (!current.found) {
+      throw new NotFoundException('User not found');
+    }
+    return { role: current.role ?? 'instructor' };
   }
 
   /**

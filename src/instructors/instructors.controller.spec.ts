@@ -35,11 +35,15 @@ describe('InstructorsController', () => {
 
   it('GET /me/instructor → getOrCreateForUser(sub, email, names)', async () => {
     await expect(controller.getMe(user)).resolves.toBe(fakeProfile);
-    expect(service.getOrCreateForUser).toHaveBeenCalledWith('auth-1', 'a@b.com', {
-      firstName: undefined,
-      lastName: undefined,
-      nickname: null,
-    });
+    expect(service.getOrCreateForUser).toHaveBeenCalledWith(
+      'auth-1',
+      'a@b.com',
+      {
+        firstName: undefined,
+        lastName: undefined,
+        nickname: null,
+      },
+    );
   });
 
   it('GET passes empty string when token has no email claim', async () => {
@@ -58,11 +62,15 @@ describe('InstructorsController', () => {
       user_metadata: { first_name: 'Jane', last_name: 'Doe', nickname: 'JD' },
     } as SupabaseJwtPayload;
     await controller.getMe(withNames);
-    expect(service.getOrCreateForUser).toHaveBeenCalledWith('auth-1', 'a@b.com', {
-      firstName: 'Jane',
-      lastName: 'Doe',
-      nickname: 'JD',
-    });
+    expect(service.getOrCreateForUser).toHaveBeenCalledWith(
+      'auth-1',
+      'a@b.com',
+      {
+        firstName: 'Jane',
+        lastName: 'Doe',
+        nickname: 'JD',
+      },
+    );
   });
 
   it('PATCH /me/instructor → updateOwnProfile(sub, dto)', async () => {

@@ -16,7 +16,8 @@ export interface SignupNames {
 export function signupNamesFromJwt(user: SupabaseJwtPayload): SignupNames {
   const meta = user.user_metadata ?? {};
   return {
-    firstName: typeof meta.first_name === 'string' ? meta.first_name : undefined,
+    firstName:
+      typeof meta.first_name === 'string' ? meta.first_name : undefined,
     lastName: typeof meta.last_name === 'string' ? meta.last_name : undefined,
     nickname: typeof meta.nickname === 'string' ? meta.nickname : null,
   };

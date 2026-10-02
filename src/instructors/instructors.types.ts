@@ -20,6 +20,7 @@ export interface InstructorRow {
   bio_zh_machine_translated: boolean;
   date_of_birth: string | null;
   profile_photo_url: string | null;
+  min_student_age: number;
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
   is_active: boolean;
@@ -65,6 +66,7 @@ export interface InstructorProfile {
   approvalStatus: ApprovalStatus;
   isActive: boolean;
   profilePhotoUrl: string | null;
+  minStudentAge: number;
   teachingLocations: Array<{ id: string; key: string; name: string }>;
   languages: Array<{ id: string; key: string; name: string }>;
   courseLevelsOffered: Array<{ id: string; key: string; name: string }>;
@@ -99,6 +101,7 @@ export interface InstructorProfilePatch {
   date_of_birth?: string | null;
   preferred_language?: PreferredLanguage;
   profile_photo_url?: string | null;
+  min_student_age?: number;
   teaching_location_ids?: string[];
   language_ids?: string[];
   course_level_offered_ids?: string[];

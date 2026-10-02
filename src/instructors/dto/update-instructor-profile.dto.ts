@@ -2,11 +2,15 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { CertificationDto } from './certification.dto';
@@ -67,6 +71,12 @@ export class UpdateInstructorProfileDto {
   @IsOptional()
   @IsString()
   profilePhotoUrl?: string | null;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0)
+  @Max(18)
+  minStudentAge?: number;
 
   @IsOptional()
   @IsArray()

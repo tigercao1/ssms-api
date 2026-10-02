@@ -108,6 +108,17 @@ describe('UpdateInstructorProfileDto validation (T3.2)', () => {
     );
   });
 
+  it.each([0, 5, 18])('accepts minStudentAge %p', (minStudentAge) => {
+    expect(validate({ minStudentAge })).toHaveLength(0);
+  });
+
+  it.each([-1, 19, 2.5, null, '5'])(
+    'rejects minStudentAge %p',
+    (minStudentAge) => {
+      expect(errorsOn({ minStudentAge })).toContain('minStudentAge');
+    },
+  );
+
   it('rejects an invalid cert org/track', () => {
     expect(
       validate({

@@ -417,6 +417,7 @@ export class AdminService {
       bioZh: row.bio_zh,
       dateOfBirth: row.date_of_birth,
       profilePhotoUrl: row.profile_photo_url,
+      minStudentAge: row.min_student_age,
       preferredLanguage: row.preferred_language,
       approvalStatus: row.approval_status,
       isActive: row.is_active,

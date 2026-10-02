@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InstructorsService } from '../instructors/instructors.service';
+import { InstructorsRepository } from '../instructors/instructors.repository';
+import { TRANSLATION_QUEUE } from '../instructors/translation-queue.port';
 import { AuditService } from '../audit/audit.service';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -26,6 +28,7 @@ function makeRow(over: Partial<AdminInstructorRow> = {}): AdminInstructorRow {
     bio_zh: null,
     date_of_birth: null,
     profile_photo_url: null,
+    min_student_age: 5,
     preferred_language: 'en',
     approval_status: 'pending',
     is_active: true,
@@ -354,6 +357,64 @@ describe('AdminService', () => {
 
       expect(instructors.updateProfileById).toHaveBeenCalledWith('id', dto);
       expect(result).toBe(profile);
+    });
+  });
+
+  describe('minStudentAge', () => {
+    it('is returned on the admin record', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ min_student_age: 9 }),
+      );
+      const record = await service.getInstructor('id');
+      expect(record.minStudentAge).toBe(9);
+    });
+
+    it('is persisted by the admin profile PATCH', async () => {
+      const stored = {
+        ...makeRow(),
+        bio_en_machine_translated: false,
+        bio_zh_machine_translated: false,
+      };
+      const instructorsRepo = {
+        findById: jest.fn(() => Promise.resolve({ ...stored })),
+        applyProfilePatch: jest.fn(
+          (_id: string, patch: { min_student_age?: number }) => {
+            if (patch.min_student_age !== undefined) {
+              stored.min_student_age = patch.min_student_age;
+            }
+            return Promise.resolve();
+          },
+        ),
+        getTeachingLocations: jest.fn().mockResolvedValue([]),
+        getLanguages: jest.fn().mockResolvedValue([]),
+        getCourseLevels: jest.fn().mockResolvedValue([]),
+        getCertifications: jest.fn().mockResolvedValue([]),
+        getTrainerStatus: jest.fn().mockResolvedValue([]),
+      };
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          AdminService,
+          InstructorsService,
+          { provide: InstructorsRepository, useValue: instructorsRepo },
+          {
+            provide: TRANSLATION_QUEUE,
+            useValue: { enqueueForProfile: jest.fn() },
+          },
+          { provide: AdminRepository, useValue: repo },
+          { provide: AuditService, useValue: audit },
+          { provide: MailerService, useValue: mailer },
+        ],
+      }).compile();
+
+      const profile = await moduleRef
+        .get(AdminService)
+        .updateProfile(stored.id, { minStudentAge: 16 });
+
+      expect(instructorsRepo.applyProfilePatch).toHaveBeenCalledWith(
+        stored.id,
+        { min_student_age: 16 },
+      );
+      expect(profile.minStudentAge).toBe(16);
     });
   });
 

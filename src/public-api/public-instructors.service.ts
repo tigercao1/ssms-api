@@ -141,6 +141,7 @@ export class PublicInstructorsService {
       ),
       bio: pickLocalizedNullable(locale, row.bio_en, row.bio_zh),
       profile_photo_url: row.profile_photo_url,
+      min_student_age: row.min_student_age,
       teaching_locations: toRefItems(locationsBy.get(row.id)),
       languages: toRefItems(languagesBy.get(row.id)),
       course_levels_offered: toRefItems(courseLevelsBy.get(row.id)),

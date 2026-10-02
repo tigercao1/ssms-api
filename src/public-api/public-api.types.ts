@@ -40,6 +40,7 @@ export interface PublicInstructorRow {
   bio_en: string | null;
   bio_zh: string | null;
   profile_photo_url: string | null;
+  min_student_age: number;
 }
 
 /** A linked reference row joined for a given instructor. */

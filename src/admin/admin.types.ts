@@ -40,6 +40,7 @@ export interface AdminInstructorRow {
   bio_zh: string | null;
   date_of_birth: string | null;
   profile_photo_url: string | null;
+  min_student_age: number;
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
   is_active: boolean;
@@ -58,6 +59,7 @@ export interface AdminInstructorRecord {
   bioZh: string | null;
   dateOfBirth: string | null;
   profilePhotoUrl: string | null;
+  minStudentAge: number;
   preferredLanguage: PreferredLanguage;
   approvalStatus: ApprovalStatus;
   isActive: boolean;

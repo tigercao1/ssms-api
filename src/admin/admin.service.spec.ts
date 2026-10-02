@@ -44,10 +44,18 @@ describe('AdminService', () => {
     findInstructorById: jest.fn(),
     updateInstructor: jest.fn(),
     insertReference: jest.fn(),
+    listReferences: jest.fn(),
+    findReferenceById: jest.fn(),
+    updateReference: jest.fn(),
+    countReferenceLinks: jest.fn(),
+    deleteReference: jest.fn(),
     getUserRole: jest.fn(),
     setUserRole: jest.fn(),
   };
-  const instructors = { updateProfileById: jest.fn() };
+  const instructors = {
+    updateProfileById: jest.fn(),
+    getProfileById: jest.fn(),
+  };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const mailer = {
     sendInstructorNotification: jest.fn().mockResolvedValue('sent'),
@@ -225,6 +233,48 @@ describe('AdminService', () => {
     });
   });
 
+  describe('getInstructorProfile', () => {
+    it('returns the rich profile built by InstructorsService', async () => {
+      const profile = { id: 'id', certifications: [], trainerStatus: [] };
+      instructors.getProfileById.mockResolvedValue(profile);
+
+      await expect(service.getInstructorProfile('id')).resolves.toBe(profile);
+      expect(instructors.getProfileById).toHaveBeenCalledWith('id');
+    });
+
+    it('propagates 404 for an unknown instructor', async () => {
+      instructors.getProfileById.mockRejectedValue(new NotFoundException());
+      await expect(
+        service.getInstructorProfile('ghost'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('getUserRole', () => {
+    it.each(['admin', 'instructor'] as const)(
+      'returns the stored %s role',
+      async (role) => {
+        repo.getUserRole.mockResolvedValue({ found: true, role });
+        await expect(service.getUserRole('user-9')).resolves.toEqual({ role });
+        expect(repo.getUserRole).toHaveBeenCalledWith('user-9');
+      },
+    );
+
+    it('maps a missing role claim to instructor', async () => {
+      repo.getUserRole.mockResolvedValue({ found: true, role: null });
+      await expect(service.getUserRole('user-9')).resolves.toEqual({
+        role: 'instructor',
+      });
+    });
+
+    it('throws 404 for an unknown user', async () => {
+      repo.getUserRole.mockResolvedValue({ found: false, role: null });
+      await expect(service.getUserRole('ghost')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('setUserRole (v1.x)', () => {
     it('promotes a user and writes exactly one user.role_change audit row', async () => {
       repo.getUserRole.mockResolvedValue({ found: true, role: 'instructor' });
@@ -346,6 +396,226 @@ describe('AdminService', () => {
           name: 'English',
         }),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('reference management', () => {
+    const refId = '33333333-3333-4333-8333-333333333333';
+    const actor = { userId: 'admin-1', role: 'admin' as const };
+    const location: ReferenceRow = {
+      id: refId,
+      key: 'location.whistler',
+      name: 'Whistler',
+      sort_order: 1,
+      is_active: true,
+    };
+
+    it('lists every row of the mapped table, inactive included', async () => {
+      repo.listReferences.mockResolvedValue([
+        location,
+        { ...location, id: 'r2', key: 'location.old', is_active: false },
+      ]);
+
+      const result = await service.listReferences('teaching-locations');
+
+      expect(repo.listReferences).toHaveBeenCalledWith('teaching_locations');
+      expect(result).toEqual([
+        {
+          id: refId,
+          key: 'location.whistler',
+          name: 'Whistler',
+          sortOrder: 1,
+          isActive: true,
+        },
+        {
+          id: 'r2',
+          key: 'location.old',
+          name: 'Whistler',
+          sortOrder: 1,
+          isActive: false,
+        },
+      ]);
+    });
+
+    it('deactivates a row and audits table, key and the change', async () => {
+      repo.findReferenceById.mockResolvedValue(location);
+      repo.updateReference.mockResolvedValue({
+        ...location,
+        is_active: false,
+      });
+
+      const result = await service.updateReference(
+        'teaching-locations',
+        refId,
+        { isActive: false },
+        actor,
+      );
+
+      expect(repo.updateReference).toHaveBeenCalledWith(
+        'teaching_locations',
+        refId,
+        { is_active: false },
+      );
+      expect(result.isActive).toBe(false);
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record).toHaveBeenCalledWith({
+        action: 'reference.update',
+        actor: { userId: 'admin-1', role: 'admin' },
+        targetType: 'reference',
+        targetId: refId,
+        metadata: {
+          table: 'teaching_locations',
+          key: 'location.whistler',
+          from: { is_active: true },
+          to: { is_active: false },
+        },
+      });
+    });
+
+    it('renames and re-sorts without touching the key', async () => {
+      repo.findReferenceById.mockResolvedValue(location);
+      repo.updateReference.mockResolvedValue({
+        ...location,
+        name: 'Whistler Blackcomb',
+        sort_order: 3,
+      });
+
+      const input = {
+        name: 'Whistler Blackcomb',
+        sortOrder: 3,
+        key: 'location.x',
+      };
+      const result = await service.updateReference(
+        'teaching-locations',
+        refId,
+        input,
+      );
+
+      expect(repo.updateReference).toHaveBeenCalledWith(
+        'teaching_locations',
+        refId,
+        { name: 'Whistler Blackcomb', sort_order: 3 },
+      );
+      expect(result.key).toBe('location.whistler');
+    });
+
+    it('rejects an empty patch (400) without writing', async () => {
+      await expect(
+        service.updateReference('languages', refId, {}),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.updateReference).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when updating an unknown id', async () => {
+      repo.findReferenceById.mockResolvedValue(null);
+      await expect(
+        service.updateReference('languages', refId, { isActive: true }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.updateReference).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the row disappears before the update lands', async () => {
+      repo.findReferenceById.mockResolvedValue(location);
+      repo.updateReference.mockResolvedValue(null);
+      await expect(
+        service.updateReference('languages', refId, { isActive: true }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('counts instructors linked through the matching junction', async () => {
+      repo.findReferenceById.mockResolvedValue(location);
+      repo.countReferenceLinks.mockResolvedValue(4);
+
+      const result = await service.getReferenceUsage(
+        'exam-preparations',
+        refId,
+      );
+
+      expect(repo.findReferenceById).toHaveBeenCalledWith(
+        'exam_preparations',
+        refId,
+      );
+      expect(repo.countReferenceLinks).toHaveBeenCalledWith(
+        {
+          table: 'instructors_exam_preparations',
+          column: 'exam_preparation_id',
+        },
+        refId,
+      );
+      expect(result).toEqual({ instructorCount: 4 });
+    });
+
+    it('returns 404 for usage of an unknown id', async () => {
+      repo.findReferenceById.mockResolvedValue(null);
+      await expect(
+        service.getReferenceUsage('languages', refId),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.countReferenceLinks).not.toHaveBeenCalled();
+    });
+
+    it('hard-deletes a row and audits the removed link count', async () => {
+      repo.findReferenceById.mockResolvedValue(location);
+      repo.countReferenceLinks.mockResolvedValue(2);
+      repo.deleteReference.mockResolvedValue(location);
+
+      const result = await service.deleteReference(
+        'teaching-locations',
+        refId,
+        actor,
+      );
+
+      expect(repo.countReferenceLinks).toHaveBeenCalledWith(
+        {
+          table: 'instructors_teaching_locations',
+          column: 'teaching_location_id',
+        },
+        refId,
+      );
+      expect(repo.deleteReference).toHaveBeenCalledWith(
+        'teaching_locations',
+        refId,
+      );
+      expect(result).toEqual({
+        id: refId,
+        key: 'location.whistler',
+        name: 'Whistler',
+        sortOrder: 1,
+        isActive: true,
+        removedLinkCount: 2,
+      });
+      expect(audit.record).toHaveBeenCalledWith({
+        action: 'reference.delete',
+        actor: { userId: 'admin-1', role: 'admin' },
+        targetType: 'reference',
+        targetId: refId,
+        metadata: {
+          table: 'teaching_locations',
+          key: 'location.whistler',
+          name: 'Whistler',
+          removedLinkCount: 2,
+        },
+      });
+    });
+
+    it('returns 404 when deleting an unknown id', async () => {
+      repo.findReferenceById.mockResolvedValue(null);
+      await expect(
+        service.deleteReference('languages', refId),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.deleteReference).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the row is already gone at delete time', async () => {
+      repo.findReferenceById.mockResolvedValue(location);
+      repo.countReferenceLinks.mockResolvedValue(0);
+      repo.deleteReference.mockResolvedValue(null);
+      await expect(
+        service.deleteReference('languages', refId),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(audit.record).not.toHaveBeenCalled();
     });
   });
 });

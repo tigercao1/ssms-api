@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { InstructorsModule } from '../instructors/instructors.module';
 import { MailerModule } from '../mailer/mailer.module';
+import { MediaModule } from '../media/media.module';
+import { AdminMediaController } from './admin-media.controller';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -21,8 +23,8 @@ import { AdminService } from './admin.service';
  * admin action.
  */
 @Module({
-  imports: [InstructorsModule, MailerModule],
-  controllers: [AdminController],
+  imports: [InstructorsModule, MailerModule, MediaModule],
+  controllers: [AdminController, AdminMediaController],
   providers: [
     AdminService,
     { provide: AdminRepository, useClass: SupabaseAdminRepository },

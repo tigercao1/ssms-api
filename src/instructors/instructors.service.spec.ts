@@ -160,6 +160,58 @@ describe('InstructorsService', () => {
     });
   });
 
+  describe('getProfileById', () => {
+    it('returns the rich profile with relations, certifications and trainer status', async () => {
+      repo.rows.push(makeRow({ id: 'inst-1', display_name_en: 'Jane' }));
+      repo.certs = [
+        {
+          org: 'csia',
+          track: 'regular',
+          level: 2,
+          is_partial: false,
+          partial_components: [],
+          achieved_on: null,
+        },
+      ];
+      repo.trainers = [
+        {
+          discipline: 'ski',
+          rookie_session_completed: true,
+          trainer_exam_passed: true,
+          trainer_level: 1,
+        },
+      ];
+
+      const profile = await service.getProfileById('inst-1');
+
+      expect(profile).toEqual(
+        expect.objectContaining({
+          id: 'inst-1',
+          displayNameEn: 'Jane',
+          teachingLocations: [],
+          languages: [],
+          courseLevelsOffered: [],
+        }),
+      );
+      expect(profile.certifications).toEqual([
+        expect.objectContaining({
+          org: 'csia',
+          level: 2,
+          display: 'CSIA Level 2',
+        }),
+      ]);
+      expect(profile.trainerStatus).toEqual([
+        expect.objectContaining({ discipline: 'ski', trainerLevel: 1 }),
+      ]);
+    });
+
+    it('throws NotFound for an unknown id', async () => {
+      await expect(service.getProfileById('ghost')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('updateOwnProfile / updateProfileById (T3.2/T3.4)', () => {
     beforeEach(() => {
       repo.rows.push(makeRow({ id: 'inst-1', auth_user_id: 'auth-1' }));

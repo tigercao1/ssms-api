@@ -10,6 +10,7 @@ import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
  */
 function makeSupabaseStub(result: {
   data?: unknown;
+  count?: number | null;
   error?: { message: string; code?: string } | null;
 }) {
   const calls: {
@@ -19,10 +20,12 @@ function makeSupabaseStub(result: {
     order: unknown[][];
     update?: unknown;
     insert?: unknown;
+    delete?: boolean;
   } = { eq: [], order: [] };
 
   const resolved = {
     data: result.data ?? null,
+    count: result.count ?? null,
     error: result.error ?? null,
   };
 
@@ -45,6 +48,10 @@ function makeSupabaseStub(result: {
   });
   builder.insert = jest.fn((v: unknown) => {
     calls.insert = v;
+    return builder;
+  });
+  builder.delete = jest.fn(() => {
+    calls.delete = true;
     return builder;
   });
   builder.maybeSingle = jest.fn(() => Promise.resolve(resolved));
@@ -168,5 +175,149 @@ describe('SupabaseAdminRepository', () => {
         isActive: true,
       }),
     ).rejects.toMatchObject({ code: '23505' });
+  });
+
+  const refRow = {
+    id: 'r1',
+    key: 'location.whistler',
+    name: 'Whistler',
+    sort_order: 1,
+    is_active: false,
+  };
+
+  it('listReferences reads every row (no is_active filter) in public order', async () => {
+    const stub = makeSupabaseStub({ data: [refRow] });
+    const repo = await build(stub);
+
+    const result = await repo.listReferences('teaching_locations');
+
+    expect(stub.calls.from).toBe('teaching_locations');
+    expect(stub.calls.eq).toEqual([]);
+    expect(stub.calls.order).toEqual([
+      ['sort_order', { ascending: true }],
+      ['key', { ascending: true }],
+    ]);
+    expect(result).toEqual([refRow]);
+  });
+
+  it('listReferences returns [] when Supabase yields no data', async () => {
+    const stub = makeSupabaseStub({ data: null });
+    const repo = await build(stub);
+    await expect(repo.listReferences('languages')).resolves.toEqual([]);
+  });
+
+  it('findReferenceById returns the row or null', async () => {
+    const found = makeSupabaseStub({ data: refRow });
+    await expect(
+      (await build(found)).findReferenceById('languages', 'r1'),
+    ).resolves.toEqual(refRow);
+    expect(found.calls.eq).toEqual([['id', 'r1']]);
+
+    const missing = makeSupabaseStub({ data: null });
+    await expect(
+      (await build(missing)).findReferenceById('languages', 'r1'),
+    ).resolves.toBeNull();
+  });
+
+  it('updateReference sends only the patch columns and returns the row', async () => {
+    const stub = makeSupabaseStub({ data: refRow });
+    const repo = await build(stub);
+
+    const result = await repo.updateReference('languages', 'r1', {
+      is_active: false,
+    });
+
+    expect(stub.calls.from).toBe('languages');
+    expect(stub.calls.update).toEqual({ is_active: false });
+    expect(stub.calls.eq).toEqual([['id', 'r1']]);
+    expect(result).toEqual(refRow);
+  });
+
+  it('updateReference returns null for an unknown id', async () => {
+    const stub = makeSupabaseStub({ data: null });
+    const repo = await build(stub);
+    await expect(
+      repo.updateReference('languages', 'nope', { name: 'x' }),
+    ).resolves.toBeNull();
+  });
+
+  it('countReferenceLinks counts junction rows for the reference id', async () => {
+    const stub = makeSupabaseStub({ count: 7 });
+    const repo = await build(stub);
+
+    const result = await repo.countReferenceLinks(
+      { table: 'instructors_languages', column: 'language_id' },
+      'r1',
+    );
+
+    expect(stub.calls.from).toBe('instructors_languages');
+    expect(stub.calls.select).toEqual([
+      'instructor_id',
+      { count: 'exact', head: true },
+    ]);
+    expect(stub.calls.eq).toEqual([['language_id', 'r1']]);
+    expect(result).toBe(7);
+  });
+
+  it('countReferenceLinks treats a null count as 0', async () => {
+    const stub = makeSupabaseStub({ count: null });
+    const repo = await build(stub);
+    await expect(
+      repo.countReferenceLinks(
+        { table: 'instructors_languages', column: 'language_id' },
+        'r1',
+      ),
+    ).resolves.toBe(0);
+  });
+
+  it('deleteReference deletes by id and returns the removed row', async () => {
+    const stub = makeSupabaseStub({ data: refRow });
+    const repo = await build(stub);
+
+    const result = await repo.deleteReference('teaching_locations', 'r1');
+
+    expect(stub.calls.from).toBe('teaching_locations');
+    expect(stub.calls.delete).toBe(true);
+    expect(stub.calls.eq).toEqual([['id', 'r1']]);
+    expect(result).toEqual(refRow);
+  });
+
+  it('deleteReference returns null for an unknown id', async () => {
+    const stub = makeSupabaseStub({ data: null });
+    const repo = await build(stub);
+    await expect(
+      repo.deleteReference('teaching_locations', 'nope'),
+    ).resolves.toBeNull();
+  });
+
+  it.each([
+    ['listReferences', (r: AdminRepository) => r.listReferences('languages')],
+    [
+      'findReferenceById',
+      (r: AdminRepository) => r.findReferenceById('languages', 'r1'),
+    ],
+    [
+      'updateReference',
+      (r: AdminRepository) =>
+        r.updateReference('languages', 'r1', { name: 'x' }),
+    ],
+    [
+      'countReferenceLinks',
+      (r: AdminRepository) =>
+        r.countReferenceLinks(
+          { table: 'instructors_languages', column: 'language_id' },
+          'r1',
+        ),
+    ],
+    [
+      'deleteReference',
+      (r: AdminRepository) => r.deleteReference('languages', 'r1'),
+    ],
+  ])('%s surfaces Supabase errors as 500', async (_name, call) => {
+    const stub = makeSupabaseStub({ error: { message: 'boom' } });
+    const repo = await build(stub);
+    await expect(call(repo)).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
   });
 });

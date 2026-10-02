@@ -123,4 +123,67 @@ describe('SupabasePublicInstructorsRepository', () => {
       expect(from).not.toHaveBeenCalled();
     });
   });
+
+  describe('reference relations', () => {
+    function junctionClient(data: unknown) {
+      const builder: Record<string, unknown> = {};
+      builder.select = jest.fn(() => builder);
+      builder.in = jest.fn().mockResolvedValue({ data, error: null });
+      return { from: jest.fn(() => builder) };
+    }
+
+    it('excludes inactive reference values from instructor payloads', async () => {
+      const repo = await build(
+        junctionClient([
+          {
+            instructor_id: 'a',
+            teaching_locations: {
+              key: 'location.whistler',
+              name: 'Whistler',
+              sort_order: 1,
+              is_active: true,
+            },
+          },
+          {
+            instructor_id: 'a',
+            teaching_locations: {
+              key: 'location.closed',
+              name: 'Closed Hill',
+              sort_order: 2,
+              is_active: false,
+            },
+          },
+          { instructor_id: 'a', teaching_locations: null },
+        ]),
+      );
+
+      expect(await repo.getTeachingLocations(['a'])).toEqual([
+        {
+          instructor_id: 'a',
+          key: 'location.whistler',
+          name: 'Whistler',
+          sort_order: 1,
+        },
+      ]);
+    });
+
+    it('excludes inactive languages and course levels too', async () => {
+      const inactive = [
+        {
+          instructor_id: 'a',
+          languages: { key: 'l', name: 'L', sort_order: 0, is_active: false },
+          course_levels_offered: {
+            key: 'c',
+            name: 'C',
+            sort_order: 0,
+            is_active: false,
+          },
+        },
+      ];
+      const repo = await build(junctionClient(inactive));
+
+      expect(await repo.getLanguages(['a'])).toEqual([]);
+      expect(await repo.getCourseLevels(['a'])).toEqual([]);
+    });
+  });
 });

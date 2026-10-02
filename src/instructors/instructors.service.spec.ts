@@ -25,6 +25,7 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     bio_zh_machine_translated: false,
     date_of_birth: null,
     profile_photo_url: null,
+    min_student_age: 5,
     preferred_language: 'en',
     approval_status: 'pending',
     is_active: true,
@@ -94,6 +95,8 @@ class FakeRepo extends InstructorsRepository {
       if (patch.bio_zh !== undefined) row.bio_zh = patch.bio_zh;
       if (patch.display_name_en !== undefined)
         row.display_name_en = patch.display_name_en;
+      if (patch.min_student_age !== undefined)
+        row.min_student_age = patch.min_student_age;
     }
     return Promise.resolve();
   }
@@ -242,6 +245,32 @@ describe('InstructorsService', () => {
       await service.updateOwnProfile('auth-1', dto);
       expect(repo.lastPatch).toEqual({ display_name_en: 'Jane' });
       expect(repo.lastPatch).not.toHaveProperty('profile_photo_url');
+    });
+
+    it('returns minStudentAge on the self-view profile', async () => {
+      repo.rows.push(
+        makeRow({ id: 'inst-2', auth_user_id: 'auth-2', min_student_age: 7 }),
+      );
+      const profile = await service.getOrCreateForUser('auth-2', 'a@b.com');
+      expect(profile.minStudentAge).toBe(7);
+    });
+
+    it('persists minStudentAge from a self-edit and returns it', async () => {
+      const dto = plainToInstance(UpdateInstructorProfileDto, {
+        minStudentAge: 12,
+      });
+      const profile = await service.updateOwnProfile('auth-1', dto);
+      expect(repo.lastPatch).toEqual({ min_student_age: 12 });
+      expect(profile.minStudentAge).toBe(12);
+    });
+
+    it('leaves minStudentAge out of the patch when omitted', async () => {
+      const dto = plainToInstance(UpdateInstructorProfileDto, {
+        bioEn: 'hi',
+      });
+      const profile = await service.updateOwnProfile('auth-1', dto);
+      expect(repo.lastPatch).not.toHaveProperty('min_student_age');
+      expect(profile.minStudentAge).toBe(5);
     });
 
     it('treats an explicit null as present (intentional clear)', async () => {

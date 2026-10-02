@@ -45,7 +45,7 @@ const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'bio_en_machine_translated, bio_zh_machine_translated, date_of_birth, ' +
   'profile_photo_url, preferred_language, approval_status, is_active, ' +
-  'inserted_at, updated_at';
+  'min_student_age, inserted_at, updated_at';
 
 @Injectable()
 export class SupabaseInstructorsRepository extends InstructorsRepository {

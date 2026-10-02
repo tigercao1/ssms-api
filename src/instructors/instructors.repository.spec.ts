@@ -232,4 +232,23 @@ describe('SupabaseInstructorsRepository', () => {
       message: 'check',
     });
   });
+
+  it('bumpProfilePhotoVersion calls the RPC for the instructor', async () => {
+    const { repo, fake } = makeRepo();
+    await repo.bumpProfilePhotoVersion('inst-1');
+    expect(fake.rpcCalls).toEqual([
+      {
+        name: 'bump_profile_photo_version',
+        params: { p_instructor_id: 'inst-1' },
+      },
+    ]);
+  });
+
+  it('bumpProfilePhotoVersion throws on an RPC error', async () => {
+    const { repo, fake } = makeRepo();
+    fake.rpcResult = { error: { message: 'boom' } };
+    await expect(repo.bumpProfilePhotoVersion('inst-1')).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+  });
 });

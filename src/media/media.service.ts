@@ -116,9 +116,11 @@ export class MediaService {
     }
     const path = this.avatarPath(instructorId, contentType);
     const publicUrl = this.storage.getPublicUrl(this.bucket, path);
-    return this.instructors.updateProfileById(instructorId, {
+    const profile = await this.instructors.updateProfileById(instructorId, {
       profilePhotoUrl: publicUrl,
     });
+    await this.instructors.bumpProfilePhotoVersion(instructorId);
+    return profile;
   }
 
   private avatarPath(

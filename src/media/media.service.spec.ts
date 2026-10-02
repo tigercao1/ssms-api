@@ -23,12 +23,22 @@ class FakeStorage implements StorageClient {
 
 class FakeInstructors {
   updates: Array<{ id: string; url: string | null | undefined }> = [];
+  calls: string[] = [];
+  updateError: Error | null = null;
   updateProfileById(id: string, dto: { profilePhotoUrl?: string | null }) {
+    this.calls.push(`update:${id}`);
+    if (this.updateError) {
+      return Promise.reject(this.updateError);
+    }
     this.updates.push({ id, url: dto.profilePhotoUrl });
     return Promise.resolve({
       id,
       profilePhotoUrl: dto.profilePhotoUrl,
     } as InstructorProfile);
+  }
+  bumpProfilePhotoVersion(id: string) {
+    this.calls.push(`bump:${id}`);
+    return Promise.resolve();
   }
 }
 
@@ -124,12 +134,33 @@ describe('MediaService (T3.5)', () => {
       expect(profile.profilePhotoUrl).toContain('inst-1/avatar.jpg');
     });
 
+    it('bumps the photo version after storing the URL, even when the URL is unchanged', async () => {
+      const { service, instructors } = makeService();
+      await service.confirmAvatarUpload('inst-1', 'image/jpeg');
+      await service.confirmAvatarUpload('inst-1', 'image/jpeg');
+      expect(instructors.calls).toEqual([
+        'update:inst-1',
+        'bump:inst-1',
+        'update:inst-1',
+        'bump:inst-1',
+      ]);
+    });
+
+    it('does not bump the photo version when storing the URL fails', async () => {
+      const { service, instructors } = makeService();
+      instructors.updateError = new Error('not found');
+      await expect(
+        service.confirmAvatarUpload('inst-1', 'image/png'),
+      ).rejects.toThrow('not found');
+      expect(instructors.calls).toEqual(['update:inst-1']);
+    });
+
     it('rejects a disallowed mime type without touching the profile', async () => {
       const { service, instructors } = makeService();
       await expect(
         service.confirmAvatarUpload('inst-1', 'application/pdf'),
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(instructors.updates).toHaveLength(0);
+      expect(instructors.calls).toHaveLength(0);
     });
   });
 });

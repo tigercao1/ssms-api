@@ -134,6 +134,10 @@ export class InstructorsService {
    * the keys the client actually sent (presence detected via hasOwnProperty).
    * Omitted keys are left untouched by the RPC; empty arrays clear relations.
    */
+  bumpProfilePhotoVersion(instructorId: string): Promise<void> {
+    return this.repo.bumpProfilePhotoVersion(instructorId);
+  }
+
   private buildPatch(dto: UpdateInstructorProfileDto): InstructorProfilePatch {
     const patch: InstructorProfilePatch = {};
     // A key counts as "present" only when it carries a real value. The global

@@ -91,6 +91,32 @@ export const REFERENCE_SLUG_TO_TABLE = {
 
 export type ReferenceSlug = keyof typeof REFERENCE_SLUG_TO_TABLE;
 
+export type ReferenceTable = (typeof REFERENCE_SLUG_TO_TABLE)[ReferenceSlug];
+
+export interface ReferenceJunction {
+  table: string;
+  column: string;
+}
+
+export const REFERENCE_TABLE_TO_JUNCTION: Record<
+  ReferenceTable,
+  ReferenceJunction
+> = {
+  teaching_locations: {
+    table: 'instructors_teaching_locations',
+    column: 'teaching_location_id',
+  },
+  languages: { table: 'instructors_languages', column: 'language_id' },
+  course_levels_offered: {
+    table: 'instructors_course_levels_offered',
+    column: 'course_level_offered_id',
+  },
+  exam_preparations: {
+    table: 'instructors_exam_preparations',
+    column: 'exam_preparation_id',
+  },
+};
+
 export const REFERENCE_SLUGS = Object.keys(
   REFERENCE_SLUG_TO_TABLE,
 ) as ReferenceSlug[];
@@ -119,4 +145,24 @@ export interface CreateReferenceInput {
   name: string;
   sortOrder: number;
   isActive: boolean;
+}
+
+export interface UpdateReferenceInput {
+  name?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export interface ReferencePatch {
+  name?: string;
+  sort_order?: number;
+  is_active?: boolean;
+}
+
+export interface ReferenceUsage {
+  instructorCount: number;
+}
+
+export interface DeletedReferenceRecord extends ReferenceRecord {
+  removedLinkCount: number;
 }

@@ -20,11 +20,16 @@ import {
   AdminInstructorRow,
   CreateReferenceInput,
   CurrentUserRoleRecord,
+  DeletedReferenceRecord,
   ListInstructorsFilter,
   REFERENCE_SLUG_TO_TABLE,
+  REFERENCE_TABLE_TO_JUNCTION,
+  ReferencePatch,
   ReferenceRecord,
   ReferenceRow,
   ReferenceSlug,
+  ReferenceUsage,
+  UpdateReferenceInput,
   UserRole,
   UserRoleRecord,
 } from './admin.types';
@@ -289,6 +294,116 @@ export class AdminService {
       }
       throw err instanceof Error ? err : new Error(String(err));
     }
+  }
+
+  async listReferences(slug: ReferenceSlug): Promise<ReferenceRecord[]> {
+    const rows = await this.repo.listReferences(REFERENCE_SLUG_TO_TABLE[slug]);
+    return rows.map((row) => this.toReferenceRecord(row));
+  }
+
+  async updateReference(
+    slug: ReferenceSlug,
+    id: string,
+    input: UpdateReferenceInput,
+    actor?: AuditActor,
+  ): Promise<ReferenceRecord> {
+    const patch: ReferencePatch = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.sortOrder !== undefined) patch.sort_order = input.sortOrder;
+    if (input.isActive !== undefined) patch.is_active = input.isActive;
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException(
+        'Provide at least one of name, sortOrder, isActive',
+      );
+    }
+
+    const table = REFERENCE_SLUG_TO_TABLE[slug];
+    const current = await this.findReferenceOrThrow(slug, id);
+    const updated = await this.repo.updateReference(table, id, patch);
+    if (!updated) {
+      throw this.referenceNotFound(slug, id);
+    }
+
+    const from: Record<string, unknown> = {};
+    const to: Record<string, unknown> = {};
+    for (const column of Object.keys(patch) as (keyof ReferencePatch)[]) {
+      from[column] = current[column];
+      to[column] = updated[column];
+    }
+    await this.audit.record({
+      action: AUDIT_ACTIONS.referenceUpdate,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'reference',
+      targetId: id,
+      metadata: { table, key: updated.key, from, to },
+    });
+
+    return this.toReferenceRecord(updated);
+  }
+
+  async getReferenceUsage(
+    slug: ReferenceSlug,
+    id: string,
+  ): Promise<ReferenceUsage> {
+    await this.findReferenceOrThrow(slug, id);
+    const instructorCount = await this.repo.countReferenceLinks(
+      REFERENCE_TABLE_TO_JUNCTION[REFERENCE_SLUG_TO_TABLE[slug]],
+      id,
+    );
+    return { instructorCount };
+  }
+
+  async deleteReference(
+    slug: ReferenceSlug,
+    id: string,
+    actor?: AuditActor,
+  ): Promise<DeletedReferenceRecord> {
+    const table = REFERENCE_SLUG_TO_TABLE[slug];
+    await this.findReferenceOrThrow(slug, id);
+    const removedLinkCount = await this.repo.countReferenceLinks(
+      REFERENCE_TABLE_TO_JUNCTION[table],
+      id,
+    );
+    const deleted = await this.repo.deleteReference(table, id);
+    if (!deleted) {
+      throw this.referenceNotFound(slug, id);
+    }
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.referenceDelete,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'reference',
+      targetId: id,
+      metadata: {
+        table,
+        key: deleted.key,
+        name: deleted.name,
+        removedLinkCount,
+      },
+    });
+
+    return { ...this.toReferenceRecord(deleted), removedLinkCount };
+  }
+
+  private async findReferenceOrThrow(
+    slug: ReferenceSlug,
+    id: string,
+  ): Promise<ReferenceRow> {
+    const row = await this.repo.findReferenceById(
+      REFERENCE_SLUG_TO_TABLE[slug],
+      id,
+    );
+    if (!row) {
+      throw this.referenceNotFound(slug, id);
+    }
+    return row;
+  }
+
+  private referenceNotFound(
+    slug: ReferenceSlug,
+    id: string,
+  ): NotFoundException {
+    return new NotFoundException(`No '${slug}' entry with id '${id}'`);
   }
 
   private toRecord(row: AdminInstructorRow): AdminInstructorRecord {

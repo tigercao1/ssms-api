@@ -23,6 +23,12 @@ describe('AdminController', () => {
       .mockResolvedValue({ userId: 'user-9', role: 'admin', changed: true }),
     updateProfile: jest.fn().mockResolvedValue({ id: 'inst-1' }),
     addReference: jest.fn().mockResolvedValue({ id: 'r1' }),
+    listReferences: jest.fn().mockResolvedValue([{ id: 'r1' }]),
+    updateReference: jest.fn().mockResolvedValue({ id: 'r1' }),
+    getReferenceUsage: jest.fn().mockResolvedValue({ instructorCount: 3 }),
+    deleteReference: jest
+      .fn()
+      .mockResolvedValue({ id: 'r1', removedLinkCount: 3 }),
   };
 
   beforeEach(async () => {
@@ -144,5 +150,68 @@ describe('AdminController', () => {
       controller.addReference('not-a-type', { key: 'k', name: 'n' }),
     ).toThrow(BadRequestException);
     expect(service.addReference).not.toHaveBeenCalled();
+  });
+
+  it('GET reference/:type → listReferences(slug)', async () => {
+    await expect(controller.listReferences('languages')).resolves.toEqual([
+      { id: 'r1' },
+    ]);
+    expect(service.listReferences).toHaveBeenCalledWith('languages');
+  });
+
+  it('PATCH reference/:type/:id → updateReference(slug, id, dto, actor)', async () => {
+    await controller.updateReference(
+      'teaching-locations',
+      'r1',
+      { isActive: false },
+      adminUser,
+      'ua',
+    );
+    expect(service.updateReference).toHaveBeenCalledWith(
+      'teaching-locations',
+      'r1',
+      { isActive: false },
+      { userId: 'admin-1', role: 'admin', userAgent: 'ua' },
+    );
+  });
+
+  it('GET reference/:type/:id/usage → getReferenceUsage(slug, id)', async () => {
+    await expect(
+      controller.getReferenceUsage('exam-preparations', 'r1'),
+    ).resolves.toEqual({ instructorCount: 3 });
+    expect(service.getReferenceUsage).toHaveBeenCalledWith(
+      'exam-preparations',
+      'r1',
+    );
+  });
+
+  it('DELETE reference/:type/:id → deleteReference(slug, id, actor)', async () => {
+    await expect(
+      controller.deleteReference('languages', 'r1', adminUser),
+    ).resolves.toEqual({ id: 'r1', removedLinkCount: 3 });
+    expect(service.deleteReference).toHaveBeenCalledWith('languages', 'r1', {
+      userId: 'admin-1',
+      role: 'admin',
+      userAgent: null,
+    });
+  });
+
+  it('reference management routes → 400 on an unknown slug', () => {
+    expect(() => controller.listReferences('nope')).toThrow(
+      BadRequestException,
+    );
+    expect(() =>
+      controller.updateReference('nope', 'r1', { name: 'n' }, adminUser),
+    ).toThrow(BadRequestException);
+    expect(() => controller.getReferenceUsage('nope', 'r1')).toThrow(
+      BadRequestException,
+    );
+    expect(() => controller.deleteReference('nope', 'r1', adminUser)).toThrow(
+      BadRequestException,
+    );
+    expect(service.listReferences).not.toHaveBeenCalled();
+    expect(service.updateReference).not.toHaveBeenCalled();
+    expect(service.getReferenceUsage).not.toHaveBeenCalled();
+    expect(service.deleteReference).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { InstructorsService } from '../instructors/instructors.service';
 import type { InstructorProfile } from '../instructors/instructors.types';
+import { signupNamesFromJwt } from '../instructors/signup-names.util';
 import { PhotoUploadRequestDto } from './dto/photo-upload-request.dto';
 import { PhotoConfirmDto } from './dto/photo-confirm.dto';
 import { AvatarUploadTicket, MediaService } from './media.service';
@@ -53,6 +54,7 @@ export class MediaController {
     const profile = await this.instructors.getOrCreateForUser(
       user.sub,
       user.email ?? '',
+      signupNamesFromJwt(user),
     );
     return profile.id;
   }

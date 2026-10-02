@@ -14,6 +14,7 @@ import {
   InstructorProfilePatch,
   InstructorRow,
 } from './instructors.types';
+import type { SignupNames } from './signup-names.util';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { TRANSLATION_QUEUE } from './translation-queue.port';
 import type { TranslationQueuePort } from './translation-queue.port';
@@ -45,18 +46,27 @@ export class InstructorsService {
 
   /**
    * T3.1 — Get the caller's profile, creating a `pending` row on first verified
-   * call and returning the same row idempotently thereafter.
+   * call and returning the same row idempotently thereafter. `names` carries
+   * the first/last name + optional nickname captured at sign-up (Supabase
+   * `user_metadata`, see InstructorsController) — ignored once the row exists.
    */
   async getOrCreateForUser(
     authUserId: string,
     email: string,
+    names: SignupNames = {},
   ): Promise<InstructorProfile> {
     const existing = await this.repo.findByAuthUserId(authUserId);
     if (existing) {
       return this.buildProfile(existing);
     }
 
-    const created = await this.repo.insertPending(authUserId, email);
+    const created = await this.repo.insertPending(
+      authUserId,
+      email,
+      names.firstName ?? '',
+      names.lastName ?? '',
+      names.nickname ?? null,
+    );
     if (created) {
       return this.buildProfile(created);
     }
@@ -218,6 +228,9 @@ export class InstructorsService {
     return {
       id: row.id,
       email: row.email,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      nickname: row.nickname,
       displayNameEn: row.display_name_en,
       displayNameZh: row.display_name_zh,
       bioEn: row.bio_en,

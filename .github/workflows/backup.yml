@@ -1,6 +1,8 @@
 # Daily logical backup — the Supabase Free tier has no automated backups.
 #
-# Dumps the public schema to a GitHub Actions artifact (30-day retention).
+# Dumps the public schema, encrypted with age to vars.BACKUP_AGE_RECIPIENT, to a
+# GitHub Actions artifact (30-day retention). The repo is public, so artifacts
+# must never hold plaintext data.
 # This is a substitute for real PITR, not an equivalent: artifacts expire, and
 # a dump is only as good as the restore you have actually tested.
 #
@@ -74,8 +76,25 @@ jobs:
           grep -q 'CREATE TABLE public.instructors' "$out" \
             || { echo "::error::dump is missing the instructors table"; exit 1; }
 
+      - name: Encrypt dump
+        env:
+          BACKUP_AGE_RECIPIENT: ${{ vars.BACKUP_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKUP_AGE_RECIPIENT:-}" ]; then
+            echo "::error::BACKUP_AGE_RECIPIENT variable is not set"
+            exit 1
+          fi
+          sudo apt-get install -y age
+          for f in ssms-prod-*.sql; do
+            age -r "$BACKUP_AGE_RECIPIENT" -o "$f.age" "$f"
+            rm "$f"
+          done
+          ls -l ssms-prod-*.sql.age
+
       - uses: actions/upload-artifact@v4
         with:
           name: db-backup
-          path: ssms-prod-*.sql
+          path: ssms-prod-*.sql.age
+          if-no-files-found: error
           retention-days: 30

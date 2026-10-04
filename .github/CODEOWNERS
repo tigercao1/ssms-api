@@ -1,0 +1,5 @@
+# Changes here reach the dev and prod databases or the release pipeline once
+# merged, so they need the owner's review.
+/supabase/migrations/ @tigercao1
+/scripts/             @tigercao1
+/.github/             @tigercao1

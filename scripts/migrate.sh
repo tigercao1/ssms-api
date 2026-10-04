@@ -4,6 +4,7 @@
 # and records it in ssms_meta.schema_migrations.
 #
 #   scripts/migrate.sh status                 # applied / pending / changed / missing
+#   scripts/migrate.sh pending                # names of pending files, one per line
 #   scripts/migrate.sh apply                  # apply every pending file, one transaction
 #   scripts/migrate.sh baseline <file.sql>    # record files up to <file.sql> as applied
 #                                             # without running them (one-time adoption)
@@ -202,9 +203,20 @@ cmd_baseline() {
   echo "✅ baselined $count migration(s) up to $last"
 }
 
+cmd_pending() {
+  local rows
+  rows="$(classify)"
+  if grep -qE '^(changed|missing) ' <<<"$rows"; then
+    cmd_status >&2 || true
+    die "applied migrations do not match the repo"
+  fi
+  awk '$1 == "pending" {print $2}' <<<"$rows"
+}
+
 case "${1:-status}" in
   status) cmd_status ;;
+  pending) cmd_pending ;;
   apply) cmd_apply ;;
   baseline) cmd_baseline "${2:-}" ;;
-  *) die "unknown command: $1 (use status | apply | baseline <file.sql>)" ;;
+  *) die "unknown command: $1 (use status | pending | apply | baseline <file.sql>)" ;;
 esac

@@ -1,0 +1,59 @@
+# Nightly check that dev and prod have the same schema and the same applied
+# migrations. A difference means something changed one database outside the
+# release pipeline (dashboard edit, manual psql) or a release stopped halfway.
+#
+# The fingerprints hold only schema metadata, which the migrations in this public
+# repo already describe; no table data.
+
+name: Schema drift
+
+on:
+  schedule:
+    - cron: '30 9 * * *' # 09:30 UTC daily, after the backup
+  workflow_dispatch:
+
+jobs:
+  fingerprint:
+    name: Fingerprint ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - environment: dev
+            secret: DEV_DATABASE_URL
+          - environment: production
+            secret: PROD_DATABASE_URL
+    environment: ${{ matrix.environment }}
+    env:
+      DATABASE_URL: ${{ secrets[matrix.secret] }}
+      EXPECT_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: scripts/check-db-target.sh
+
+      - run: psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/schema-fingerprint.sql > fingerprint-${{ matrix.environment }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fingerprint-${{ matrix.environment }}
+          path: fingerprint-${{ matrix.environment }}.txt
+          retention-days: 7
+
+  compare:
+    name: Compare dev and prod
+    needs: fingerprint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fingerprint-*
+          merge-multiple: true
+
+      - run: |
+          if diff -u fingerprint-production.txt fingerprint-dev.txt; then
+            echo "dev and prod match ($(wc -l < fingerprint-dev.txt) objects)."
+          else
+            echo "::error::dev and prod schemas differ (- prod, + dev)"
+            exit 1
+          fi

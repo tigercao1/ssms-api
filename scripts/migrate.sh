@@ -109,8 +109,26 @@ cmd_status() {
   [[ -z "$bad" ]] || return 1
 }
 
+# The PR rules already reject these; checking again here protects the post-merge
+# run if those rules are bypassed.
+refuse_unsafe_sql() {
+  local name scanned bad=0
+  while read -r name; do
+    scanned="$("$REPO_ROOT/scripts/sql_scan.py" "$MIGRATIONS_DIR/$name")"
+    if grep -qE '^top (begin|start transaction|commit|end|rollback|abort|savepoint|release|prepare transaction)( |$)' <<<"$scanned"; then
+      echo "ERROR: $name contains transaction control" >&2
+      bad=1
+    fi
+    if grep -q '^meta ' <<<"$scanned"; then
+      echo "ERROR: $name contains a psql backslash command" >&2
+      bad=1
+    fi
+  done <<<"$1"
+  ((bad == 0)) || die "refusing to apply: migrations must be plain SQL"
+}
+
 cmd_apply() {
-  local rows pending script name
+  local rows pending script name pending_list
   rows="$(classify)"
   if grep -qE '^(changed|missing) ' <<<"$rows"; then
     cmd_status || true
@@ -121,6 +139,8 @@ cmd_apply() {
     echo "Nothing to apply."
     return 0
   fi
+  refuse_unsafe_sql "$pending"
+  pending_list="$(sed "s/.*/'&'/" <<<"$pending" | paste -sd, -)"
 
   script="$(mktemp)"
   TMP_SCRIPT="$script"
@@ -128,9 +148,21 @@ cmd_apply() {
     echo "begin;"
     echo "select pg_advisory_xact_lock($LOCK_KEY) as locked \\gset"
     echo "$INIT_SQL"
+    echo "do \$\$ begin"
+    echo "  if exists (select 1 from ssms_meta.schema_migrations where filename in ($pending_list)) then"
+    echo "    raise exception 'another run applied some of these migrations; run status and retry';"
+    echo "  end if;"
+    echo "end \$\$;"
+    echo "select pg_current_xact_id()::text as runner_xid \\gset"
     while read -r name; do
       echo "\\echo '── applying $name'"
       echo "\\i '$MIGRATIONS_DIR/$name'"
+      echo "\\set ON_ERROR_STOP on"
+      echo "select pg_current_xact_id()::text = :'runner_xid' as same_xact \\gset"
+      echo "\\if :same_xact"
+      echo "\\else"
+      echo "do \$\$ begin raise exception '$name ended the runner transaction'; end \$\$;"
+      echo "\\endif"
       echo "insert into ssms_meta.schema_migrations (filename, checksum, git_sha)"
       echo "  values ('$name', '$(checksum "$MIGRATIONS_DIR/$name")', '$GIT_SHA');"
     done <<<"$pending"

@@ -4,11 +4,12 @@
 #
 #   1. Files already on the base branch are immutable (no edit, delete or rename).
 #   2. New files are named NNN_snake_case.sql and numbered above every file on base.
-#   3. No transaction control (the runner wraps all pending files in one transaction)
-#      and no CREATE INDEX CONCURRENTLY (cannot run inside a transaction).
-#   4. Destructive statements fail unless ALLOW_DESTRUCTIVE=true (the PR carries the
-#      `migration:destructive` label). Migrations run before the new code deploys,
-#      so they must work with the code that is already live.
+#   3. Plain SQL only: no transaction control (the runner wraps all pending files in
+#      one transaction), no psql backslash commands, no CONCURRENTLY.
+#   4. Destructive statements, top level or inside a DO block, fail unless
+#      ALLOW_DESTRUCTIVE=true (the PR carries the `migration:destructive` label).
+#      Migrations run before the new code deploys, so they must work with the
+#      code that is already live.
 #
 #   scripts/check-migrations.sh origin/main
 set -euo pipefail
@@ -35,7 +36,7 @@ fail() {
   fi
 }
 
-base_max="$(git ls-tree --name-only "$BASE" "$DIR/" | xargs -n1 basename | grep -E "$NAME_PATTERN" | sort | tail -1 | cut -c1-3)"
+base_max="$(git ls-tree --name-only "$BASE" "$DIR/" | xargs -n1 basename | { grep -E "$NAME_PATTERN" || true; } | sort | tail -1 | cut -c1-3)"
 base_max=$((10#${base_max:-0}))
 
 added=()
@@ -66,25 +67,29 @@ for path in ${added[@]+"${added[@]}"}; do
   seen="$seen$num "
   new_count=$((new_count + 1))
 
-  # One line per statement, comments stripped, lower-cased.
-  statements="$(sed -e 's/--.*$//' "$path" | tr '\n' ' ' | tr ';' '\n' | tr '[:upper:]' '[:lower:]' | tr -s ' ')"
+  scanned="$(scripts/sql_scan.py "$path")"
+  top="$(sed -n 's/^top //p' <<<"$scanned")"
+  executed="$(sed -nE 's/^(top|do) //p' <<<"$scanned")"
 
-  if grep -qE "^ *(begin|commit|rollback|start transaction|savepoint)( |$)" <<<"$statements"; then
+  if grep -qE "^(begin|start transaction|commit|end|rollback|abort|savepoint|release|prepare transaction)( |$)" <<<"$top"; then
     fail "$path" "contains transaction control; the runner wraps migrations in a transaction"
   fi
-  if grep -qE "${B}concurrently${E}" <<<"$statements"; then
+  if grep -q '^meta ' <<<"$scanned"; then
+    fail "$path" "contains a psql backslash command; migrations must be plain SQL"
+  fi
+  if grep -qE "${B}concurrently${E}" <<<"$top"; then
     fail "$path" "uses CONCURRENTLY, which cannot run inside the runner's transaction"
   fi
 
   destructive="$(
-    grep -E "${B}drop (table|schema|column)${E}" <<<"$statements" || true
-    grep -E "${B}alter table${E}" <<<"$statements" \
+    grep -E "${B}drop (table|schema|column)${E}" <<<"$executed" || true
+    grep -E "${B}alter table${E}" <<<"$executed" \
       | sed -E 's/drop (constraint|default|not null|identity|expression)//g' \
       | grep -E "${B}drop${E}" || true
-    grep -E "${B}(truncate|rename)${E}" <<<"$statements" || true
-    grep -E "${B}delete from${E}" <<<"$statements" || true
-    grep -E "${B}set not null${E}" <<<"$statements" || true
-    grep -E "${B}alter column [a-z0-9_\"]+ (set data )?type${E}" <<<"$statements" || true
+    grep -E "${B}(truncate|rename)${E}" <<<"$executed" || true
+    grep -E "${B}delete from${E}" <<<"$executed" || true
+    grep -E "${B}set not null${E}" <<<"$executed" || true
+    grep -E "${B}alter column [a-z0-9_\"]+ (set data )?type${E}" <<<"$executed" || true
   )"
   if [[ -n "$destructive" && "$ALLOW_DESTRUCTIVE" != "true" ]]; then
     while read -r stmt; do

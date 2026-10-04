@@ -62,3 +62,16 @@ Filename format: `<prefix><n>_<short_description>.sql`
 e.g. `010_approval_status.sql`, `250_api_keys.sql`.
 
 Seeds go in `seed.sql` (reference data — owned by the Reference-data agent, T4.2).
+
+## Backups
+
+`.github/workflows/backup.yml` dumps the prod `public` schema daily and uploads it
+as the `db-backup` artifact, encrypted with [age](https://age-encryption.org) to
+the public key in the `BACKUP_AGE_RECIPIENT` repo variable. Only the holder of the
+matching private key can read it.
+
+```bash
+gh run download <run-id> -n db-backup
+age -d -i <path-to-private-key> ssms-prod-YYYYMMDD.sql.age > ssms-prod-YYYYMMDD.sql
+SSMS_ENV=<env> ./scripts/db.sh file ssms-prod-YYYYMMDD.sql
+```

@@ -1,7 +1,7 @@
 name: CI
 
 # T10.2 — CI pipeline (TESTING_STRATEGY.md § CI; backend-architecture.md §6).
-# Gates every PR on: lint, a clean-from-scratch migration apply on Postgres 16
+# Gates every PR on: lint, a clean-from-scratch migration apply on Postgres 17
 # (+ optional schema-drift check), and the test suite with an 80% coverage floor
 # (enforced by jest `coverageThreshold` in package.json).
 
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: ssms_ci
@@ -74,26 +74,44 @@ jobs:
       PGDATABASE: ssms_ci
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      # Apply every migration from scratch, in lexical order, failing on the
-      # first error — proves the migrations directory builds an empty DB cleanly
-      # (the `supabase db reset` equivalent, no Docker stack required).
       # Bare Postgres has no Supabase `auth` schema/roles, which the migrations
       # reference. Apply the CI-only shim first (never applied to real projects).
       - name: Apply Supabase CI shim
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/000_supabase_shim.sql
 
       - name: Apply migrations from scratch
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          for f in $(ls supabase/migrations/*.sql | sort); do
-            echo "── applying $f"
-            psql -v ON_ERROR_STOP=1 -f "$f"
-          done
+        run: scripts/migrate.sh apply
 
       - name: Apply seed (idempotent)
         run: psql -v ON_ERROR_STOP=1 -f supabase/seed.sql
+
+      - name: Re-run is a no-op
+        run: |
+          set -euo pipefail
+          out="$(scripts/migrate.sh apply)"
+          echo "$out"
+          [ "$out" = "Nothing to apply." ]
+          scripts/migrate.sh status
+
+      # Mirrors what the post-merge job does to dev and prod: the base branch's
+      # migrations are already applied, and only this PR's new files run.
+      - name: Apply on top of base branch (PRs only)
+        if: github.event_name == 'pull_request'
+        env:
+          PGDATABASE: ssms_incremental
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          createdb ssms_incremental
+          psql -v ON_ERROR_STOP=1 -f supabase/ci/000_supabase_shim.sql
+          base_dir="$(mktemp -d)"
+          git archive "$BASE_REF" supabase/migrations | tar -x -C "$base_dir"
+          MIGRATIONS_DIR="$base_dir/supabase/migrations" scripts/migrate.sh apply
+          scripts/migrate.sh apply
+          scripts/migrate.sh status
 
       # Optional schema-drift gate against the linked Supabase project. Runs only
       # when the maintainer secrets are present (skipped on fork PRs), so the

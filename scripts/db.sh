@@ -14,7 +14,9 @@
 #   ./scripts/db.sh seed                 # apply supabase/seed.sql (idempotent)
 #   ./scripts/db.sh query "select 1;"    # run a one-off SQL statement
 #   ./scripts/db.sh file path/to.sql     # run an arbitrary .sql file
-#   ./scripts/db.sh migrate              # apply every migration in order
+#   ./scripts/db.sh migrate [status]     # applied / pending migrations
+#   ./scripts/db.sh migrate apply        # apply pending migrations (scripts/migrate.sh)
+#   ./scripts/db.sh migrate baseline <f> # one-time: record files up to <f> as applied
 #   ./scripts/db.sh shell                # interactive psql session
 #   ./scripts/db.sh counts               # reference-data row counts
 #   ./scripts/db.sh rls                  # verify RLS is enabled + FORCEd
@@ -58,16 +60,11 @@ case "$cmd" in
     psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$1"
     ;;
   migrate)
-    # Apply every migration in lexical order, stopping at the first failure.
-    # NOTE: there is no migration tracking table — this re-runs everything.
-    # Migrations are written to be idempotent; if one fails, fix forward.
-    ssms_require_prod_confirmation "apply ALL migrations"
-    shopt -s nullglob
-    for f in $(ls supabase/migrations/*.sql | sort); do
-      echo "── applying $f"
-      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
-    done
-    echo "✅ all migrations applied"
+    sub="${1:-status}"
+    case "$sub" in
+      apply | baseline) ssms_require_prod_confirmation "migrate $*" ;;
+    esac
+    "$SCRIPT_DIR/migrate.sh" "$sub" "${@:2}"
     ;;
   query)
     [[ -n "${1:-}" ]] || { echo "Usage: db.sh query \"<sql>\"" >&2; exit 1; }

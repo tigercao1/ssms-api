@@ -1,7 +1,9 @@
 # Database migrations
 
-Migrations are plain SQL in `migrations/`, checked into the repo and applied via
-the Supabase CLI. This mirrors `backend-architecture.md §6` and `DATABASE_RESET.md`.
+Migrations are plain SQL in `migrations/`. `scripts/migrate.sh` applies each file
+exactly once and records it in `ssms_meta.schema_migrations` (filename, sha256
+checksum, git SHA). All pending files run in one transaction: if any fails, none
+are applied.
 
 ## Commands
 
@@ -10,12 +12,13 @@ default**. Connection details come from `.env.dev` / `.env.prod` (see
 `.env.dev.example`, `.env.prod.example`), never from an ambient `DATABASE_URL`.
 
 ```bash
-SSMS_ENV=dev  ./scripts/db.sh migrate      # apply every migration, in order
-SSMS_ENV=dev  ./scripts/db.sh seed         # apply seed.sql (idempotent)
-SSMS_ENV=dev  ./scripts/db.sh counts       # reference-data row counts
-SSMS_ENV=dev  ./scripts/db.sh rls          # verify RLS enabled + FORCEd
-SSMS_ENV=dev  ./scripts/db.sh dump         # pg_dump public schema
-SSMS_ENV=dev  ./scripts/admin.sh bootstrap # create/promote the first admin
+SSMS_ENV=dev  ./scripts/db.sh migrate          # status: applied / pending
+SSMS_ENV=dev  ./scripts/db.sh migrate apply    # apply pending migrations
+SSMS_ENV=dev  ./scripts/db.sh seed             # apply seed.sql (idempotent)
+SSMS_ENV=dev  ./scripts/db.sh counts           # reference-data row counts
+SSMS_ENV=dev  ./scripts/db.sh rls              # verify RLS enabled + FORCEd
+SSMS_ENV=dev  ./scripts/db.sh dump             # pg_dump public schema
+SSMS_ENV=dev  ./scripts/admin.sh bootstrap     # create/promote the first admin
 ```
 
 Swap in `SSMS_ENV=prod` for production. Writes against prod prompt for
@@ -26,39 +29,26 @@ non-interactive use in CI. See `scripts/env.sh` for the guardrails:
 - each env file self-identifies via `SSMS_ENV_NAME`; a mismatch aborts
 - `SSMS_EXPECT_PROJECT_REF` pins the Supabase ref; a mismatch aborts
 
-⚠️ `db.sh migrate` has **no migration tracking table** — it re-applies every
-file. Migrations are written to be idempotent; if one fails, fix forward rather
-than blind-rerunning.
+`migrate apply` refuses to run if an applied file was edited (checksum differs)
+or is missing from the repo. `migrate baseline <file>` records files up to
+`<file>` as applied without running them; it is only for adopting tracking on a
+database that already has those migrations.
 
-### Supabase CLI (preferred, not yet adopted for prod)
+## Rules for new migrations
 
-```bash
-supabase link --project-ref <project-ref>   # one-time
-supabase db push                            # apply migrations to linked project
-supabase db reset                           # rebuild local DB from migrations + seed.sql
-supabase db diff --check                    # CI: fail on schema drift (T10.2)
-```
+Checked on every PR by `scripts/check-migrations.sh` (`Migration rules` workflow):
 
-This would give tracked migrations and replace the `db.sh migrate` loop.
+1. Files already on `main` are immutable. To change something, add a new file.
+2. Name new files `NNN_snake_case.sql`, numbered above every file on `main`.
+3. No `begin` / `commit` / `rollback` and no `create index concurrently`: the
+   runner owns the transaction.
+4. Migrations run before the new code is deployed, so they must work with the
+   code that is already live. Destructive statements (`drop table`/`column`/
+   `schema`, `rename`, `truncate`, `delete from`, `set not null`, column type
+   changes) fail the check unless the PR has the `migration:destructive` label.
+   Drop a column in a later PR, after the code that reads it is gone.
 
-## Migration naming — ownership prefixes
-
-To let parallel Wave-2 agents add migrations without colliding (see
-`../../EXECUTION_PLAN.md` § Ownership boundaries), each owner uses a reserved
-numeric prefix range:
-
-| Prefix | Owner | Scope |
-|--------|-------|-------|
-| `0xx`  | Foundation | scaffold, extensions, base `instructors`, auth glue |
-| `01x`  | Foundation/Schema | Wave-1 schema: approval_status, bilingual fields, certs, trainer status, audit_log, RLS |
-| `21x`  | Instructor | profile RPCs (transactional update) |
-| `22x`  | Reference data | reference tables + seed |
-| `23x`  | Bio translation | translation queue table |
-| `24x`  | Admin | admin-specific objects |
-| `25x`  | Public API | api_keys, public indexes, views |
-| `26x`  | Integration (Wave 3) | audit wiring helpers |
-
-Filename format: `<prefix><n>_<short_description>.sql`
-e.g. `010_approval_status.sql`, `250_api_keys.sql`.
+CI also builds a fresh database from every migration, and applies the PR's new
+files on top of a database built from the base branch.
 
 Seeds go in `seed.sql` (reference data — owned by the Reference-data agent, T4.2).

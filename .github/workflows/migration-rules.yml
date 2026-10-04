@@ -1,0 +1,23 @@
+name: Migration rules
+
+# Separate from CI so that adding or removing the `migration:destructive` label
+# re-runs only this check.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  rules:
+    name: Migration rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check new and changed migrations
+        env:
+          ALLOW_DESTRUCTIVE: ${{ contains(github.event.pull_request.labels.*.name, 'migration:destructive') }}
+        run: scripts/check-migrations.sh "origin/${{ github.base_ref }}"

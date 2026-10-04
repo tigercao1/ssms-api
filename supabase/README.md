@@ -68,7 +68,9 @@ Seeds go in `seed.sql` (reference data — owned by the Reference-data agent, T4
 
 Each stage needs the previous one. Database and Fly credentials live in the
 `dev` and `production` GitHub Environments, which only `main` can use.
-`.github/workflows/schema-drift.yml` compares dev and prod every night.
+`.github/workflows/schema-drift.yml` compares dev and prod every night. If it
+fails, see the difference with
+`diff <(SSMS_ENV=prod ./scripts/db.sh fingerprint) <(SSMS_ENV=dev ./scripts/db.sh fingerprint)`.
 
 Do not change either schema outside this pipeline (Supabase dashboard, manual
 `psql`): the nightly check will fail.

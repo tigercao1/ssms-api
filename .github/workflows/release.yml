@@ -77,7 +77,11 @@ jobs:
         run: |
           set -euo pipefail
           scripts/migrate.sh status
-          count="$(scripts/migrate.sh pending | grep -c . || true)"
+          pending="$(scripts/migrate.sh pending)"
+          count=0
+          if [ -n "$pending" ]; then
+            count="$(printf '%s\n' "$pending" | grep -c .)"
+          fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
       - name: Encrypted pre-migration backup

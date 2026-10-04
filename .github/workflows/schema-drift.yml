@@ -2,8 +2,9 @@
 # migrations. A difference means something changed one database outside the
 # release pipeline (dashboard edit, manual psql) or a release stopped halfway.
 #
-# The fingerprints hold only schema metadata, which the migrations in this public
-# repo already describe; no table data.
+# Only a hash of each fingerprint leaves the job: the repo is public, and drift
+# may include objects that are not in the migrations. To see the difference:
+#   diff <(SSMS_ENV=prod ./scripts/db.sh fingerprint) <(SSMS_ENV=dev ./scripts/db.sh fingerprint)
 
 name: Schema drift
 
@@ -13,47 +14,49 @@ on:
   workflow_dispatch:
 
 jobs:
-  fingerprint:
-    name: Fingerprint ${{ matrix.environment }}
+  dev:
+    name: Fingerprint dev
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - environment: dev
-            secret: DEV_DATABASE_URL
-          - environment: production
-            secret: PROD_DATABASE_URL
-    environment: ${{ matrix.environment }}
+    environment: dev
+    outputs:
+      hash: ${{ steps.fp.outputs.hash }}
     env:
-      DATABASE_URL: ${{ secrets[matrix.secret] }}
+      DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
       EXPECT_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     steps:
       - uses: actions/checkout@v5
-
       - run: scripts/check-db-target.sh
+      - id: fp
+        run: echo "hash=$(psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/schema-fingerprint.sql | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - run: psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/schema-fingerprint.sql > fingerprint-${{ matrix.environment }}.txt
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fingerprint-${{ matrix.environment }}
-          path: fingerprint-${{ matrix.environment }}.txt
-          retention-days: 7
+  prod:
+    name: Fingerprint prod
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      hash: ${{ steps.fp.outputs.hash }}
+    env:
+      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+      EXPECT_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/check-db-target.sh
+      - id: fp
+        run: echo "hash=$(psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/schema-fingerprint.sql | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
   compare:
     name: Compare dev and prod
-    needs: fingerprint
+    needs: [dev, prod]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: fingerprint-*
-          merge-multiple: true
-
-      - run: |
-          if diff -u fingerprint-production.txt fingerprint-dev.txt; then
-            echo "dev and prod match ($(wc -l < fingerprint-dev.txt) objects)."
-          else
-            echo "::error::dev and prod schemas differ (- prod, + dev)"
+      - env:
+          DEV: ${{ needs.dev.outputs.hash }}
+          PROD: ${{ needs.prod.outputs.hash }}
+        run: |
+          echo "dev  $DEV"
+          echo "prod $PROD"
+          if [ -z "$DEV" ] || [ "$DEV" != "$PROD" ]; then
+            echo "::error::dev and prod schemas differ. Compare locally: diff <(SSMS_ENV=prod ./scripts/db.sh fingerprint) <(SSMS_ENV=dev ./scripts/db.sh fingerprint)"
             exit 1
           fi
+          echo "dev and prod match."

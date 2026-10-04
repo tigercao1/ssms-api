@@ -21,6 +21,7 @@
 #   ./scripts/db.sh counts               # reference-data row counts
 #   ./scripts/db.sh rls                  # verify RLS is enabled + FORCEd
 #   ./scripts/db.sh dump [out.sql]       # pg_dump the public schema
+#   ./scripts/db.sh fingerprint          # schema fingerprint (see schema-drift.yml)
 #
 # Writes against prod prompt for confirmation (SSMS_CONFIRM_PROD=yes to skip).
 set -euo pipefail
@@ -96,12 +97,15 @@ case "$cmd" in
     pg_dump "$DATABASE_URL" --schema=public --no-owner --no-privileges -f "$out"
     echo "✅ dumped to $out"
     ;;
+  fingerprint)
+    psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f scripts/schema-fingerprint.sql
+    ;;
   shell)
     psql "$DATABASE_URL"
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Use one of: seed | file <path> | migrate | query <sql> | counts | rls | dump [out] | shell" >&2
+    echo "Use one of: seed | file <path> | migrate | query <sql> | counts | rls | dump [out] | fingerprint | shell" >&2
     exit 1
     ;;
 esac

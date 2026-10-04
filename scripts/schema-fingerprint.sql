@@ -1,5 +1,6 @@
 -- One line per schema object in public, plus the migration tracking rows.
--- .github/workflows/schema-drift.yml diffs this output between dev and prod.
+-- .github/workflows/schema-drift.yml compares its hash between dev and prod;
+-- `./scripts/db.sh fingerprint` prints it for a local diff.
 \pset format unaligned
 \pset tuples_only on
 select 'col|'||c.table_name||'.'||c.column_name||'|'||c.data_type||'|'||c.is_nullable||'|'||coalesce(c.column_default,'') from information_schema.columns c where c.table_schema='public'

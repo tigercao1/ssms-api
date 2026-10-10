@@ -16,6 +16,12 @@ import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 
 export type SyncOutcome = 'active' | 'draft' | 'skipped';
 
+export interface ReconcileResult {
+  enqueued: number;
+  instructors: number;
+  orphaned: number;
+}
+
 export const MAX_HANDLE_ATTEMPTS = 50;
 
 @Injectable()
@@ -36,6 +42,11 @@ export class InstructorSyncService {
       return this.hide(instructorId, state);
     }
     return this.publish(snapshot, state);
+  }
+
+  async reconcile(): Promise<ReconcileResult> {
+    const counts = await this.repo.enqueueAll();
+    return { enqueued: counts.instructors + counts.orphaned, ...counts };
   }
 
   private async hide(

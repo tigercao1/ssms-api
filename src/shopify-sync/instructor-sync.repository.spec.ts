@@ -13,7 +13,9 @@ interface RecordedQuery {
 function fakeSupabase(
   tables: Record<string, Result> = {},
   rpcs: Record<string, Result> = {},
+  signed: Result = { data: { signedUrl: 'https://signed' }, error: null },
 ) {
+  const signCalls: unknown[][] = [];
   const queries: RecordedQuery[] = [];
   const rpcCalls: { name: string; args: unknown }[] = [];
   const client = {
@@ -42,6 +44,14 @@ function fakeSupabase(
       }
       return builder;
     },
+    storage: {
+      from: (bucket: string) => ({
+        createSignedUrl: (...args: unknown[]) => {
+          signCalls.push([bucket, ...args]);
+          return Promise.resolve(signed);
+        },
+      }),
+    },
     rpc(name: string, args?: unknown) {
       rpcCalls.push({ name, args });
       return Promise.resolve(rpcs[name] ?? { data: null, error: null });
@@ -51,6 +61,7 @@ function fakeSupabase(
     repo: new SupabaseInstructorSyncRepository(client as never),
     queries,
     rpcCalls,
+    signCalls,
     opsFor: (table: string) =>
       queries.filter((q) => q.table === table).map((q) => q.ops),
   };
@@ -302,6 +313,29 @@ describe('SupabaseInstructorSyncRepository', () => {
           { enqueue_all_instructor_sync: failure },
         ).repo.enqueueAll(),
       ).rejects.toThrow('boom');
+    });
+  });
+
+  describe('createSignedPhotoUrl', () => {
+    it('signs the storage object with the service-role client', async () => {
+      const { repo, signCalls } = fakeSupabase();
+      await expect(
+        repo.createSignedPhotoUrl('instructor-public', 'i-1/avatar.jpg', 600),
+      ).resolves.toBe('https://signed');
+      expect(signCalls).toEqual([['instructor-public', 'i-1/avatar.jpg', 600]]);
+    });
+
+    it('throws when signing fails or returns nothing', async () => {
+      await expect(
+        fakeSupabase({}, {}, failure).repo.createSignedPhotoUrl('b', 'p', 1),
+      ).rejects.toThrow('boom');
+      await expect(
+        fakeSupabase(
+          {},
+          {},
+          { data: null, error: null },
+        ).repo.createSignedPhotoUrl('b', 'p', 1),
+      ).rejects.toThrow('Failed to sign photo URL for b/p');
     });
   });
 });

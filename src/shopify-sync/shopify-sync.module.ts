@@ -4,6 +4,7 @@ import {
   InstructorSyncRepository,
   SupabaseInstructorSyncRepository,
 } from './instructor-sync.repository';
+import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 
@@ -15,6 +16,7 @@ import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
       useClass: SupabaseInstructorSyncRepository,
     },
     ShopifyInstructorGateway,
+    InstructorPhotoSync,
     InstructorSyncService,
   ],
   exports: [InstructorSyncService],

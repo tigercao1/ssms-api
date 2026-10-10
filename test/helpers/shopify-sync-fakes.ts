@@ -126,6 +126,27 @@ export class InMemorySyncRepository extends InstructorSyncRepository {
   enqueueAll(): Promise<ReconcileCounts> {
     return Promise.resolve(this.counts);
   }
+
+  signedUrls: { bucket: string; path: string; expiresInSeconds: number }[] = [];
+
+  createSignedPhotoUrl(
+    bucket: string,
+    path: string,
+    expiresInSeconds: number,
+  ): Promise<string> {
+    this.signedUrls.push({ bucket, path, expiresInSeconds });
+    return Promise.resolve(
+      `https://storage.test/${bucket}/${path}?token=signed-${this.signedUrls.length}`,
+    );
+  }
+}
+
+export interface FakeFile {
+  id: string;
+  filename: string;
+  originalSource: string;
+  statuses: string[];
+  errors: { code: string; message: string }[];
 }
 
 export interface FakeEntry {
@@ -143,6 +164,15 @@ export interface GraphqlCall {
 
 export interface FakeVariables {
   handle: { type: string; handle: string };
+  files: {
+    originalSource: string;
+    filename: string;
+    contentType: string;
+    duplicateResolutionMode: string;
+  }[];
+  fileIds: string[];
+  id: string;
+  query: string;
   metaobject: {
     fields?: { key: string; value: string }[];
     capabilities?: { publishable?: { status?: string } };
@@ -154,6 +184,8 @@ type Handler = (variables: FakeVariables) => unknown;
 
 export class FakeShopify {
   entries = new Map<string, FakeEntry>();
+  files = new Map<string, FakeFile>();
+  fileStatuses = ['UPLOADED', 'PROCESSING', 'READY'];
   calls: GraphqlCall[] = [];
   userErrors = new Map<string, ShopifyUserError[]>();
   private nextId = 1;
@@ -198,6 +230,93 @@ export class FakeShopify {
       };
     },
   };
+
+  private readonly fileHandlers: Record<string, Handler> = {
+    SsmsPhotoCreate: (v) => {
+      const [input] = v.files;
+      if (this.fileNamed(input.filename)) {
+        return {
+          fileCreate: {
+            files: [],
+            userErrors: [
+              {
+                field: ['files', '0', 'filename'],
+                message: 'The provided filename already exists.',
+                code: 'FILENAME_ALREADY_EXISTS',
+              },
+            ],
+          },
+        };
+      }
+      const file = this.addFile(input.filename, [...this.fileStatuses]);
+      file.originalSource = input.originalSource;
+      return {
+        fileCreate: {
+          files: [{ id: file.id, fileStatus: file.statuses[0] }],
+          userErrors: [],
+        },
+      };
+    },
+    SsmsPhotoByName: (v) => {
+      const name = /filename:"(.+)"/.exec(v.query)?.[1] ?? '';
+      const file = this.fileNamed(name);
+      return {
+        files: {
+          nodes: file
+            ? [
+                {
+                  id: file.id,
+                  fileStatus: file.statuses[0],
+                  image: { url: `https://cdn.test/files/${file.filename}?v=1` },
+                },
+              ]
+            : [],
+        },
+      };
+    },
+    SsmsPhotoStatus: (v) => {
+      const file = this.files.get(v.id);
+      if (!file) {
+        return { node: null };
+      }
+      if (file.statuses.length > 1) {
+        file.statuses.shift();
+      }
+      return {
+        node: {
+          id: file.id,
+          fileStatus: file.statuses[0],
+          fileErrors: file.errors,
+        },
+      };
+    },
+    SsmsPhotoDelete: (v) => {
+      const errors = this.takeErrors('SsmsPhotoDelete');
+      if (errors) {
+        return { fileDelete: { deletedFileIds: null, userErrors: errors } };
+      }
+      for (const id of v.fileIds) {
+        this.files.delete(id);
+      }
+      return { fileDelete: { deletedFileIds: v.fileIds, userErrors: [] } };
+    },
+  };
+
+  addFile(filename: string, statuses: string[] = ['READY']): FakeFile {
+    const file: FakeFile = {
+      id: `gid://shopify/MediaImage/${this.nextId++}`,
+      filename,
+      originalSource: '',
+      statuses,
+      errors: [],
+    };
+    this.files.set(file.id, file);
+    return file;
+  }
+
+  fileNamed(filename: string): FakeFile | undefined {
+    return [...this.files.values()].find((f) => f.filename === filename);
+  }
 
   readonly client = {
     graphql: jest.fn((query: string, variables: Record<string, unknown> = {}) =>
@@ -246,7 +365,7 @@ export class FakeShopify {
   private dispatch(query: string, variables: Record<string, unknown>): unknown {
     const operation = /(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? '';
     this.calls.push({ operation, variables });
-    const handler = this.handlers[operation];
+    const handler = this.handlers[operation] ?? this.fileHandlers[operation];
     if (!handler) {
       throw new Error(`Unexpected Shopify operation ${operation}`);
     }

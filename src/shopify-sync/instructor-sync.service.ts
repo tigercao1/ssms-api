@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { buildInstructorFields } from './instructor-fields.builder';
 import { baseHandle, handleCandidate } from './instructor-handle';
+import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncRepository } from './instructor-sync.repository';
 import {
   type InstructorShopifyState,
@@ -18,6 +19,7 @@ export class InstructorSyncService {
   constructor(
     private readonly repo: InstructorSyncRepository,
     private readonly gateway: ShopifyInstructorGateway,
+    private readonly photos: InstructorPhotoSync,
   ) {}
 
   async sync(instructorId: string): Promise<SyncOutcome> {
@@ -59,13 +61,19 @@ export class InstructorSyncService {
           existingEntry,
         )
       : await this.claimHandle(instructor.id, instructor.display_name_en);
-    const fields = buildInstructorFields(snapshot, { existingEntry });
+    const photo = await this.photos.prepare(instructor, state);
+    const fields = buildInstructorFields(snapshot, {
+      existingEntry,
+      picture: photo.picture,
+    });
     const entry = await this.gateway.upsertEntry(handle, fields, 'ACTIVE');
     await this.repo.saveState(instructor.id, {
+      ...photo.statePatch,
       shopify_metaobject_id: entry.id,
       last_synced_at: new Date().toISOString(),
       last_status: 'active',
     });
+    await this.photos.discard(photo.replacedFileId);
     return 'active';
   }
 

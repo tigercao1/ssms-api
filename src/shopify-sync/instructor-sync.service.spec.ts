@@ -4,6 +4,7 @@ import {
   InMemorySyncRepository,
   snapshotOf,
 } from '../../test/helpers/shopify-sync-fakes';
+import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
 import type { InstructorSnapshot } from './instructor-sync.types';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
@@ -17,9 +18,11 @@ function setup(snapshot: InstructorSnapshot | null = snapshotOf()) {
     repo.snapshots.set(snapshot.instructor.id, snapshot);
   }
   const shopify = new FakeShopify();
+  const gateway = new ShopifyInstructorGateway(shopify.client);
   const service = new InstructorSyncService(
     repo,
-    new ShopifyInstructorGateway(shopify.client),
+    gateway,
+    new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
   );
   return { repo, shopify, service };
 }

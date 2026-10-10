@@ -50,6 +50,11 @@ export abstract class InstructorSyncRepository {
   abstract completeQueueRow(row: SyncQueueRow): Promise<void>;
   abstract recordQueueFailure(row: SyncQueueRow, error: string): Promise<void>;
   abstract enqueueAll(): Promise<ReconcileCounts>;
+  abstract createSignedPhotoUrl(
+    bucket: string,
+    path: string,
+    expiresInSeconds: number,
+  ): Promise<string>;
 }
 
 @Injectable()
@@ -209,6 +214,21 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
       instructors: Number(counts?.instructor_count ?? 0),
       orphaned: Number(counts?.orphaned_count ?? 0),
     };
+  }
+
+  async createSignedPhotoUrl(
+    bucket: string,
+    path: string,
+    expiresInSeconds: number,
+  ): Promise<string> {
+    const { data, error } = await this.supabase.storage
+      .from(bucket)
+      .createSignedUrl(path, expiresInSeconds);
+    check(error, `sign photo URL for ${bucket}/${path}`);
+    if (!data?.signedUrl) {
+      throw new Error(`Failed to sign photo URL for ${bucket}/${path}`);
+    }
+    return data.signedUrl;
   }
 
   private async refNames(

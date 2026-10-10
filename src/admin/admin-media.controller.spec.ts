@@ -16,6 +16,7 @@ describe('AdminMediaController', () => {
   const media = {
     createAvatarUploadUrl: jest.fn().mockResolvedValue(ticket),
     confirmAvatarUpload: jest.fn().mockResolvedValue(profile),
+    removePhoto: jest.fn().mockResolvedValue(profile),
   };
   const admin = {
     getInstructor: jest.fn().mockResolvedValue({ id: 'inst-1' }),
@@ -60,6 +61,7 @@ describe('AdminMediaController', () => {
       'inst-1',
       'image/jpeg',
       1024,
+      undefined,
     );
   });
 
@@ -70,7 +72,42 @@ describe('AdminMediaController', () => {
     expect(media.confirmAvatarUpload).toHaveBeenCalledWith(
       'inst-1',
       'image/png',
+      undefined,
     );
+  });
+
+  it('passes the requested slot through to upload and confirm', async () => {
+    await controller.getSignedUploadUrl('inst-1', {
+      contentType: 'image/png',
+      contentLength: 10,
+      slot: 2,
+    });
+    await controller.confirm('inst-1', { contentType: 'image/png', slot: 2 });
+    expect(media.createAvatarUploadUrl).toHaveBeenCalledWith(
+      'inst-1',
+      'image/png',
+      10,
+      2,
+    );
+    expect(media.confirmAvatarUpload).toHaveBeenCalledWith(
+      'inst-1',
+      'image/png',
+      2,
+    );
+  });
+
+  it('DELETE :slot removes that slot on the path instructor', async () => {
+    await expect(controller.remove('inst-1', 3)).resolves.toBe(profile);
+    expect(admin.getInstructor).toHaveBeenCalledWith('inst-1');
+    expect(media.removePhoto).toHaveBeenCalledWith('inst-1', 3);
+  });
+
+  it('DELETE :slot → 404 without removing for an unknown instructor', async () => {
+    admin.getInstructor.mockRejectedValueOnce(new NotFoundException());
+    await expect(controller.remove('ghost', 1)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(media.removePhoto).not.toHaveBeenCalled();
   });
 
   it('POST signed-upload-url → 404 without issuing a ticket for an unknown instructor', async () => {

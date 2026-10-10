@@ -11,13 +11,14 @@ import {
   ALLOWED_AVATAR_MIME,
   AllowedAvatarMime,
   MAX_AVATAR_BYTES,
+  PhotoSlot,
 } from './dto/photo-upload-request.dto';
 import { STORAGE_CLIENT } from './storage-client';
 import type { StorageClient } from './storage-client';
 
 const DEFAULT_BUCKET = 'instructor-public';
 
-/** content-type → file extension (path convention `avatar.{ext}`). */
+/** content-type → file extension (path convention `avatar.{ext}` / `photo-{slot}.{ext}`). */
 const MIME_EXT: Record<AllowedAvatarMime, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -42,7 +43,8 @@ export interface AvatarUploadTicket {
  * T3.5 — Profile photo (avatar) uploads.
  *
  * Validates the declared mime type + size, issues a signed upload URL targeting
- * `instructor-public/{instructorId}/avatar.{ext}`, and (after the client
+ * `instructor-public/{instructorId}/avatar.{ext}` (slot 1) or
+ * `instructor-public/{instructorId}/photo-{slot}.{ext}`, and (after the client
  * uploads) persists the resulting public URL on the instructor profile. v1 is
  * photos-only; private documents are deferred (DOCUMENT_STORAGE_PLAN.md).
  */
@@ -68,6 +70,7 @@ export class MediaService {
     instructorId: string,
     contentType: string,
     contentLength: number,
+    slot: PhotoSlot = 1,
   ): Promise<AvatarUploadTicket> {
     if (!this.isAllowedMime(contentType)) {
       throw new BadRequestException(
@@ -83,7 +86,7 @@ export class MediaService {
       );
     }
 
-    const path = this.avatarPath(instructorId, contentType);
+    const path = this.photoPath(instructorId, contentType, slot);
     const signed = await this.storage.createSignedUploadUrl(this.bucket, path);
     const publicUrl = this.storage.getPublicUrl(this.bucket, path);
 
@@ -108,14 +111,18 @@ export class MediaService {
   async confirmAvatarUpload(
     instructorId: string,
     contentType: string,
+    slot: PhotoSlot = 1,
   ): Promise<InstructorProfile> {
     if (!this.isAllowedMime(contentType)) {
       throw new BadRequestException(
         `Unsupported content type '${contentType}'. Allowed: ${ALLOWED_AVATAR_MIME.join(', ')}`,
       );
     }
-    const path = this.avatarPath(instructorId, contentType);
+    const path = this.photoPath(instructorId, contentType, slot);
     const publicUrl = this.storage.getPublicUrl(this.bucket, path);
+    if (slot !== 1) {
+      return this.instructors.setAdditionalPhoto(instructorId, slot, publicUrl);
+    }
     const profile = await this.instructors.updateProfileById(instructorId, {
       profilePhotoUrl: publicUrl,
     });
@@ -123,11 +130,25 @@ export class MediaService {
     return profile;
   }
 
-  private avatarPath(
+  removePhoto(
+    instructorId: string,
+    slot: PhotoSlot,
+  ): Promise<InstructorProfile> {
+    if (slot !== 1) {
+      return this.instructors.setAdditionalPhoto(instructorId, slot, null);
+    }
+    return this.instructors.updateProfileById(instructorId, {
+      profilePhotoUrl: null,
+    });
+  }
+
+  private photoPath(
     instructorId: string,
     contentType: AllowedAvatarMime,
+    slot: PhotoSlot,
   ): string {
-    return `${instructorId}/avatar.${MIME_EXT[contentType]}`;
+    const name = slot === 1 ? 'avatar' : `photo-${slot}`;
+    return `${instructorId}/${name}.${MIME_EXT[contentType]}`;
   }
 
   private isAllowedMime(value: string): value is AllowedAvatarMime {

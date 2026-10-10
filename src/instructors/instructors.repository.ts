@@ -6,6 +6,7 @@ import {
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import {
+  AdditionalPhotoSlot,
   CertificationRow,
   InstructorProfilePatch,
   InstructorRow,
@@ -40,13 +41,19 @@ export abstract class InstructorsRepository {
     patch: InstructorProfilePatch,
   ): Promise<void>;
   abstract bumpProfilePhotoVersion(instructorId: string): Promise<void>;
+  abstract setAdditionalPhoto(
+    instructorId: string,
+    slot: AdditionalPhotoSlot,
+    url: string | null,
+  ): Promise<void>;
 }
 
 const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'bio_en_machine_translated, bio_zh_machine_translated, ' +
   'bio_en_translated_by, bio_zh_translated_by, date_of_birth, ' +
-  'profile_photo_url, preferred_language, approval_status, is_active, ' +
+  'profile_photo_url, photo_2_url, photo_3_url, preferred_language, ' +
+  'approval_status, is_active, ' +
   'min_student_age, inserted_at, updated_at';
 
 @Injectable()
@@ -215,6 +222,25 @@ export class SupabaseInstructorsRepository extends InstructorsRepository {
     if (error) {
       throw new InternalServerErrorException(
         `Failed to bump profile photo version: ${error.message}`,
+      );
+    }
+  }
+
+  async setAdditionalPhoto(
+    instructorId: string,
+    slot: AdditionalPhotoSlot,
+    url: string | null,
+  ): Promise<void> {
+    const { error } = await this.supabase
+      .from('instructors')
+      .update({
+        [`photo_${slot}_url`]: url,
+        [`photo_${slot}_version`]: new Date().toISOString(),
+      })
+      .eq('id', instructorId);
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to update photo ${slot}: ${error.message}`,
       );
     }
   }

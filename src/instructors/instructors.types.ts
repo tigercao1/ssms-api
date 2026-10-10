@@ -6,6 +6,7 @@
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type PreferredLanguage = 'en' | 'zh-CN';
+export type AdditionalPhotoSlot = 2 | 3;
 
 /** Core `instructors` row (subset we read/return). */
 export interface InstructorRow {
@@ -22,6 +23,8 @@ export interface InstructorRow {
   bio_zh_translated_by: string | null;
   date_of_birth: string | null;
   profile_photo_url: string | null;
+  photo_2_url: string | null;
+  photo_3_url: string | null;
   min_student_age: number;
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
@@ -70,6 +73,8 @@ export interface InstructorProfile {
   approvalStatus: ApprovalStatus;
   isActive: boolean;
   profilePhotoUrl: string | null;
+  photo2Url: string | null;
+  photo3Url: string | null;
   minStudentAge: number;
   teachingLocations: Array<{ id: string; key: string; name: string }>;
   languages: Array<{ id: string; key: string; name: string }>;

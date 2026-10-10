@@ -8,11 +8,21 @@ interface DbResult {
 
 /** Minimal chainable + thenable Supabase query-builder fake. */
 class QueryBuilder implements PromiseLike<DbResult> {
-  constructor(private readonly result: DbResult) {}
+  updates: unknown[] = [];
+  filters: Array<[string, unknown]> = [];
+  constructor(
+    private readonly result: DbResult,
+    readonly table: string,
+  ) {}
   select(): this {
     return this;
   }
-  eq(): this {
+  eq(column: string, value: unknown): this {
+    this.filters.push([column, value]);
+    return this;
+  }
+  update(values: unknown): this {
+    this.updates.push(values);
     return this;
   }
   insert(): this {
@@ -38,8 +48,11 @@ class FakeSupabase {
   next: DbResult = { data: null, error: null };
   rpcResult: { error: unknown } = { error: null };
   rpcCalls: Array<{ name: string; params: unknown }> = [];
-  from(): QueryBuilder {
-    return new QueryBuilder(this.next);
+  builders: QueryBuilder[] = [];
+  from(table: string): QueryBuilder {
+    const builder = new QueryBuilder(this.next, table);
+    this.builders.push(builder);
+    return builder;
   }
   rpc(name: string, params: unknown) {
     this.rpcCalls.push({ name, params });
@@ -250,5 +263,37 @@ describe('SupabaseInstructorsRepository', () => {
     await expect(repo.bumpProfilePhotoVersion('inst-1')).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
+  });
+
+  it.each([2, 3] as const)(
+    'setAdditionalPhoto writes slot %i url and a fresh version',
+    async (slot) => {
+      const { repo, fake } = makeRepo();
+      const before = Date.now();
+      await repo.setAdditionalPhoto('inst-1', slot, 'https://cdn.test/p.jpg');
+      const [builder] = fake.builders;
+      expect(builder.table).toBe('instructors');
+      expect(builder.filters).toEqual([['id', 'inst-1']]);
+      const [values] = builder.updates as Record<string, string>[];
+      expect(values[`photo_${slot}_url`]).toBe('https://cdn.test/p.jpg');
+      expect(
+        Date.parse(values[`photo_${slot}_version`]),
+      ).toBeGreaterThanOrEqual(before);
+      expect(Object.keys(values)).toHaveLength(2);
+    },
+  );
+
+  it('setAdditionalPhoto clears the url', async () => {
+    const { repo, fake } = makeRepo();
+    await repo.setAdditionalPhoto('inst-1', 2, null);
+    expect(fake.builders[0].updates[0]).toMatchObject({ photo_2_url: null });
+  });
+
+  it('setAdditionalPhoto throws on a DB error', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: null, error: { message: 'boom' } };
+    await expect(
+      repo.setAdditionalPhoto('inst-1', 3, null),
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
   });
 });

@@ -2,18 +2,40 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { BIO_TRANSLATOR } from './bio-translator.interface';
-import type { BioTranslator } from './bio-translator.interface';
+import type { BioLang, BioTranslator } from './bio-translator.interface';
 import type { BioTranslationJobRow } from './bio-translation-job.types';
 
 const BIO_JOBS_TABLE = 'bio_translation_jobs';
 const AUDIT_TABLE = 'audit_log';
 const BACKOFF_BASE_MS = 1_000;
+const BIO_MAX_LENGTH = 1_000;
+
+const HUMAN_TARGET = 'target bio was written by a human';
+
+interface TargetState {
+  text: string | null;
+  machineTranslated: boolean;
+}
+
+function targetColumns(lang: BioLang) {
+  return lang === 'en'
+    ? { text: 'bio_en', flag: 'bio_en_machine_translated' }
+    : { text: 'bio_zh', flag: 'bio_zh_machine_translated' };
+}
+
+function isWritable(target: TargetState): boolean {
+  return (
+    target.machineTranslated ||
+    target.text === null ||
+    target.text.trim() === ''
+  );
+}
 
 /** Outcome of draining a single job (for tests / observability). */
 export type WorkerOutcome =
   | 'idle' // nothing due
   | 'completed' // target field written + flag set
-  | 'skipped' // translator returned '' (stub / no provider) — left empty
+  | 'skipped' // stub returned '', or the target is human text — left as is
   | 'retried' // transient failure, re-queued with backoff
   | 'failed'; // gave up after max_attempts
 
@@ -49,6 +71,14 @@ export class TranslationWorkerService {
     }
 
     try {
+      const target = await this.loadTarget(job);
+      if (!target || !isWritable(target)) {
+        await this.markStatus(job.id, 'skipped', {
+          last_error: target ? HUMAN_TARGET : 'instructor not found',
+        });
+        return 'skipped';
+      }
+
       const translated = await this.translator.translate({
         text: job.source_text,
         from: job.source_lang,
@@ -61,7 +91,7 @@ export class TranslationWorkerService {
         return 'skipped';
       }
 
-      await this.applyTranslation(job, translated);
+      await this.applyTranslation(job, translated.trim(), target);
       await this.markStatus(job.id, 'completed');
       return 'completed';
     } catch (err) {
@@ -105,11 +135,39 @@ export class TranslationWorkerService {
     return { ...job, status: 'processing', attempts: job.attempts + 1 };
   }
 
+  private async loadTarget(
+    job: BioTranslationJobRow,
+  ): Promise<TargetState | null> {
+    const columns = targetColumns(job.target_lang);
+    const { data, error } = await this.supabase
+      .from('instructors')
+      .select(`${columns.text}, ${columns.flag}`)
+      .eq('id', job.instructor_id)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`instructor read failed: ${error.message}`);
+    }
+    if (!data) {
+      return null;
+    }
+    const row = data as unknown as Record<string, string | boolean | null>;
+    return {
+      text: (row[columns.text] as string | null) ?? null,
+      machineTranslated: row[columns.flag] === true,
+    };
+  }
+
   /** Writes the translated text into the target bio + sets its MT flag and model. */
   private async applyTranslation(
     job: BioTranslationJobRow,
     translated: string,
+    expected: TargetState,
   ): Promise<void> {
+    if (translated.length > BIO_MAX_LENGTH) {
+      throw new Error(
+        `translation is ${translated.length} characters, over the ${BIO_MAX_LENGTH} limit`,
+      );
+    }
     const modelId = this.translator.modelId;
     const patch =
       job.target_lang === 'en'
@@ -124,13 +182,23 @@ export class TranslationWorkerService {
             bio_zh_translated_by: modelId,
           };
 
-    const { error } = await this.supabase
+    const columns = targetColumns(job.target_lang);
+    const guardedUpdate = this.supabase
       .from('instructors')
       .update(patch)
-      .eq('id', job.instructor_id);
+      .eq('id', job.instructor_id)
+      .eq(columns.flag, expected.machineTranslated);
+    const { data, error } = await (
+      expected.text === null
+        ? guardedUpdate.is(columns.text, null)
+        : guardedUpdate.eq(columns.text, expected.text)
+    ).select('id');
 
     if (error) {
       throw new Error(`instructor update failed: ${error.message}`);
+    }
+    if (!data || data.length === 0) {
+      throw new Error(`${columns.text} changed while translating`);
     }
   }
 

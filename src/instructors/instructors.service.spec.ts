@@ -10,7 +10,10 @@ import {
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { plainToInstance } from 'class-transformer';
-import { TranslationQueuePort } from './translation-queue.port';
+import type {
+  BioChangeInput,
+  TranslationQueuePort,
+} from './translation-queue.port';
 
 function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
   return {
@@ -92,8 +95,14 @@ class FakeRepo extends InstructorsRepository {
     // reflect scalar fields back into the row so buildProfile sees the update
     const row = this.rows.find((r) => r.id === _id);
     if (row) {
-      if (patch.bio_en !== undefined) row.bio_en = patch.bio_en;
-      if (patch.bio_zh !== undefined) row.bio_zh = patch.bio_zh;
+      if (patch.bio_en !== undefined) {
+        row.bio_en = patch.bio_en;
+        row.bio_en_machine_translated = false;
+      }
+      if (patch.bio_zh !== undefined) {
+        row.bio_zh = patch.bio_zh;
+        row.bio_zh_machine_translated = false;
+      }
       if (patch.display_name_en !== undefined)
         row.display_name_en = patch.display_name_en;
       if (patch.min_student_age !== undefined)
@@ -108,17 +117,9 @@ class FakeRepo extends InstructorsRepository {
 }
 
 class FakeQueue implements TranslationQueuePort {
-  calls: Array<{
-    instructorId: string;
-    bioEn?: string | null;
-    bioZh?: string | null;
-  }> = [];
-  enqueueForProfile(snapshot: {
-    instructorId: string;
-    bioEn?: string | null;
-    bioZh?: string | null;
-  }): Promise<boolean> {
-    this.calls.push(snapshot);
+  calls: BioChangeInput[] = [];
+  enqueueForProfile(change: BioChangeInput): Promise<boolean> {
+    this.calls.push(structuredClone(change));
     return Promise.resolve(true);
   }
 }
@@ -441,21 +442,71 @@ describe('InstructorsService', () => {
       repo.rows.push(makeRow({ id: 'inst-1', auth_user_id: 'auth-1' }));
     });
 
-    it('hands the saved bios to the queue when bio_en is in the patch', async () => {
+    const empty = {
+      bioEn: null,
+      bioZh: null,
+      bioEnMachineTranslated: false,
+      bioZhMachineTranslated: false,
+    };
+
+    it('hands the bios before and after the save to the queue', async () => {
       await service.updateOwnProfile('auth-1', { bioEn: 'English bio' });
       expect(queue.calls).toEqual([
-        { instructorId: 'inst-1', bioEn: 'English bio', bioZh: null },
+        {
+          instructorId: 'inst-1',
+          before: empty,
+          after: { ...empty, bioEn: 'English bio' },
+        },
       ]);
     });
 
     it('hands the saved bios to the queue when bio_zh is in the patch', async () => {
       await service.updateOwnProfile('auth-1', { bioZh: '中文简介' });
       expect(queue.calls).toEqual([
-        { instructorId: 'inst-1', bioEn: null, bioZh: '中文简介' },
+        {
+          instructorId: 'inst-1',
+          before: empty,
+          after: { ...empty, bioZh: '中文简介' },
+        },
       ]);
     });
 
-    it('still delegates when both bios are set (the queue decides to no-op)', async () => {
+    it('does not resend an unchanged bio, so its machine translation survives', async () => {
+      repo.rows = [
+        makeRow({
+          id: 'inst-1',
+          auth_user_id: 'auth-1',
+          bio_en: 'Old',
+          bio_zh: '机器翻译',
+          bio_zh_machine_translated: true,
+        }),
+      ];
+      await service.updateOwnProfile('auth-1', {
+        bioEn: 'New',
+        bioZh: '机器翻译',
+      });
+
+      expect(repo.lastPatch).toEqual({ bio_en: 'New' });
+      expect(queue.calls).toEqual([
+        {
+          instructorId: 'inst-1',
+          before: {
+            bioEn: 'Old',
+            bioZh: '机器翻译',
+            bioEnMachineTranslated: false,
+            bioZhMachineTranslated: true,
+          },
+          after: {
+            bioEn: 'New',
+            bioZh: '机器翻译',
+            bioEnMachineTranslated: false,
+            bioZhMachineTranslated: true,
+          },
+        },
+      ]);
+    });
+
+    it('does NOT call the queue when both bios are resent unchanged', async () => {
       repo.rows = [
         makeRow({
           id: 'inst-1',
@@ -465,9 +516,14 @@ describe('InstructorsService', () => {
         }),
       ];
       await service.updateOwnProfile('auth-1', { bioEn: 'x', bioZh: 'y' });
-      expect(queue.calls).toEqual([
-        { instructorId: 'inst-1', bioEn: 'x', bioZh: 'y' },
-      ]);
+      expect(repo.lastPatch).toEqual({});
+      expect(queue.calls).toEqual([]);
+    });
+
+    it('treats an empty string and null as the same bio', async () => {
+      await service.updateOwnProfile('auth-1', { bioEn: '' });
+      expect(repo.lastPatch).toEqual({});
+      expect(queue.calls).toEqual([]);
     });
 
     it('does NOT call the queue when no bio field is part of the update', async () => {

@@ -24,11 +24,19 @@ export interface BioTranslationJobRow {
   updated_at: string;
 }
 
-/** Bio fields as supplied by a profile save, used to decide enqueueing. */
-export interface BioSnapshot {
+/** Bio fields + machine-translated flags of one instructor at one moment. */
+export interface BioState {
+  bioEn: string | null;
+  bioZh: string | null;
+  bioEnMachineTranslated: boolean;
+  bioZhMachineTranslated: boolean;
+}
+
+/** Bio state before and after a profile save, used to decide enqueueing. */
+export interface BioChange {
   instructorId: string;
-  bioEn?: string | null;
-  bioZh?: string | null;
+  before: BioState;
+  after: BioState;
 }
 
 /** A single translation to enqueue (source -> target). */

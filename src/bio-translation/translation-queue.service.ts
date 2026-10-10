@@ -1,8 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import type { BioLang } from './bio-translator.interface';
 import type {
-  BioSnapshot,
+  BioChange,
+  BioState,
   TranslationJobPlan,
 } from './bio-translation-job.types';
 
@@ -13,40 +15,57 @@ function isEmptyBio(value: string | null | undefined): boolean {
   return value == null || value.trim().length === 0;
 }
 
+function textOf(state: BioState, lang: BioLang): string {
+  return ((lang === 'en' ? state.bioEn : state.bioZh) ?? '').trim();
+}
+
+function isMachineTranslated(state: BioState, lang: BioLang): boolean {
+  return lang === 'en'
+    ? state.bioEnMachineTranslated
+    : state.bioZhMachineTranslated;
+}
+
+function isHumanEdit(change: BioChange, lang: BioLang): boolean {
+  return (
+    textOf(change.before, lang) !== textOf(change.after, lang) &&
+    !isMachineTranslated(change.after, lang)
+  );
+}
+
 /**
  * Decides which translation job (if any) a profile save should enqueue.
  *
- * Per BIO_TRANSLATION_PLAN.md: enqueue **only when exactly one** of the two
- * bios is non-empty and the other is empty — translate the present one into
- * the missing one. If both or neither are filled, there is nothing to do.
+ * Translate language S into T when S was edited by a human in this save and T
+ * is empty or machine-translated. Human text in T is never overwritten, and a
+ * save that edits both languages enqueues nothing. Names are never translated.
  *
  * Pure + exported so it can be unit-tested without a DB.
  */
 export function planTranslationJob(
-  snapshot: BioSnapshot,
+  change: BioChange,
 ): TranslationJobPlan | null {
-  const enFilled = !isEmptyBio(snapshot.bioEn);
-  const zhFilled = !isEmptyBio(snapshot.bioZh);
-
-  if (enFilled === zhFilled) {
-    // both filled, or both empty — nothing to translate.
+  const enEdited = isHumanEdit(change, 'en');
+  const zhEdited = isHumanEdit(change, 'zh-CN');
+  if (enEdited === zhEdited) {
     return null;
   }
 
-  if (enFilled) {
-    return {
-      instructorId: snapshot.instructorId,
-      sourceLang: 'en',
-      targetLang: 'zh-CN',
-      sourceText: snapshot.bioEn!.trim(),
-    };
+  const sourceLang: BioLang = enEdited ? 'en' : 'zh-CN';
+  const targetLang: BioLang = enEdited ? 'zh-CN' : 'en';
+  const sourceText = textOf(change.after, sourceLang);
+  const target = textOf(change.after, targetLang);
+  if (
+    isEmptyBio(sourceText) ||
+    !(isEmptyBio(target) || isMachineTranslated(change.after, targetLang))
+  ) {
+    return null;
   }
 
   return {
-    instructorId: snapshot.instructorId,
-    sourceLang: 'zh-CN',
-    targetLang: 'en',
-    sourceText: snapshot.bioZh!.trim(),
+    instructorId: change.instructorId,
+    sourceLang,
+    targetLang,
+    sourceText,
   };
 }
 
@@ -69,25 +88,28 @@ export class TranslationQueueService {
   ) {}
 
   /**
-   * Enqueues a translation job for the just-saved profile if exactly one bio
-   * language is filled. Supersedes any still-pending job for the instructor so
-   * that re-editing the source re-translates from the latest text.
+   * Enqueues a translation job for the just-saved profile when
+   * {@link planTranslationJob} asks for one. Supersedes any outstanding job for
+   * the same instructor and direction so that re-editing the source
+   * re-translates from the latest text.
    *
    * @returns `true` if a job was enqueued, `false` otherwise.
    */
-  async enqueueForProfile(snapshot: BioSnapshot): Promise<boolean> {
-    const plan = planTranslationJob(snapshot);
+  async enqueueForProfile(change: BioChange): Promise<boolean> {
+    const plan = planTranslationJob(change);
     if (!plan) {
       return false;
     }
 
     try {
-      // Invalidate any outstanding job for this instructor so a source re-edit
-      // re-translates from the newest text (keeps the partial-unique index sat).
+      // Invalidate any outstanding job for this instructor + direction so a
+      // source re-edit re-translates from the newest text (keeps the
+      // partial-unique index sat).
       const { error: clearError } = await this.supabase
         .from(BIO_JOBS_TABLE)
         .delete()
         .eq('instructor_id', plan.instructorId)
+        .eq('target_lang', plan.targetLang)
         .in('status', ['pending', 'processing']);
       if (clearError) {
         throw new Error(clearError.message);

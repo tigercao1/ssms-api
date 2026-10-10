@@ -43,10 +43,12 @@ export interface ShopifySyncRunResult {
   processing: boolean;
 }
 
+export type InstructorShopifyEntryStatus = 'active' | 'draft';
+
 export interface InstructorShopifySyncStatus {
   handle: string | null;
   metaobjectId: string | null;
-  status: string | null;
+  status: InstructorShopifyEntryStatus | null;
   lastSyncedAt: string | null;
   lastError: string | null;
   queued: boolean;
@@ -143,7 +145,7 @@ export class ShopifySyncAdminService {
     return {
       handle,
       metaobjectId,
-      status: state?.last_status ?? null,
+      status: toEntryStatus(state?.last_status),
       lastSyncedAt: state?.last_synced_at ?? null,
       lastError: queued?.last_error ?? null,
       queued: queued !== null,
@@ -180,4 +182,10 @@ export class ShopifySyncAdminService {
       DEFAULT_STOREFRONT_PREVIEW_BASE_URL;
     return base.endsWith('/') ? base : `${base}/`;
   }
+}
+
+function toEntryStatus(
+  value: string | null | undefined,
+): InstructorShopifyEntryStatus | null {
+  return value === 'active' || value === 'draft' ? value : null;
 }

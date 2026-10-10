@@ -14,7 +14,7 @@ on conflict (id) do nothing;
 
 alter table shopify_sync_settings enable row level security;
 alter table shopify_sync_settings force row level security;
-revoke all on shopify_sync_settings from anon, authenticated;
+revoke all on shopify_sync_settings from public, anon, authenticated;
 
 create or replace function public.enqueue_one_instructor_sync(
   p_instructor_id uuid

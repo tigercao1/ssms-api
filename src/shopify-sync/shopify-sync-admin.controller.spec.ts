@@ -460,6 +460,24 @@ describe('/admin/shopify-sync', () => {
       });
     });
 
+    it('reports an unrecognised stored status as null', async () => {
+      ctx = await build();
+      ctx.settingsRepo.instructors.add(INSTRUCTOR_ID);
+      await ctx.syncRepo.saveState(INSTRUCTOR_ID, {
+        shopify_handle: 'eddie',
+        shopify_metaobject_id: 'gid://shopify/Metaobject/1',
+        last_status: 'something-else',
+        last_synced_at: '2026-10-10T03:00:00.000Z',
+      });
+
+      const res = await http()
+        .get(`/admin/shopify-sync/instructors/${INSTRUCTOR_ID}`)
+        .set('Authorization', admin)
+        .expect(200);
+
+      expect(res.body).toEqual(expect.objectContaining({ status: null }));
+    });
+
     it('reports a never-synced instructor', async () => {
       ctx = await build();
       ctx.settingsRepo.instructors.add(INSTRUCTOR_ID);

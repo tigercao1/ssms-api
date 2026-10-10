@@ -27,7 +27,7 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
 export function buildCorsOptions(origins: string[]): CorsOptions {
   return {
     origin: origins,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
     credentials: false,
     maxAge: 86400, // cache preflight for 24h

@@ -29,7 +29,7 @@ describe('buildCorsOptions', () => {
     expect(opts.credentials).toBe(false);
     expect(opts.allowedHeaders).toContain('Authorization');
     expect(opts.methods).toEqual(
-      expect.arrayContaining(['GET', 'POST', 'PATCH', 'OPTIONS']),
+      expect.arrayContaining(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     );
   });
 });

@@ -23,6 +23,9 @@ export const AUDIT_ACTIONS = {
   authAdminGuardFailure: 'auth.admin_guard_failure',
   systemBootstrapAdmin: 'system.bootstrap_admin',
   notificationFailure: 'notification.failure',
+  shopifySyncEnable: 'shopify_sync.enable',
+  shopifySyncDisable: 'shopify_sync.disable',
+  shopifySyncRun: 'shopify_sync.run',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

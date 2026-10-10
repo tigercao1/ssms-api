@@ -15,9 +15,16 @@ const REQUIRED_ENV = [
 ] as const;
 
 export function validateEnv(config: Record<string, unknown>) {
-  const missing = REQUIRED_ENV.filter(
+  const missing: string[] = REQUIRED_ENV.filter(
     (key) => config[key] === undefined || config[key] === '',
   );
+  if (
+    config.NODE_ENV === 'production' &&
+    (config.DOCS_INTERNAL_TOKEN === undefined ||
+      config.DOCS_INTERNAL_TOKEN === '')
+  ) {
+    missing.push('DOCS_INTERNAL_TOKEN');
+  }
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(', ')}. ` +

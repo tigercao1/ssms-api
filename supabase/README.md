@@ -39,6 +39,9 @@ database that already has those migrations.
 Checked on every PR by `scripts/check-migrations.sh` (`Migration rules` workflow):
 
 1. Files already on `main` are immutable. To change something, add a new file.
+   Exception: a migration that failed and was never applied anywhere may be
+   fixed in place with the `migration:edit-unapplied` label. The runner still
+   refuses to run if an edited file is recorded as applied.
 2. Name new files `NNN_snake_case.sql`, numbered above every file on `main`.
 3. No `begin` / `commit` / `rollback` and no `create index concurrently`: the
    runner owns the transaction.
@@ -53,12 +56,48 @@ files on top of a database built from the base branch.
 
 Seeds go in `seed.sql` (reference data — owned by the Reference-data agent, T4.2).
 
+## Release pipeline
+
+`.github/workflows/release.yml` runs after CI passes on a push to `main`:
+
+1. **Migrate dev**: `scripts/migrate.sh apply` against the dev project.
+2. **Back up and migrate prod**: if anything is pending, an encrypted dump of
+   prod is uploaded as the `pre-migration-backup-<run id>` artifact, then
+   `apply`.
+3. **Deploy**: `flyctl deploy` of the same commit.
+
+Each stage needs the previous one. Database and Fly credentials live in the
+`dev` and `production` GitHub Environments, which only `main` can use.
+`.github/workflows/schema-drift.yml` compares dev and prod every night. If it
+fails, see the difference with
+`diff <(SSMS_ENV=prod ./scripts/db.sh fingerprint) <(SSMS_ENV=dev ./scripts/db.sh fingerprint)`.
+
+Do not change either schema outside this pipeline (Supabase dashboard, manual
+`psql`): the nightly check will fail.
+
+If a stage fails:
+
+- **Dev failed**: nothing was applied anywhere, so the next release would fail
+  the same way. Fix the file in a new PR with the `migration:edit-unapplied`
+  label.
+- **Prod failed, dev succeeded**: prod is unchanged and the deploy did not run,
+  but dev is ahead. Usually a data problem dev does not have (e.g. `set not null`
+  over existing nulls). Fix the data on prod, then re-run the Release workflow
+  (Actions → Release → Run workflow). Prod cannot move past that migration
+  until it applies, so a later corrective migration does not help on its own.
+- **Deploy failed**: migrations are applied; re-run the workflow, which skips
+  them and deploys again.
+- **Migration applied but was wrong**: write a new migration that reverses it.
+  Restoring the pre-migration backup is the last resort, since it loses every
+  write made after the dump.
+
 ## Backups
 
-`.github/workflows/backup.yml` dumps the prod `public` schema daily and uploads it
-as the `db-backup` artifact, encrypted with [age](https://age-encryption.org) to
-the public key in the `BACKUP_AGE_RECIPIENT` repo variable. Only the holder of the
-matching private key can read it.
+`.github/workflows/backup.yml` dumps the prod `public` schema daily
+(`scripts/backup-db.sh`) and uploads it as the `db-backup` artifact, encrypted
+with [age](https://age-encryption.org) to the public key in the
+`BACKUP_AGE_RECIPIENT` repo variable. Only the holder of the matching private
+key can read it. Release runs upload `pre-migration-backup-<run id>` the same way.
 
 ```bash
 gh run download <run-id> -n db-backup

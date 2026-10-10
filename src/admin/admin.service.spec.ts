@@ -2,7 +2,9 @@ import {
   BadRequestException,
   ConflictException,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
+import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { Test } from '@nestjs/testing';
 import { InstructorsService } from '../instructors/instructors.service';
 import { InstructorsRepository } from '../instructors/instructors.repository';
@@ -63,9 +65,14 @@ describe('AdminService', () => {
   const mailer = {
     sendInstructorNotification: jest.fn().mockResolvedValue('sent'),
   };
+  const translator = {
+    modelId: 'gemini-test',
+    translate: jest.fn<Promise<string>, [Record<string, unknown>]>(),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    translator.translate.mockRejectedValue(new Error('no provider'));
     const moduleRef = await Test.createTestingModule({
       providers: [
         AdminService,
@@ -73,6 +80,7 @@ describe('AdminService', () => {
         { provide: InstructorsService, useValue: instructors },
         { provide: AuditService, useValue: audit },
         { provide: MailerService, useValue: mailer },
+        { provide: BIO_TRANSLATOR, useValue: translator },
       ],
     }).compile();
 
@@ -403,6 +411,7 @@ describe('AdminService', () => {
           { provide: AdminRepository, useValue: repo },
           { provide: AuditService, useValue: audit },
           { provide: MailerService, useValue: mailer },
+          { provide: BIO_TRANSLATOR, useValue: translator },
         ],
       }).compile();
 
@@ -424,6 +433,9 @@ describe('AdminService', () => {
         id: 'r1',
         key: 'location.whistler',
         name: 'Whistler',
+        name_zh: '惠斯勒',
+        name_en_translated_by: null,
+        name_zh_translated_by: null,
         sort_order: 0,
         is_active: true,
       };
@@ -432,21 +444,156 @@ describe('AdminService', () => {
       const result = await service.addReference('teaching-locations', {
         key: 'location.whistler',
         name: 'Whistler',
+        nameZh: '惠斯勒',
       });
 
       expect(repo.insertReference).toHaveBeenCalledWith('teaching_locations', {
         key: 'location.whistler',
         name: 'Whistler',
+        nameZh: '惠斯勒',
+        nameEnTranslatedBy: null,
+        nameZhTranslatedBy: null,
         sortOrder: 0,
         isActive: true,
       });
+      expect(translator.translate).not.toHaveBeenCalled();
       expect(result).toEqual({
         id: 'r1',
         key: 'location.whistler',
         name: 'Whistler',
+        nameZh: '惠斯勒',
+        nameEnTranslatedBy: null,
+        nameZhTranslatedBy: null,
         sortOrder: 0,
         isActive: true,
       });
+    });
+
+    it('translates a missing Chinese name inline and records the model', async () => {
+      translator.translate.mockResolvedValue(' 惠斯勒 ');
+      repo.insertReference.mockImplementation(
+        (_table: string, input: Record<string, unknown>) =>
+          Promise.resolve({
+            id: 'r1',
+            key: input.key,
+            name: input.name,
+            name_zh: input.nameZh,
+            name_en_translated_by: input.nameEnTranslatedBy,
+            name_zh_translated_by: input.nameZhTranslatedBy,
+            sort_order: 0,
+            is_active: true,
+          }),
+      );
+
+      const result = await service.addReference('teaching-locations', {
+        key: 'location.whistler',
+        name: 'Whistler',
+      });
+
+      expect(translator.translate).toHaveBeenCalledWith({
+        text: 'Whistler',
+        from: 'en',
+        to: 'zh-CN',
+        kind: 'reference-name',
+        timeoutMs: 8000,
+      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          name: 'Whistler',
+          nameZh: '惠斯勒',
+          nameEnTranslatedBy: null,
+          nameZhTranslatedBy: 'gemini-test',
+        }),
+      );
+    });
+
+    it('still saves an English-only row when its translation fails', async () => {
+      repo.insertReference.mockResolvedValue({});
+
+      await service.addReference('languages', {
+        key: 'language.fr',
+        name: 'French',
+      });
+
+      expect(repo.insertReference).toHaveBeenCalledWith(
+        'languages',
+        expect.objectContaining({
+          name: 'French',
+          nameZh: null,
+          nameZhTranslatedBy: null,
+        }),
+      );
+    });
+
+    it('fills the English name from a Chinese-only row', async () => {
+      translator.translate.mockResolvedValue('Mandarin');
+      repo.insertReference.mockResolvedValue({});
+
+      await service.addReference('languages', {
+        key: 'language.zh',
+        nameZh: '普通话',
+      });
+
+      expect(translator.translate).toHaveBeenCalledWith(
+        expect.objectContaining({ text: '普通话', from: 'zh-CN', to: 'en' }),
+      );
+      expect(repo.insertReference).toHaveBeenCalledWith(
+        'languages',
+        expect.objectContaining({
+          name: 'Mandarin',
+          nameZh: '普通话',
+          nameEnTranslatedBy: 'gemini-test',
+          nameZhTranslatedBy: null,
+        }),
+      );
+    });
+
+    it.each([
+      ['the provider fails', () => Promise.reject(new Error('HTTP 503'))],
+      ['the provider returns nothing', () => Promise.resolve('  ')],
+      ['the result is too long', () => Promise.resolve('x'.repeat(201))],
+    ])(
+      'returns 422 for a Chinese-only row when %s',
+      async (_label, outcome) => {
+        translator.translate.mockImplementation(outcome);
+
+        const error = await service
+          .addReference('languages', { key: 'language.zh', nameZh: '普通话' })
+          .catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(UnprocessableEntityException);
+        expect((error as Error).message).toBe(
+          'English name required (translation unavailable)',
+        );
+        expect(repo.insertReference).not.toHaveBeenCalled();
+      },
+    );
+
+    it('returns 422 when the inline translation takes longer than 8 s', async () => {
+      jest.useFakeTimers();
+      try {
+        translator.translate.mockImplementation(() => new Promise(() => {}));
+        const pending = service
+          .addReference('languages', { key: 'language.zh', nameZh: '普通话' })
+          .catch((err: unknown) => err);
+
+        await jest.advanceTimersByTimeAsync(8000);
+
+        expect(await pending).toBeInstanceOf(UnprocessableEntityException);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('rejects a row with neither name (400)', async () => {
+      await expect(
+        service.addReference('languages', {
+          key: 'language.x',
+          name: ' ',
+          nameZh: '',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.insertReference).not.toHaveBeenCalled();
     });
 
     it('maps a duplicate key (23505) to 409 Conflict', async () => {
@@ -467,8 +614,16 @@ describe('AdminService', () => {
       id: refId,
       key: 'location.whistler',
       name: 'Whistler',
+      name_zh: null,
+      name_en_translated_by: null,
+      name_zh_translated_by: null,
       sort_order: 1,
       is_active: true,
+    };
+    const recordTranslation = {
+      nameZh: null,
+      nameEnTranslatedBy: null,
+      nameZhTranslatedBy: null,
     };
 
     it('lists every row of the mapped table, inactive included', async () => {
@@ -485,6 +640,7 @@ describe('AdminService', () => {
           id: refId,
           key: 'location.whistler',
           name: 'Whistler',
+          ...recordTranslation,
           sortOrder: 1,
           isActive: true,
         },
@@ -492,6 +648,7 @@ describe('AdminService', () => {
           id: 'r2',
           key: 'location.old',
           name: 'Whistler',
+          ...recordTranslation,
           sortOrder: 1,
           isActive: false,
         },
@@ -555,9 +712,156 @@ describe('AdminService', () => {
       expect(repo.updateReference).toHaveBeenCalledWith(
         'teaching_locations',
         refId,
-        { name: 'Whistler Blackcomb', sort_order: 3 },
+        {
+          name: 'Whistler Blackcomb',
+          name_en_translated_by: null,
+          sort_order: 3,
+        },
       );
       expect(result.key).toBe('location.whistler');
+    });
+
+    describe('Chinese names', () => {
+      beforeEach(() => repo.updateReference.mockResolvedValue(location));
+
+      async function patchFor(
+        current: Partial<ReferenceRow>,
+        input: Record<string, unknown>,
+      ) {
+        repo.findReferenceById.mockResolvedValue({ ...location, ...current });
+        await service.updateReference('teaching-locations', refId, input);
+        const [call] = repo.updateReference.mock.calls as unknown[][];
+        return call[2] as Record<string, unknown>;
+      }
+
+      it('translates an English edit into an empty Chinese name', async () => {
+        translator.translate.mockResolvedValue('惠斯勒黑梳山');
+
+        expect(await patchFor({}, { name: 'Whistler Blackcomb' })).toEqual({
+          name: 'Whistler Blackcomb',
+          name_en_translated_by: null,
+          name_zh: '惠斯勒黑梳山',
+          name_zh_translated_by: 'gemini-test',
+        });
+      });
+
+      it('replaces a machine-translated Chinese name after an English edit', async () => {
+        translator.translate.mockResolvedValue('惠斯勒黑梳山');
+
+        expect(
+          await patchFor(
+            { name_zh: '惠斯勒', name_zh_translated_by: 'gemini-old' },
+            { name: 'Whistler Blackcomb' },
+          ),
+        ).toEqual(
+          expect.objectContaining({
+            name_zh: '惠斯勒黑梳山',
+            name_zh_translated_by: 'gemini-test',
+          }),
+        );
+      });
+
+      it('never overwrites a Chinese name an admin wrote', async () => {
+        const patch = await patchFor(
+          { name_zh: '惠斯勒' },
+          { name: 'Whistler Blackcomb' },
+        );
+
+        expect(translator.translate).not.toHaveBeenCalled();
+        expect(patch).toEqual({
+          name: 'Whistler Blackcomb',
+          name_en_translated_by: null,
+        });
+      });
+
+      it('translates a Chinese edit into a machine-translated English name', async () => {
+        translator.translate.mockResolvedValue('Whistler Blackcomb');
+
+        expect(
+          await patchFor(
+            { name_en_translated_by: 'gemini-old', name_zh: '惠斯勒' },
+            { nameZh: '惠斯勒黑梳山' },
+          ),
+        ).toEqual({
+          name_zh: '惠斯勒黑梳山',
+          name_zh_translated_by: null,
+          name: 'Whistler Blackcomb',
+          name_en_translated_by: 'gemini-test',
+        });
+      });
+
+      it('never overwrites an English name an admin wrote', async () => {
+        expect(await patchFor({}, { nameZh: '惠斯勒' })).toEqual({
+          name_zh: '惠斯勒',
+          name_zh_translated_by: null,
+        });
+        expect(translator.translate).not.toHaveBeenCalled();
+      });
+
+      it('keeps the old English name when translating a Chinese edit fails', async () => {
+        expect(
+          await patchFor(
+            { name_en_translated_by: 'gemini-old' },
+            { nameZh: '惠斯勒' },
+          ),
+        ).toEqual({ name_zh: '惠斯勒', name_zh_translated_by: null });
+      });
+
+      it('does not translate when both names are edited', async () => {
+        expect(
+          await patchFor(
+            { name_zh_translated_by: 'gemini-old', name_zh: '旧' },
+            { name: 'Whistler Blackcomb', nameZh: '惠斯勒黑梳山' },
+          ),
+        ).toEqual({
+          name: 'Whistler Blackcomb',
+          name_en_translated_by: null,
+          name_zh: '惠斯勒黑梳山',
+          name_zh_translated_by: null,
+        });
+        expect(translator.translate).not.toHaveBeenCalled();
+      });
+
+      it('an admin re-saving a machine translation unchanged keeps its badge', async () => {
+        expect(
+          await patchFor(
+            { name_zh: '惠斯勒', name_zh_translated_by: 'gemini-old' },
+            { nameZh: '惠斯勒', sortOrder: 2 },
+          ),
+        ).toEqual({ name_zh: '惠斯勒', sort_order: 2 });
+      });
+
+      it('clears the Chinese name and its badge on an empty value', async () => {
+        expect(
+          await patchFor(
+            { name_zh: '惠斯勒', name_zh_translated_by: 'gemini-old' },
+            { nameZh: '' },
+          ),
+        ).toEqual({ name_zh: null, name_zh_translated_by: null });
+      });
+
+      it('returns the Chinese name and provenance on the record', async () => {
+        repo.findReferenceById.mockResolvedValue(location);
+        repo.updateReference.mockResolvedValue({
+          ...location,
+          name_zh: '惠斯勒',
+          name_zh_translated_by: 'gemini-test',
+        });
+
+        const result = await service.updateReference(
+          'teaching-locations',
+          refId,
+          { name: 'Whistler' },
+        );
+
+        expect(result).toEqual(
+          expect.objectContaining({
+            nameZh: '惠斯勒',
+            nameEnTranslatedBy: null,
+            nameZhTranslatedBy: 'gemini-test',
+          }),
+        );
+      });
     });
 
     it('rejects an empty patch (400) without writing', async () => {
@@ -642,6 +946,7 @@ describe('AdminService', () => {
         id: refId,
         key: 'location.whistler',
         name: 'Whistler',
+        ...recordTranslation,
         sortOrder: 1,
         isActive: true,
         removedLinkCount: 2,

@@ -48,6 +48,7 @@ export interface PublicRefRow {
   instructor_id: string;
   key: string;
   name: string;
+  name_zh: string | null;
   sort_order: number;
 }
 

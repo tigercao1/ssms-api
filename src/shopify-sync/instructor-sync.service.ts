@@ -90,7 +90,7 @@ export class InstructorSyncService {
       last_status: 'active',
     });
     await this.photos.discard(photo.replacedFileId);
-    await this.translations.apply(entry.id, englishTranslations(instructor));
+    await this.translations.apply(entry.id, englishTranslations(snapshot));
     return 'active';
   }
 

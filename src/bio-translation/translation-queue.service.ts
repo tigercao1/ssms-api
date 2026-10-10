@@ -102,9 +102,8 @@ export class TranslationQueueService {
     }
 
     try {
-      // Invalidate any outstanding job for this instructor + direction so a
-      // source re-edit re-translates from the newest text (keeps the
-      // partial-unique index sat).
+      // Invalidate outstanding jobs for this instructor + direction so a source
+      // re-edit re-translates from the newest text (keeps the unique index sat).
       const { error: clearError } = await this.supabase
         .from(BIO_JOBS_TABLE)
         .delete()

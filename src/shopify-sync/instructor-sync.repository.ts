@@ -9,6 +9,7 @@ import type {
   SyncCertRow,
   SyncInstructorRow,
   SyncQueueRow,
+  SyncRefName,
   SyncTrainerRow,
 } from './instructor-sync.types';
 
@@ -24,6 +25,7 @@ interface DbError {
 
 interface RefJoin {
   name: string;
+  name_zh: string | null;
   sort_order: number;
   is_active: boolean;
 }
@@ -236,10 +238,12 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
     junction: string,
     fkColumn: string,
     refTable: string,
-  ): Promise<string[]> {
+  ): Promise<SyncRefName[]> {
     const { data, error } = await this.supabase
       .from(junction)
-      .select(`${refTable}:${fkColumn} ( name, sort_order, is_active )`)
+      .select(
+        `${refTable}:${fkColumn} ( name, name_zh, sort_order, is_active )`,
+      )
       .eq('instructor_id', instructorId);
     check(error, `load ${refTable}`);
     return ((data ?? []) as unknown as Record<string, RefJoin | null>[])
@@ -248,7 +252,7 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
       .sort(
         (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
       )
-      .map((ref) => ref.name);
+      .map((ref) => ({ name: ref.name, name_zh: ref.name_zh ?? null }));
   }
 
   private async rows<T>(

@@ -17,6 +17,11 @@ export class UpdateReferenceDto {
   name?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  nameZh?: string | null;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)

@@ -1,6 +1,10 @@
 import { snapshotOf } from '../../test/helpers/shopify-sync-fakes';
 import { buildInstructorFields } from './instructor-fields.builder';
-import type { InstructorSnapshot } from './instructor-sync.types';
+import type { InstructorSnapshot, SyncRefName } from './instructor-sync.types';
+
+function refs(...names: string[]): SyncRefName[] {
+  return names.map((name) => ({ name, name_zh: null }));
+}
 
 function fieldsOf(
   snapshot: InstructorSnapshot,
@@ -18,10 +22,10 @@ describe('buildInstructorFields', () => {
   it('writes Chinese base values, lists as JSON, min age as text and the SSMS id', () => {
     const fields = fieldsOf(
       snapshotOf({
-        locations: ['Whistler', 'Blue Mountain'],
-        languages: ['English', 'Mandarin'],
-        courseLevels: ['Beginner', 'Intermediate'],
-        examPreparations: ['CSIA Level 1 prep'],
+        locations: refs('Whistler', 'Blue Mountain'),
+        languages: refs('English', 'Mandarin'),
+        courseLevels: refs('Beginner', 'Intermediate'),
+        examPreparations: refs('CSIA Level 1 prep'),
       }),
     );
     expect(fields).toEqual({
@@ -32,6 +36,28 @@ describe('buildInstructorFields', () => {
       languages: '["English","Mandarin"]',
       min_age: '6',
       ssms_id: '3f1c2b7a-9d4e-4c1a-8b2f-6a7e5d4c3b2a',
+    });
+  });
+
+  it('uses the Chinese reference names for the base, falling back to English', () => {
+    const fields = fieldsOf(
+      snapshotOf({
+        locations: [
+          { name: 'Whistler', name_zh: '惠斯勒' },
+          { name: 'Blue Mountain', name_zh: null },
+        ],
+        languages: [
+          { name: 'English', name_zh: '英语' },
+          { name: 'Mandarin', name_zh: ' ' },
+        ],
+        courseLevels: [{ name: 'Beginner', name_zh: '新手' }],
+        examPreparations: [{ name: 'CSIA Level 1 prep', name_zh: null }],
+      }),
+    );
+    expect(fields).toMatchObject({
+      client_groups: '新手，CSIA Level 1 prep',
+      locations: '["惠斯勒","Blue Mountain"]',
+      languages: '["英语","Mandarin"]',
     });
   });
 

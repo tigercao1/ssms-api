@@ -128,6 +128,9 @@ export interface ReferenceRow {
   id: string;
   key: string;
   name: string;
+  name_zh: string | null;
+  name_en_translated_by: string | null;
+  name_zh_translated_by: string | null;
   sort_order: number;
   is_active: boolean;
 }
@@ -137,6 +140,9 @@ export interface ReferenceRecord {
   id: string;
   key: string;
   name: string;
+  nameZh: string | null;
+  nameEnTranslatedBy: string | null;
+  nameZhTranslatedBy: string | null;
   sortOrder: number;
   isActive: boolean;
 }
@@ -145,18 +151,25 @@ export interface ReferenceRecord {
 export interface CreateReferenceInput {
   key: string;
   name: string;
+  nameZh: string | null;
+  nameEnTranslatedBy: string | null;
+  nameZhTranslatedBy: string | null;
   sortOrder: number;
   isActive: boolean;
 }
 
 export interface UpdateReferenceInput {
   name?: string;
+  nameZh?: string | null;
   sortOrder?: number;
   isActive?: boolean;
 }
 
 export interface ReferencePatch {
   name?: string;
+  name_zh?: string | null;
+  name_en_translated_by?: string | null;
+  name_zh_translated_by?: string | null;
   sort_order?: number;
   is_active?: boolean;
 }

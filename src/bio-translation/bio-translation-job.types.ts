@@ -24,7 +24,6 @@ export interface BioTranslationJobRow {
   updated_at: string;
 }
 
-/** Bio fields + machine-translated flags of one instructor at one moment. */
 export interface BioState {
   bioEn: string | null;
   bioZh: string | null;

@@ -19,6 +19,12 @@ describe('UpdateReferenceDto validation', () => {
     ).toEqual([]);
   });
 
+  it('accepts a Chinese name, or null to clear it', () => {
+    expect(errorsOn({ nameZh: '惠斯勒' })).toEqual([]);
+    expect(errorsOn({ nameZh: null })).toEqual([]);
+    expect(errorsOn({ nameZh: 'x'.repeat(201) })).toEqual(['nameZh']);
+  });
+
   it('rejects key because it is not editable', () => {
     expect(errorsOn({ key: 'location.other', isActive: true })).toEqual([
       'key',

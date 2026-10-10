@@ -10,12 +10,13 @@ import { SUPABASE_CLIENT } from '../database/supabase-client.token';
  * Shape returned to API consumers for every reference-data list.
  *
  * `key` is the stable i18n key (e.g. `language.fr`) the frontend uses to look
- * up a translated label; `name` is the canonical/default display string.
+ * up a translated label; `name` / `nameZh` are the English / Chinese names.
  */
 export interface ReferenceItem {
   id: string;
   key: string;
   name: string;
+  nameZh: string | null;
   sortOrder: number;
 }
 
@@ -24,6 +25,7 @@ interface ReferenceRow {
   id: string;
   key: string;
   name: string;
+  name_zh: string | null;
   sort_order: number;
 }
 
@@ -52,7 +54,7 @@ export class ReferenceDataService {
   private async list(table: string): Promise<ReferenceItem[]> {
     const { data, error } = await this.supabase
       .from(table)
-      .select('id, key, name, sort_order')
+      .select('id, key, name, name_zh, sort_order')
       .eq('is_active', true)
       .order('sort_order', { ascending: true })
       .order('key', { ascending: true });
@@ -67,6 +69,7 @@ export class ReferenceDataService {
       id: row.id,
       key: row.key,
       name: row.name,
+      nameZh: row.name_zh,
       sortOrder: row.sort_order,
     }));
   }

@@ -14,8 +14,8 @@ import {
  * (lookup) table — teaching locations, languages, course levels, exam preps.
  *
  * `key` is the stable i18n key the frontend uses to look up a translated label
- * (e.g. `language.fr`); `name` is the canonical/default display string. A
- * duplicate `key` is rejected by the unique constraint (mapped to 409).
+ * (e.g. `language.fr`); `name` / `nameZh` are the English / Chinese names (at
+ * least one). A duplicate `key` is rejected by the unique constraint (409).
  */
 export class CreateReferenceDto {
   @IsString()
@@ -23,10 +23,16 @@ export class CreateReferenceDto {
   @MaxLength(100)
   key!: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
-  name!: string;
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  nameZh?: string;
 
   /** Lower sorts first; defaults to 0 to match the column default. */
   @IsOptional()

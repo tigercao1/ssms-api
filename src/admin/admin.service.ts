@@ -1,9 +1,17 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
+import {
+  BIO_TRANSLATOR,
+  type BioLang,
+  type BioTranslator,
+} from '../bio-translation/bio-translator.interface';
 import { InstructorsService } from '../instructors/instructors.service';
 import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
@@ -37,6 +45,15 @@ import { CreateReferenceDto } from './dto/create-reference.dto';
 
 /** Postgres unique-violation — duplicate reference `key`. */
 const PG_UNIQUE_VIOLATION = '23505';
+const REFERENCE_TRANSLATION_TIMEOUT_MS = 8_000;
+const REFERENCE_NAME_MAX_LENGTH = 200;
+export const ENGLISH_NAME_REQUIRED =
+  'English name required (translation unavailable)';
+
+function blankToNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? '';
+  return trimmed === '' ? null : trimmed;
+}
 
 interface PostgresError {
   code?: string;
@@ -45,6 +62,8 @@ interface PostgresError {
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private readonly repo: AdminRepository,
     /**
@@ -60,6 +79,7 @@ export class AdminService {
      * failure never rolls back the admin transition or bubbles to the client.
      */
     private readonly mailer: MailerService,
+    @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
   ) {}
 
   /**
@@ -275,12 +295,32 @@ export class AdminService {
       throw new BadRequestException(`Unknown reference type '${slug}'`);
     }
 
+    const name = blankToNull(dto.name);
+    const nameZh = blankToNull(dto.nameZh);
+    if (name === null && nameZh === null) {
+      throw new BadRequestException('Provide name or nameZh');
+    }
     const input: CreateReferenceInput = {
       key: dto.key,
-      name: dto.name,
+      name: name ?? '',
+      nameZh,
+      nameEnTranslatedBy: null,
+      nameZhTranslatedBy: null,
       sortOrder: dto.sortOrder ?? 0,
       isActive: dto.isActive ?? true,
     };
+    if (name === null) {
+      const translated = await this.translateName(nameZh!, 'zh-CN', 'en');
+      if (translated === null) {
+        throw new UnprocessableEntityException(ENGLISH_NAME_REQUIRED);
+      }
+      input.name = translated;
+      input.nameEnTranslatedBy = this.translator.modelId;
+    } else if (nameZh === null) {
+      input.nameZh = await this.translateName(name, 'en', 'zh-CN');
+      input.nameZhTranslatedBy =
+        input.nameZh === null ? null : this.translator.modelId;
+    }
 
     try {
       const row = await this.repo.insertReference(table, input);
@@ -307,18 +347,20 @@ export class AdminService {
     input: UpdateReferenceInput,
     actor?: AuditActor,
   ): Promise<ReferenceRecord> {
-    const patch: ReferencePatch = {};
-    if (input.name !== undefined) patch.name = input.name;
-    if (input.sortOrder !== undefined) patch.sort_order = input.sortOrder;
-    if (input.isActive !== undefined) patch.is_active = input.isActive;
-    if (Object.keys(patch).length === 0) {
+    if (
+      input.name === undefined &&
+      input.nameZh === undefined &&
+      input.sortOrder === undefined &&
+      input.isActive === undefined
+    ) {
       throw new BadRequestException(
-        'Provide at least one of name, sortOrder, isActive',
+        'Provide at least one of name, nameZh, sortOrder, isActive',
       );
     }
 
     const table = REFERENCE_SLUG_TO_TABLE[slug];
     const current = await this.findReferenceOrThrow(slug, id);
+    const patch = await this.buildReferencePatch(current, input);
     const updated = await this.repo.updateReference(table, id, patch);
     if (!updated) {
       throw this.referenceNotFound(slug, id);
@@ -339,6 +381,83 @@ export class AdminService {
     });
 
     return this.toReferenceRecord(updated);
+  }
+
+  private async buildReferencePatch(
+    current: ReferenceRow,
+    input: UpdateReferenceInput,
+  ): Promise<ReferencePatch> {
+    const patch: ReferencePatch = {};
+    const nameZh =
+      input.nameZh === undefined ? undefined : blankToNull(input.nameZh);
+    const nameEdited = input.name !== undefined && input.name !== current.name;
+    const nameZhEdited = nameZh !== undefined && nameZh !== current.name_zh;
+    if (input.name !== undefined) patch.name = input.name;
+    if (nameEdited) patch.name_en_translated_by = null;
+    if (nameZh !== undefined) patch.name_zh = nameZh;
+    if (nameZhEdited) patch.name_zh_translated_by = null;
+    if (input.sortOrder !== undefined) patch.sort_order = input.sortOrder;
+    if (input.isActive !== undefined) patch.is_active = input.isActive;
+
+    if (
+      nameEdited &&
+      !nameZhEdited &&
+      (current.name_zh === null || current.name_zh_translated_by !== null)
+    ) {
+      const translated = await this.translateName(input.name!, 'en', 'zh-CN');
+      if (translated !== null) {
+        patch.name_zh = translated;
+        patch.name_zh_translated_by = this.translator.modelId;
+      }
+    } else if (
+      nameZhEdited &&
+      !nameEdited &&
+      nameZh !== null &&
+      current.name_en_translated_by !== null
+    ) {
+      const translated = await this.translateName(nameZh, 'zh-CN', 'en');
+      if (translated !== null) {
+        patch.name = translated;
+        patch.name_en_translated_by = this.translator.modelId;
+      }
+    }
+    return patch;
+  }
+
+  private async translateName(
+    text: string,
+    from: BioLang,
+    to: BioLang,
+  ): Promise<string | null> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const translated = await Promise.race([
+        this.translator.translate({
+          text,
+          from,
+          to,
+          kind: 'reference-name',
+          timeoutMs: REFERENCE_TRANSLATION_TIMEOUT_MS,
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('timed out')),
+            REFERENCE_TRANSLATION_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      const name = blankToNull(translated);
+      return name !== null && name.length <= REFERENCE_NAME_MAX_LENGTH
+        ? name
+        : null;
+    } catch (err) {
+      this.logger.warn(
+        `Reference name translation ${from} -> ${to} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async getReferenceUsage(
@@ -431,6 +550,9 @@ export class AdminService {
       id: row.id,
       key: row.key,
       name: row.name,
+      nameZh: row.name_zh,
+      nameEnTranslatedBy: row.name_en_translated_by,
+      nameZhTranslatedBy: row.name_zh_translated_by,
       sortOrder: row.sort_order,
       isActive: row.is_active,
     };

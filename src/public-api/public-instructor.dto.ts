@@ -10,6 +10,7 @@ export interface PublicRefItem {
   key: string;
   /** Ready-to-render English label (convenience; localize via `key`). */
   label: string;
+  label_zh: string | null;
 }
 
 /**

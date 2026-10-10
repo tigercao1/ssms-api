@@ -129,6 +129,9 @@ describe('English translations', () => {
       sync.apply('gid://shopify/Metaobject/404', {
         name: 'x',
         introduction: null,
+        client_groups: null,
+        locations: null,
+        languages: null,
       }),
     ).rejects.toThrow('is not translatable');
     expect(translationOps(shopify)).toEqual([]);
@@ -144,19 +147,91 @@ describe('English translations', () => {
 });
 
 describe('englishTranslations', () => {
+  const noRefs = { client_groups: null, locations: null, languages: null };
+
   it.each([
-    [{}, { name: 'Eddie Chen', introduction: 'Loves powder.' }],
+    [{}, { name: 'Eddie Chen', introduction: 'Loves powder.', ...noRefs }],
     [
       { display_name_zh: ' ', bio_zh: null },
-      { name: null, introduction: null },
+      { name: null, introduction: null, ...noRefs },
     ],
     [
       { display_name_en: '', bio_en: null },
-      { name: null, introduction: null },
+      { name: null, introduction: null, ...noRefs },
     ],
   ])('%j → %j', (overrides, expected) => {
-    expect(
-      englishTranslations(snapshotOf({ instructor: overrides }).instructor),
-    ).toEqual(expected);
+    expect(englishTranslations(snapshotOf({ instructor: overrides }))).toEqual(
+      expected,
+    );
+  });
+
+  it('translates reference lists only when a Chinese name changes the base', () => {
+    const translations = englishTranslations(
+      snapshotOf({
+        locations: [
+          { name: 'Whistler', name_zh: '惠斯勒' },
+          { name: 'Banff', name_zh: null },
+        ],
+        languages: [{ name: 'English', name_zh: null }],
+        courseLevels: [{ name: 'Beginner', name_zh: '新手' }],
+        examPreparations: [{ name: 'CSIA Level 1 prep', name_zh: null }],
+      }),
+    );
+
+    expect(translations).toMatchObject({
+      client_groups: 'Beginner, CSIA Level 1 prep',
+      locations: '["Whistler","Banff"]',
+      languages: null,
+    });
+  });
+});
+
+describe('English reference translations', () => {
+  it('registers and later removes en locations, languages and client groups', async () => {
+    const { shopify, gateway } = setup();
+    const repo = new InMemorySyncRepository();
+    const service = new InstructorSyncService(
+      repo,
+      gateway,
+      new InstructorPhotoSync(repo, gateway, {
+        sleep: () => Promise.resolve(),
+      }),
+      new InstructorTranslationsSync(gateway),
+    );
+    const withNames = snapshotOf({
+      locations: [{ name: 'Whistler', name_zh: '惠斯勒' }],
+      languages: [{ name: 'Mandarin', name_zh: '普通话' }],
+      courseLevels: [{ name: 'Beginner', name_zh: '新手' }],
+    });
+    repo.snapshots.set(INSTRUCTOR_ID, withNames);
+    await service.sync(INSTRUCTOR_ID);
+
+    expect(shopify.entry('eddie-chen')?.fields).toMatchObject({
+      locations: '["惠斯勒"]',
+      languages: '["普通话"]',
+      client_groups: '新手',
+    });
+    expect(shopify.translationsFor('eddie-chen')).toEqual({
+      name: 'Eddie Chen',
+      introduction: 'Loves powder.',
+      client_groups: 'Beginner',
+      locations: '["Whistler"]',
+      languages: '["Mandarin"]',
+    });
+
+    repo.snapshots.set(
+      INSTRUCTOR_ID,
+      snapshotOf({
+        locations: [{ name: 'Whistler', name_zh: null }],
+        languages: [{ name: 'Mandarin', name_zh: '普通话' }],
+      }),
+    );
+    await service.sync(INSTRUCTOR_ID);
+
+    expect(shopify.translationsFor('eddie-chen')).toEqual({
+      name: 'Eddie Chen',
+      introduction: 'Loves powder.',
+      languages: '["Mandarin"]',
+    });
   });
 });

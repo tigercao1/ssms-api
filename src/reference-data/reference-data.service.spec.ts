@@ -51,11 +51,23 @@ async function buildService(stub: ReturnType<typeof makeSupabaseStub>) {
 }
 
 describe('ReferenceDataService', () => {
-  it('maps rows and projects sort_order -> sortOrder', async () => {
+  it('maps rows, projects sort_order -> sortOrder and exposes the Chinese name', async () => {
     const stub = makeSupabaseStub({
       data: [
-        { id: 'a', key: 'language.en', name: 'English', sort_order: 1 },
-        { id: 'b', key: 'language.fr', name: 'French', sort_order: 2 },
+        {
+          id: 'a',
+          key: 'language.en',
+          name: 'English',
+          name_zh: '英语',
+          sort_order: 1,
+        },
+        {
+          id: 'b',
+          key: 'language.fr',
+          name: 'French',
+          name_zh: null,
+          sort_order: 2,
+        },
       ],
     });
     const service = await buildService(stub);
@@ -64,8 +76,20 @@ describe('ReferenceDataService', () => {
 
     expect(stub.calls.from).toBe('languages');
     expect(result).toEqual([
-      { id: 'a', key: 'language.en', name: 'English', sortOrder: 1 },
-      { id: 'b', key: 'language.fr', name: 'French', sortOrder: 2 },
+      {
+        id: 'a',
+        key: 'language.en',
+        name: 'English',
+        nameZh: '英语',
+        sortOrder: 1,
+      },
+      {
+        id: 'b',
+        key: 'language.fr',
+        name: 'French',
+        nameZh: null,
+        sortOrder: 2,
+      },
     ]);
   });
 

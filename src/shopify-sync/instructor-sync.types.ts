@@ -33,12 +33,17 @@ export interface SyncTrainerRow {
   trainer_level: number | null;
 }
 
+export interface SyncRefName {
+  name: string;
+  name_zh: string | null;
+}
+
 export interface InstructorSnapshot {
   instructor: SyncInstructorRow;
-  locations: string[];
-  languages: string[];
-  courseLevels: string[];
-  examPreparations: string[];
+  locations: SyncRefName[];
+  languages: SyncRefName[];
+  courseLevels: SyncRefName[];
+  examPreparations: SyncRefName[];
   certifications: SyncCertRow[];
   trainers: SyncTrainerRow[];
 }

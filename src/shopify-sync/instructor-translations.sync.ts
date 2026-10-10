@@ -7,7 +7,13 @@ import {
 
 export const TRANSLATION_LOCALE = 'en';
 
-const TRANSLATED_KEYS: (keyof EnglishTranslations)[] = ['name', 'introduction'];
+const TRANSLATED_KEYS: (keyof EnglishTranslations)[] = [
+  'name',
+  'introduction',
+  'client_groups',
+  'locations',
+  'languages',
+];
 
 @Injectable()
 export class InstructorTranslationsSync {

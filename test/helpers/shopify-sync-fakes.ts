@@ -7,6 +7,12 @@ import type {
   SyncInstructorRow,
   SyncQueueRow,
 } from '../../src/shopify-sync/instructor-sync.types';
+import {
+  type ShopifySyncHeartbeat,
+  type ShopifySyncSettingsRow,
+  ShopifySyncSettingsRepository,
+  type ShopifySyncStats,
+} from '../../src/shopify-sync/shopify-sync-settings.repository';
 import type { ShopifyAdminClient } from '../../src/shopify/shopify-admin.client';
 import type { ShopifyUserError } from '../../src/shopify/shopify.errors';
 
@@ -138,6 +144,94 @@ export class InMemorySyncRepository extends InstructorSyncRepository {
     return Promise.resolve(
       `https://storage.test/${bucket}/${path}?token=signed-${this.signedUrls.length}`,
     );
+  }
+}
+
+export class InMemorySettingsRepository extends ShopifySyncSettingsRepository {
+  settings: ShopifySyncSettingsRow | null = {
+    enabled: false,
+    updated_at: '2026-10-10T00:00:00.000Z',
+    updated_by: null,
+    last_tick_at: null,
+    last_success_at: null,
+    last_error: null,
+    last_error_at: null,
+  };
+  settingsReads = 0;
+  heartbeats: ShopifySyncHeartbeat[] = [];
+  instructors = new Set<string>();
+  statsCalls: number[] = [];
+
+  constructor(private readonly sync: InMemorySyncRepository) {
+    super();
+  }
+
+  getSettings(): Promise<ShopifySyncSettingsRow | null> {
+    this.settingsReads++;
+    return Promise.resolve(this.settings ? { ...this.settings } : null);
+  }
+
+  setEnabled(
+    enabled: boolean,
+    userId: string | null,
+  ): Promise<ShopifySyncSettingsRow> {
+    if (!this.settings) {
+      return Promise.reject(new Error('Shopify sync settings row is missing'));
+    }
+    this.settings = {
+      ...this.settings,
+      enabled,
+      updated_by: userId,
+      updated_at: new Date().toISOString(),
+    };
+    return Promise.resolve({ ...this.settings });
+  }
+
+  recordHeartbeat(heartbeat: ShopifySyncHeartbeat): Promise<void> {
+    this.heartbeats.push(heartbeat);
+    if (this.settings) {
+      this.settings = { ...this.settings, ...heartbeat };
+    }
+    return Promise.resolve();
+  }
+
+  stats(maxAttempts: number): Promise<ShopifySyncStats> {
+    this.statsCalls.push(maxAttempts);
+    const queue = [...this.sync.queue.values()];
+    const entries = [...this.sync.states.values()].filter(
+      (s) => s.shopify_metaobject_id,
+    );
+    const oldest = queue.map((r) => r.enqueued_at).sort()[0] ?? null;
+    return Promise.resolve({
+      pending: queue.filter((r) => r.attempts === 0).length,
+      retrying: queue.filter((r) => r.attempts > 0 && r.attempts < maxAttempts)
+        .length,
+      failed: queue.filter((r) => r.attempts >= maxAttempts).length,
+      oldestEnqueuedAt: oldest,
+      synced: entries.length,
+      active: entries.filter((s) => s.last_status === 'active').length,
+      draft: entries.filter((s) => s.last_status === 'draft').length,
+    });
+  }
+
+  queueRow(instructorId: string): Promise<SyncQueueRow | null> {
+    const row = this.sync.queue.get(instructorId);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  instructorExists(instructorId: string): Promise<boolean> {
+    return Promise.resolve(this.instructors.has(instructorId));
+  }
+
+  enqueueInstructor(instructorId: string): Promise<void> {
+    const current = this.sync.queue.get(instructorId);
+    this.sync.queue.set(instructorId, {
+      instructor_id: instructorId,
+      enqueued_at: new Date().toISOString(),
+      attempts: 0,
+      last_error: current?.last_error ?? null,
+    });
+    return Promise.resolve();
   }
 }
 

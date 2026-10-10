@@ -91,6 +91,15 @@ If a stage fails:
   Restoring the pre-migration backup is the last resort, since it loses every
   write made after the dump.
 
+## Changes the portal depends on
+
+The API deploys before the portal. An API change must keep working with the
+portal that is live now: add fields and endpoints, and only remove or rename
+ones the portal uses after a portal release has stopped using them. A portal PR
+that needs an API change declares `Requires API: ssms-api#<this PR>`; its
+required "API dependency" check stays pending until this PR is merged and the
+Release workflow has deployed it. Link the portal PR from this PR's description.
+
 ## Backups
 
 `.github/workflows/backup.yml` dumps the prod `public` schema daily

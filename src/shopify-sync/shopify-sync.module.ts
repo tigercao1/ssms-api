@@ -10,18 +10,31 @@ import {
 import { InstructorSyncService } from './instructor-sync.service';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
 import { ReconcileAuthGuard } from './reconcile-auth.guard';
+import { ShopifySyncAdminController } from './shopify-sync-admin.controller';
+import { ShopifySyncAdminService } from './shopify-sync-admin.service';
+import {
+  ShopifySyncSettingsRepository,
+  SupabaseShopifySyncSettingsRepository,
+} from './shopify-sync-settings.repository';
+import { ShopifySyncSettings } from './shopify-sync-settings.service';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 import { ShopifySyncController } from './shopify-sync.controller';
 import { ShopifySyncWorker } from './shopify-sync.worker';
 
 @Module({
   imports: [ShopifyModule],
-  controllers: [ShopifySyncController],
+  controllers: [ShopifySyncController, ShopifySyncAdminController],
   providers: [
     {
       provide: InstructorSyncRepository,
       useClass: SupabaseInstructorSyncRepository,
     },
+    {
+      provide: ShopifySyncSettingsRepository,
+      useClass: SupabaseShopifySyncSettingsRepository,
+    },
+    ShopifySyncSettings,
+    ShopifySyncAdminService,
     ShopifyInstructorGateway,
     InstructorPhotoSync,
     InstructorTranslationsSync,

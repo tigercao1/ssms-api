@@ -9,6 +9,10 @@ import { readShopifyConfig } from '../shopify/shopify.config';
 import { ShopifyConfigError } from '../shopify/shopify.errors';
 import { InstructorSyncRepository } from './instructor-sync.repository';
 import { InstructorSyncService } from './instructor-sync.service';
+import {
+  isMasterSwitchOn,
+  ShopifySyncSettings,
+} from './shopify-sync-settings.service';
 import type { SyncQueueRow } from './instructor-sync.types';
 
 export const SYNC_POLL_INTERVAL_MS = 5_000;
@@ -30,10 +34,11 @@ export class ShopifySyncWorker implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly repo: InstructorSyncRepository,
     private readonly sync: InstructorSyncService,
+    private readonly settings: ShopifySyncSettings,
   ) {}
 
   mode(): SyncMode {
-    if (this.config.get<string>('SHOPIFY_SYNC_ENABLED')?.trim() !== 'true') {
+    if (!isMasterSwitchOn(this.config)) {
       return { enabled: false, reason: 'SHOPIFY_SYNC_ENABLED is not "true"' };
     }
     try {
@@ -69,10 +74,27 @@ export class ShopifySyncWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   tick(): Promise<number> {
-    this.draining ??= this.drain().finally(() => {
+    this.draining ??= this.run().finally(() => {
       this.draining = undefined;
     });
     return this.draining;
+  }
+
+  private async run(): Promise<number> {
+    if (!this.mode().enabled || !(await this.flagEnabled())) {
+      return 0;
+    }
+    await this.settings.recordTick();
+    return this.drain();
+  }
+
+  private async flagEnabled(): Promise<boolean> {
+    try {
+      return await this.settings.isEnabled();
+    } catch (err) {
+      this.logger.error(`Could not read sync settings: ${messageOf(err)}`);
+      return false;
+    }
   }
 
   private async drain(): Promise<number> {
@@ -83,18 +105,24 @@ export class ShopifySyncWorker implements OnModuleInit, OnModuleDestroy {
         MAX_SYNC_ATTEMPTS,
       );
     } catch (err) {
-      this.logger.error(`Could not claim sync rows: ${messageOf(err)}`);
+      const message = `Could not claim sync rows: ${messageOf(err)}`;
+      this.logger.error(message);
+      await this.settings.recordError(message.slice(0, MAX_ERROR_LENGTH));
       return 0;
     }
     for (const row of rows) {
       try {
         const outcome = await this.sync.sync(row.instructor_id);
         await this.repo.completeQueueRow(row);
+        await this.settings.recordSuccess();
         this.logger.log(`Synced instructor ${row.instructor_id}: ${outcome}`);
       } catch (err) {
         const message = messageOf(err).slice(0, MAX_ERROR_LENGTH);
         this.logger.warn(
           `Sync of instructor ${row.instructor_id} failed (attempt ${row.attempts + 1}): ${message}`,
+        );
+        await this.settings.recordError(
+          `${row.instructor_id}: ${message}`.slice(0, MAX_ERROR_LENGTH),
         );
         await this.repo
           .recordQueueFailure(row, message)

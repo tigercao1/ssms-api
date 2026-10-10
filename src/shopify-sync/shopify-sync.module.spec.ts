@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import { ShopifySyncAdminController } from './shopify-sync-admin.controller';
 import { ShopifySyncController } from './shopify-sync.controller';
 import { ShopifySyncWorker } from './shopify-sync.worker';
 
@@ -43,6 +44,9 @@ describe('ShopifySyncModule in the app', () => {
 
     expect(moduleRef.get(ShopifySyncController)).toBeInstanceOf(
       ShopifySyncController,
+    );
+    expect(moduleRef.get(ShopifySyncAdminController)).toBeInstanceOf(
+      ShopifySyncAdminController,
     );
     expect(moduleRef.get(ShopifySyncWorker).mode().enabled).toBe(false);
     expect(logs).toHaveBeenCalledWith(

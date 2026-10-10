@@ -3,12 +3,17 @@ import type { ConfigService } from '@nestjs/config';
 import {
   FakeShopify,
   INSTRUCTOR_ID,
+  InMemorySettingsRepository,
   InMemorySyncRepository,
   snapshotOf,
 } from '../../test/helpers/shopify-sync-fakes';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
+import {
+  SETTINGS_CACHE_MS,
+  ShopifySyncSettings,
+} from './shopify-sync-settings.service';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 import {
   MAX_SYNC_ATTEMPTS,
@@ -17,6 +22,7 @@ import {
   SYNC_POLL_INTERVAL_MS,
 } from './shopify-sync.worker';
 
+const anyString: unknown = expect.any(String);
 const enabledEnv = {
   SHOPIFY_SYNC_ENABLED: 'true',
   SHOPIFY_SHOP: 'acme',
@@ -26,8 +32,13 @@ const enabledEnv = {
 const T0 = '2026-10-10T03:00:00.000001+00:00';
 const T1 = '2026-10-10T03:00:04.000002+00:00';
 
-function setup(env: Record<string, string | undefined> = enabledEnv) {
+function setup(
+  env: Record<string, string | undefined> = enabledEnv,
+  flag = true,
+) {
   const repo = new InMemorySyncRepository();
+  const settingsRepo = new InMemorySettingsRepository(repo);
+  settingsRepo.settings!.enabled = flag;
   repo.snapshots.set(INSTRUCTOR_ID, snapshotOf());
   const shopify = new FakeShopify();
   const gateway = new ShopifyInstructorGateway(shopify.client);
@@ -38,7 +49,12 @@ function setup(env: Record<string, string | undefined> = enabledEnv) {
     new InstructorTranslationsSync(gateway),
   );
   const config = { get: (key: string) => env[key] } as ConfigService;
-  const worker = new ShopifySyncWorker(config, repo, sync);
+  const worker = new ShopifySyncWorker(
+    config,
+    repo,
+    sync,
+    new ShopifySyncSettings(settingsRepo),
+  );
   const enqueue = (instructorId: string, enqueuedAt: string, attempts = 0) =>
     repo.queue.set(instructorId, {
       instructor_id: instructorId,
@@ -46,7 +62,7 @@ function setup(env: Record<string, string | undefined> = enabledEnv) {
       attempts,
       last_error: null,
     });
-  return { repo, shopify, sync, worker, enqueue };
+  return { repo, settingsRepo, shopify, sync, worker, enqueue };
 }
 
 describe('ShopifySyncWorker', () => {
@@ -103,6 +119,7 @@ describe('ShopifySyncWorker', () => {
         config,
         new InMemorySyncRepository(),
         {} as InstructorSyncService,
+        {} as ShopifySyncSettings,
       );
       expect(() => worker.mode()).toThrow('config exploded');
     });
@@ -211,5 +228,146 @@ describe('ShopifySyncWorker', () => {
     expect(second).toBe(first);
     await first;
     expect(repo.claimCalls).toHaveLength(1);
+  });
+
+  describe('admin gate', () => {
+    const masterOff = { ...enabledEnv, SHOPIFY_SYNC_ENABLED: 'false' };
+    const unconfigured = { SHOPIFY_SYNC_ENABLED: 'true' };
+
+    it.each([
+      ['env on', enabledEnv, true, true],
+      ['env on', enabledEnv, false, false],
+      ['master switch off', masterOff, true, false],
+      ['master switch off', masterOff, false, false],
+      ['credentials missing', unconfigured, true, false],
+      ['credentials missing', unconfigured, false, false],
+    ])(
+      'with %s and flag %s processes the queue: %s',
+      async (_label, env, flag, processes) => {
+        const { repo, settingsRepo, shopify, worker, enqueue } = setup(
+          env,
+          flag,
+        );
+        enqueue(INSTRUCTOR_ID, T0);
+
+        await expect(worker.tick()).resolves.toBe(processes ? 1 : 0);
+
+        expect(repo.claimCalls).toHaveLength(processes ? 1 : 0);
+        expect(repo.queue.size).toBe(processes ? 0 : 1);
+        expect(shopify.entry('eddie-chen')?.status).toBe(
+          processes ? 'ACTIVE' : undefined,
+        );
+        expect(settingsRepo.heartbeats.length > 0).toBe(processes);
+      },
+    );
+
+    it('stops at the next tick after being turned off and keeps the queue', async () => {
+      jest.useFakeTimers();
+      const { repo, settingsRepo, worker, enqueue } = setup();
+      enqueue(INSTRUCTOR_ID, T0);
+      worker.onModuleInit();
+      await jest.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS);
+      expect(repo.queue.size).toBe(0);
+
+      settingsRepo.settings!.enabled = false;
+      enqueue(INSTRUCTOR_ID, T1);
+      await jest.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS * 3);
+
+      expect(repo.claimCalls).toHaveLength(1);
+      expect(repo.queue.get(INSTRUCTOR_ID)?.enqueued_at).toBe(T1);
+
+      settingsRepo.settings!.enabled = true;
+      await jest.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS);
+      expect(repo.queue.size).toBe(0);
+      await worker.onModuleDestroy();
+    });
+
+    it('reads the flag at most once per cache window', async () => {
+      jest.useFakeTimers();
+      const { settingsRepo, worker } = setup();
+
+      await worker.tick();
+      await worker.tick();
+      expect(settingsRepo.settingsReads).toBe(1);
+
+      await jest.advanceTimersByTimeAsync(SETTINGS_CACHE_MS);
+      await worker.tick();
+      expect(settingsRepo.settingsReads).toBe(2);
+    });
+
+    it('treats a missing settings row as off', async () => {
+      const { repo, settingsRepo, worker, enqueue } = setup();
+      settingsRepo.settings = null;
+      enqueue(INSTRUCTOR_ID, T0);
+      await expect(worker.tick()).resolves.toBe(0);
+      expect(repo.claimCalls).toHaveLength(0);
+    });
+
+    it('treats an unreadable flag as off', async () => {
+      const { repo, settingsRepo, worker, enqueue } = setup();
+      settingsRepo.getSettings = () => Promise.reject(new Error('db down'));
+      enqueue(INSTRUCTOR_ID, T0);
+      await expect(worker.tick()).resolves.toBe(0);
+      expect(repo.claimCalls).toHaveLength(0);
+      expect(repo.queue.size).toBe(1);
+    });
+  });
+
+  describe('heartbeat', () => {
+    it('records the tick and the success time after a push', async () => {
+      const { settingsRepo, worker, enqueue } = setup();
+      enqueue(INSTRUCTOR_ID, T0);
+
+      await worker.tick();
+
+      expect(settingsRepo.settings).toMatchObject({
+        last_tick_at: anyString,
+        last_success_at: anyString,
+        last_error: null,
+        last_error_at: null,
+      });
+    });
+
+    it('records a tick with no success when the queue is empty', async () => {
+      const { settingsRepo, worker } = setup();
+      await worker.tick();
+      expect(settingsRepo.settings?.last_tick_at).toEqual(anyString);
+      expect(settingsRepo.settings?.last_success_at).toBeNull();
+    });
+
+    it('records the failing instructor and error', async () => {
+      const { settingsRepo, worker, enqueue } = setup();
+      enqueue(INSTRUCTOR_ID, T0);
+      settingsRepo.settings!.last_success_at = T0;
+      jest
+        .spyOn(InMemorySyncRepository.prototype, 'loadSnapshot')
+        .mockRejectedValue(new Error('db down'));
+
+      await worker.tick();
+
+      expect(settingsRepo.settings).toMatchObject({
+        last_success_at: T0,
+        last_error: `${INSTRUCTOR_ID}: db down`,
+        last_error_at: anyString,
+      });
+    });
+
+    it('records a failed claim', async () => {
+      const { repo, settingsRepo, worker } = setup();
+      repo.claimQueueBatch = () => Promise.reject(new Error('rpc missing'));
+      await worker.tick();
+      expect(settingsRepo.settings?.last_error).toBe(
+        'Could not claim sync rows: rpc missing',
+      );
+    });
+
+    it('keeps syncing when the heartbeat cannot be written', async () => {
+      const { repo, settingsRepo, worker, enqueue } = setup();
+      enqueue(INSTRUCTOR_ID, T0);
+      settingsRepo.recordHeartbeat = () => Promise.reject(new Error('db down'));
+
+      await expect(worker.tick()).resolves.toBe(1);
+      expect(repo.queue.size).toBe(0);
+    });
   });
 });

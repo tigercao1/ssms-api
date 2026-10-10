@@ -3,6 +3,9 @@
 # PR-time rules for supabase/migrations, checked against a base ref:
 #
 #   1. Files already on the base branch are immutable (no edit, delete or rename).
+#      ALLOW_EDIT=true (label `migration:edit-unapplied`) permits editing, not
+#      renaming or deleting, a migration that failed and was never applied. The
+#      runner still refuses to run if an edited file is recorded as applied.
 #   2. New files are named NNN_snake_case.sql and numbered above every file on base.
 #   3. Plain SQL only: no transaction control (the runner wraps all pending files in
 #      one transaction), no psql backslash commands, no CONCURRENTLY.
@@ -17,6 +20,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 
 BASE="${1:?usage: check-migrations.sh <base-ref>}"
 ALLOW_DESTRUCTIVE="${ALLOW_DESTRUCTIVE:-false}"
+ALLOW_EDIT="${ALLOW_EDIT:-false}"
 DIR="supabase/migrations"
 NAME_PATTERN='^[0-9]{3}_[a-z0-9_]+\.sql$'
 B='(^|[^a-z0-9_])'
@@ -40,10 +44,19 @@ base_max="$(git ls-tree --name-only "$BASE" "$DIR/" | xargs -n1 basename | { gre
 base_max=$((10#${base_max:-0}))
 
 added=()
+edited=" "
 while IFS=$'\t' read -r status path rest; do
   case "$status" in
     A) added+=("$path") ;;
-    R*) fail "$path" "renames $rest; migrations already on main are immutable, add a new file instead" ;;
+    M)
+      if [[ "$ALLOW_EDIT" == "true" ]]; then
+        echo "! $path: edit allowed by the 'migration:edit-unapplied' label"
+        added+=("$path")
+        edited="$edited$path "
+      else
+        fail "$path" "edited; migrations already on main are immutable, add a new file instead (or label 'migration:edit-unapplied' if it was never applied)"
+      fi
+      ;;
     *) fail "$path" "status $status; migrations already on main are immutable, add a new file instead" ;;
   esac
 done < <(git diff --name-status -M "$BASE"...HEAD -- "$DIR/" | awk -F'\t' '{print $1 "\t" ($3 ? $3 : $2) "\t" ($3 ? $2 : "")}')
@@ -58,7 +71,9 @@ for path in ${added[@]+"${added[@]}"}; do
     continue
   fi
   num=$((10#${name:0:3}))
-  if ((num <= base_max)); then
+  if [[ "$edited" == *" $path "* ]]; then
+    :
+  elif ((num <= base_max)); then
     fail "$path" "number ${name:0:3} must be greater than the highest on base ($(printf '%03d' "$base_max"))"
   fi
   if [[ "$seen" == *" $num "* ]]; then

@@ -1,0 +1,255 @@
+import { InstructorSyncRepository } from '../../src/shopify-sync/instructor-sync.repository';
+import type {
+  InstructorShopifyState,
+  InstructorShopifyStatePatch,
+  InstructorSnapshot,
+  ReconcileCounts,
+  SyncInstructorRow,
+  SyncQueueRow,
+} from '../../src/shopify-sync/instructor-sync.types';
+import type { ShopifyAdminClient } from '../../src/shopify/shopify-admin.client';
+import type { ShopifyUserError } from '../../src/shopify/shopify.errors';
+
+export const INSTRUCTOR_ID = '3f1c2b7a-9d4e-4c1a-8b2f-6a7e5d4c3b2a';
+
+export function instructorRow(
+  overrides: Partial<SyncInstructorRow> = {},
+): SyncInstructorRow {
+  return {
+    id: INSTRUCTOR_ID,
+    display_name_en: 'Eddie Chen',
+    display_name_zh: '陈艾迪',
+    bio_en: 'Loves powder.',
+    bio_zh: '热爱粉雪。',
+    profile_photo_url: null,
+    profile_photo_version: null,
+    min_student_age: 6,
+    approval_status: 'approved',
+    is_active: true,
+    ...overrides,
+  };
+}
+
+export function snapshotOf(
+  overrides: Partial<Omit<InstructorSnapshot, 'instructor'>> & {
+    instructor?: Partial<SyncInstructorRow>;
+  } = {},
+): InstructorSnapshot {
+  const { instructor, ...rest } = overrides;
+  return {
+    instructor: instructorRow(instructor),
+    locations: [],
+    languages: [],
+    courseLevels: [],
+    examPreparations: [],
+    certifications: [],
+    trainers: [],
+    ...rest,
+  };
+}
+
+export class InMemorySyncRepository extends InstructorSyncRepository {
+  snapshots = new Map<string, InstructorSnapshot>();
+  states = new Map<string, InstructorShopifyState>();
+  queue = new Map<string, SyncQueueRow>();
+  claimCalls: { limit: number; maxAttempts: number }[] = [];
+  counts: ReconcileCounts = { instructors: 0, orphaned: 0 };
+  onSync?: (instructorId: string) => void;
+
+  loadSnapshot(instructorId: string): Promise<InstructorSnapshot | null> {
+    this.onSync?.(instructorId);
+    return Promise.resolve(this.snapshots.get(instructorId) ?? null);
+  }
+
+  getState(instructorId: string): Promise<InstructorShopifyState | null> {
+    const state = this.states.get(instructorId);
+    return Promise.resolve(state ? { ...state } : null);
+  }
+
+  saveState(
+    instructorId: string,
+    patch: InstructorShopifyStatePatch,
+  ): Promise<void> {
+    const current = this.states.get(instructorId) ?? {
+      instructor_id: instructorId,
+      shopify_metaobject_id: null,
+      shopify_handle: null,
+      shopify_photo_file_id: null,
+      synced_photo_version: null,
+      last_synced_at: null,
+      last_status: null,
+    };
+    this.states.set(instructorId, { ...current, ...patch });
+    return Promise.resolve();
+  }
+
+  isHandleStoredByOther(
+    handle: string,
+    instructorId: string,
+  ): Promise<boolean> {
+    return Promise.resolve(
+      [...this.states.values()].some(
+        (s) => s.shopify_handle === handle && s.instructor_id !== instructorId,
+      ),
+    );
+  }
+
+  claimQueueBatch(limit: number, maxAttempts: number): Promise<SyncQueueRow[]> {
+    this.claimCalls.push({ limit, maxAttempts });
+    return Promise.resolve(
+      [...this.queue.values()]
+        .sort((a, b) => a.enqueued_at.localeCompare(b.enqueued_at))
+        .slice(0, limit)
+        .map((row) => ({ ...row })),
+    );
+  }
+
+  completeQueueRow(row: SyncQueueRow): Promise<void> {
+    if (this.queue.get(row.instructor_id)?.enqueued_at === row.enqueued_at) {
+      this.queue.delete(row.instructor_id);
+    }
+    return Promise.resolve();
+  }
+
+  recordQueueFailure(row: SyncQueueRow, message: string): Promise<void> {
+    const current = this.queue.get(row.instructor_id);
+    if (current) {
+      this.queue.set(row.instructor_id, {
+        ...current,
+        attempts: row.attempts + 1,
+        last_error: message,
+      });
+    }
+    return Promise.resolve();
+  }
+
+  enqueueAll(): Promise<ReconcileCounts> {
+    return Promise.resolve(this.counts);
+  }
+}
+
+export interface FakeEntry {
+  id: string;
+  handle: string;
+  type: string;
+  fields: Record<string, string>;
+  status: string | undefined;
+}
+
+export interface GraphqlCall {
+  operation: string;
+  variables: Record<string, unknown>;
+}
+
+export interface FakeVariables {
+  handle: { type: string; handle: string };
+  metaobject: {
+    fields?: { key: string; value: string }[];
+    capabilities?: { publishable?: { status?: string } };
+  };
+  [key: string]: unknown;
+}
+
+type Handler = (variables: FakeVariables) => unknown;
+
+export class FakeShopify {
+  entries = new Map<string, FakeEntry>();
+  calls: GraphqlCall[] = [];
+  userErrors = new Map<string, ShopifyUserError[]>();
+  private nextId = 1;
+  private readonly handlers: Record<string, Handler> = {
+    SsmsInstructorByHandle: (v) => {
+      const entry = this.entryAt(v.handle.type, v.handle.handle);
+      return {
+        metaobjectByHandle: entry
+          ? {
+              id: entry.id,
+              ssmsId:
+                entry.fields.ssms_id === undefined
+                  ? null
+                  : { value: entry.fields.ssms_id },
+            }
+          : null,
+      };
+    },
+    SsmsInstructorUpsert: (v) => {
+      const errors = this.takeErrors('SsmsInstructorUpsert');
+      if (errors) {
+        return { metaobjectUpsert: { metaobject: null, userErrors: errors } };
+      }
+      const key = `${v.handle.type}/${v.handle.handle}`;
+      const entry = this.entries.get(key) ?? {
+        id: `gid://shopify/Metaobject/${this.nextId++}`,
+        handle: v.handle.handle,
+        type: v.handle.type,
+        fields: {},
+        status: undefined,
+      };
+      for (const field of v.metaobject.fields ?? []) {
+        entry.fields[field.key] = field.value;
+      }
+      entry.status = v.metaobject.capabilities?.publishable?.status;
+      this.entries.set(key, entry);
+      return {
+        metaobjectUpsert: {
+          metaobject: { id: entry.id, handle: entry.handle },
+          userErrors: [],
+        },
+      };
+    },
+  };
+
+  readonly client = {
+    graphql: jest.fn((query: string, variables: Record<string, unknown> = {}) =>
+      Promise.resolve().then(() => this.dispatch(query, variables)),
+    ),
+  } as unknown as ShopifyAdminClient & { graphql: jest.Mock };
+
+  on(operation: string, handler: Handler): void {
+    this.handlers[operation] = handler;
+  }
+
+  failNext(operation: string, errors: ShopifyUserError[]): void {
+    this.userErrors.set(operation, errors);
+  }
+
+  addEntry(handle: string, fields: Record<string, string> = {}): FakeEntry {
+    const entry: FakeEntry = {
+      id: `gid://shopify/Metaobject/${this.nextId++}`,
+      handle,
+      type: 'ssms_instructor',
+      fields,
+      status: 'ACTIVE',
+    };
+    this.entries.set(`ssms_instructor/${handle}`, entry);
+    return entry;
+  }
+
+  entry(handle: string): FakeEntry | undefined {
+    return this.entryAt('ssms_instructor', handle);
+  }
+
+  operations(): string[] {
+    return this.calls.map((c) => c.operation);
+  }
+
+  private entryAt(type: string, handle: string): FakeEntry | undefined {
+    return this.entries.get(`${type}/${handle}`);
+  }
+
+  private takeErrors(operation: string): ShopifyUserError[] | undefined {
+    const errors = this.userErrors.get(operation);
+    this.userErrors.delete(operation);
+    return errors;
+  }
+
+  private dispatch(query: string, variables: Record<string, unknown>): unknown {
+    const operation = /(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? '';
+    this.calls.push({ operation, variables });
+    const handler = this.handlers[operation];
+    if (!handler) {
+      throw new Error(`Unexpected Shopify operation ${operation}`);
+    }
+    return handler(variables as FakeVariables);
+  }
+}

@@ -40,6 +40,8 @@ export interface PublicInstructorRow {
   bio_en: string | null;
   bio_zh: string | null;
   profile_photo_url: string | null;
+  photo_2_url: string | null;
+  photo_3_url: string | null;
   min_student_age: number;
 }
 

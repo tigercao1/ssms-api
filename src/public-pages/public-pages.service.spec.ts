@@ -268,31 +268,43 @@ describe('PublicPagesService', () => {
       const { service } = build();
       const page = await service.create('faq', 'FAQ', actor);
       await service.uploadContent(page.id, html, actor);
-      await expect(service.getContent(page.id)).resolves.toEqual(html);
+      await expect(service.getContent(page.id, actor)).resolves.toEqual(html);
     });
 
     it('404s when nothing was uploaded', async () => {
       const { service } = build();
       const page = await service.create('faq', 'FAQ', actor);
-      await expect(service.getContent(page.id)).rejects.toBeInstanceOf(
+      await expect(service.getContent(page.id, actor)).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
 
-    it('502s and logs when the database has a draft the Worker is missing', async () => {
-      const { service, storage } = build();
+    it('502s, logs and audits when the database has a draft the Worker is missing', async () => {
+      const { service, storage, audit } = build();
       const page = await service.create('faq', 'FAQ', actor);
       await service.uploadContent(page.id, html, actor);
       storage.objects.clear();
       const logged = jest
         .spyOn(Logger.prototype, 'error')
         .mockImplementation(() => undefined);
-      await expect(service.getContent(page.id)).rejects.toThrow(
+      await expect(service.getContent(page.id, actor)).rejects.toThrow(
         new BadGatewayException(DOCS_STORAGE_UNAVAILABLE),
       );
       expect(logged).toHaveBeenCalledWith(
         expect.stringContaining('drafts/faq.html'),
       );
+      expect(audit.entries.at(-1)).toEqual({
+        action: 'page.storage_inconsistent',
+        actor,
+        targetType: 'public_page',
+        targetId: page.id,
+        metadata: {
+          slug: 'faq',
+          operation: 'read',
+          object: 'drafts/faq.html',
+          reason: 'drafts/faq.html is missing',
+        },
+      });
     });
   });
 
@@ -599,21 +611,150 @@ describe('PublicPagesService', () => {
       expect(ctx.storage.objects.get('published/faq.html')).toEqual(v1);
     });
 
-    it('deletes the row even when removing the draft object fails', async () => {
+    it('deletes the row and audits the inconsistency when removing the draft object fails', async () => {
       const ctx = build();
       const page = await ctx.service.create('faq', 'FAQ', actor);
       await ctx.service.uploadContent(page.id, v1, actor);
-      const warned = jest
-        .spyOn(Logger.prototype, 'warn')
+      const logged = jest
+        .spyOn(Logger.prototype, 'error')
         .mockImplementation(() => undefined);
       ctx.storage.failOn = (call) => call === 'DELETE drafts/faq.html';
       await ctx.service.remove(page.id, actor);
       expect(ctx.repo.rows.has(page.id)).toBe(false);
-      expect(ctx.storage.objects.has('drafts/faq.html')).toBe(true);
-      expect(warned).toHaveBeenCalledWith(
+      expect(logged).toHaveBeenCalledWith(
         expect.stringContaining('drafts/faq.html'),
       );
-      expect(ctx.audit.entries.at(-1)?.action).toBe('page.delete');
+      expect(ctx.audit.entries.slice(-2)).toEqual([
+        {
+          action: 'page.storage_inconsistent',
+          actor,
+          targetType: 'public_page',
+          targetId: page.id,
+          metadata: {
+            slug: 'faq',
+            operation: 'delete',
+            object: 'drafts/faq.html',
+            reason: DOCS_STORAGE_UNAVAILABLE,
+          },
+        },
+        expect.objectContaining({ action: 'page.delete' }),
+      ]);
+    });
+  });
+
+  describe('Worker call that applies and then fails', () => {
+    const v1 = Buffer.from('<h1>v1</h1>');
+    const v2 = Buffer.from('<h1>v2</h1>');
+
+    interface Scenario {
+      name: string;
+      method: 'put' | 'delete';
+      key: string;
+      run: (ctx: Ctx, id: string) => Promise<unknown>;
+    }
+
+    const scenarios: Scenario[] = [
+      {
+        name: 'upload',
+        method: 'put',
+        key: 'drafts/faq.html',
+        run: (ctx, id) => ctx.service.uploadContent(id, v2, actor),
+      },
+      {
+        name: 'publish',
+        method: 'put',
+        key: 'published/faq.html',
+        run: (ctx, id) => ctx.service.publish(id, actor),
+      },
+      {
+        name: 'unpublish',
+        method: 'delete',
+        key: 'published/faq.html',
+        run: (ctx, id) => ctx.service.unpublish(id, actor),
+      },
+      {
+        name: 'delete',
+        method: 'delete',
+        key: 'published/faq.html',
+        run: (ctx, id) => ctx.service.remove(id, actor),
+      },
+    ];
+
+    async function publishedWithNewDraft() {
+      const ctx = build();
+      const page = await ctx.service.create('faq', 'FAQ', actor);
+      await ctx.service.uploadContent(page.id, v1, actor);
+      await ctx.service.publish(page.id, actor);
+      await ctx.service.uploadContent(page.id, v2, actor);
+      return { ctx, id: page.id };
+    }
+
+    function applyThenFail(
+      ctx: Ctx,
+      scenario: Scenario,
+      afterApply: () => void = () => undefined,
+    ): void {
+      const storage = ctx.storage;
+      const failAfterApply = (): Error => {
+        afterApply();
+        return new BadGatewayException(DOCS_STORAGE_UNAVAILABLE);
+      };
+      if (scenario.method === 'put') {
+        jest.spyOn(storage, 'put').mockImplementationOnce((key, body) => {
+          storage.objects.set(key, Buffer.from(body));
+          return Promise.reject(failAfterApply());
+        });
+      } else {
+        jest.spyOn(storage, 'delete').mockImplementationOnce((key) => {
+          storage.objects.delete(key);
+          return Promise.reject(failAfterApply());
+        });
+      }
+    }
+
+    describe.each(scenarios)('$name', (scenario) => {
+      it('502s and reconciles R2 to the unchanged database', async () => {
+        const { ctx, id } = await publishedWithNewDraft();
+        const objects = bucket(ctx);
+        const rows = ctx.repo.snapshot();
+        const audits = ctx.audit.entries.length;
+        applyThenFail(ctx, scenario);
+        await expect(scenario.run(ctx, id)).rejects.toThrow(
+          new BadGatewayException(DOCS_STORAGE_UNAVAILABLE),
+        );
+        expect(ctx.repo.snapshot()).toEqual(rows);
+        expect(bucket(ctx)).toEqual(objects);
+        expectStorageMatchesRow(ctx, id);
+        expect(ctx.audit.entries).toHaveLength(audits);
+      });
+
+      it('502s, logs and audits when reconciling fails', async () => {
+        const { ctx, id } = await publishedWithNewDraft();
+        const logged = jest
+          .spyOn(Logger.prototype, 'error')
+          .mockImplementation(() => undefined);
+        applyThenFail(ctx, scenario, () => {
+          ctx.storage.failing = true;
+        });
+        await expect(scenario.run(ctx, id)).rejects.toThrow(
+          new BadGatewayException(DOCS_STORAGE_UNAVAILABLE),
+        );
+        expect(logged).toHaveBeenCalledWith(
+          expect.stringContaining(`${id} (faq)`),
+        );
+        expect(ctx.audit.entries.at(-1)).toEqual({
+          action: 'page.storage_inconsistent',
+          actor,
+          targetType: 'public_page',
+          targetId: id,
+          metadata: {
+            slug: 'faq',
+            operation: scenario.name,
+            object: scenario.key,
+            reason: DOCS_STORAGE_UNAVAILABLE,
+          },
+        });
+      });
     });
   });
 
@@ -722,6 +863,18 @@ describe('PublicPagesService', () => {
       expectStorageMatchesRow(ctx, id);
     });
 
+    it('removes the new draft when an upload loses to a delete', async () => {
+      const ctx = build();
+      const page = await ctx.service.create('faq', 'FAQ', actor);
+      await ctx.service.uploadContent(page.id, v1, actor);
+      duringDbWrite(ctx, () => ctx.peer.remove(page.id, other));
+      await expect(
+        ctx.service.uploadContent(page.id, v2, actor),
+      ).rejects.toThrow(new ConflictException(PAGE_CONFLICT));
+      expect(ctx.repo.rows.has(page.id)).toBe(false);
+      expect(ctx.storage.objects.size).toBe(0);
+    });
+
     it('takes the published object down when the page was deleted', async () => {
       const { ctx, id } = await publishedWithNewDraft();
       duringDbWrite(ctx, () => ctx.peer.remove(id, other));
@@ -765,11 +918,11 @@ describe('PublicPagesService', () => {
       });
     });
 
-    it('falls back to the snapshot when re-reading the page fails', async () => {
+    it('restores the snapshot, then 502s and audits when re-reading the page fails', async () => {
       const { ctx, id } = await publishedWithNewDraft();
       const objects = bucket(ctx);
-      const warned = jest
-        .spyOn(Logger.prototype, 'warn')
+      const logged = jest
+        .spyOn(Logger.prototype, 'error')
         .mockImplementation(() => undefined);
       const findById = real(ctx, 'findById');
       jest
@@ -779,9 +932,23 @@ describe('PublicPagesService', () => {
       jest
         .spyOn(ctx.repo, 'update')
         .mockRejectedValueOnce(new Error('db down'));
-      await expect(ctx.service.publish(id, actor)).rejects.toThrow('db down');
+      await expect(ctx.service.publish(id, actor)).rejects.toThrow(
+        new BadGatewayException(DOCS_STORAGE_UNAVAILABLE),
+      );
       expect(bucket(ctx)).toEqual(objects);
-      expect(warned).toHaveBeenCalledWith(expect.stringContaining('db gone'));
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('db gone'));
+      expect(ctx.audit.entries.at(-1)).toEqual({
+        action: 'page.storage_inconsistent',
+        actor,
+        targetType: 'public_page',
+        targetId: id,
+        metadata: {
+          slug: 'faq',
+          operation: 'publish',
+          object: 'published/faq.html',
+          reason: 'db down',
+        },
+      });
     });
   });
 
@@ -835,7 +1002,7 @@ describe('PublicPagesService', () => {
       expect(ctx.service['locks'].size).toBe(0);
     });
 
-    it('makes a re-create of the slug wait for the delete to finish', async () => {
+    it('makes a re-create of the slug wait for a delete that already holds the slug lock', async () => {
       const ctx = build();
       const page = await ctx.service.create('faq', 'FAQ', actor);
       await ctx.service.uploadContent(page.id, v1, actor);

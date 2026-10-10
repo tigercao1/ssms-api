@@ -84,8 +84,12 @@ export class PublicPagesController {
   @Get(':id/content')
   @Header('X-Content-Type-Options', 'nosniff')
   @Header('Cache-Control', 'no-store')
-  async content(@PageId() id: string): Promise<StreamableFile> {
-    const body = await this.pages.getContent(id);
+  async content(
+    @PageId() id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<StreamableFile> {
+    const body = await this.pages.getContent(id, toActor(user, userAgent));
     return new StreamableFile(body, {
       type: 'text/plain; charset=utf-8',
       length: body.length,

@@ -40,7 +40,7 @@ export const PAGE_CONTENT_TOO_LARGE = `Page content must be at most ${PAGE_CONTE
 export const PAGE_CONFLICT =
   'This page was changed by someone else. Reload and try again.';
 
-type StorageOperation = 'upload' | 'publish' | 'unpublish' | 'delete';
+type StorageOperation = 'read' | 'upload' | 'publish' | 'unpublish' | 'delete';
 
 interface ObjectSnapshot {
   key: string;
@@ -58,6 +58,10 @@ const slugLock = (slug: string): string => `slug:${slug}`;
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 function sha256(body: Buffer): string {
@@ -147,20 +151,17 @@ export class PublicPagesService {
       const page = await this.load(id);
       const digest = sha256(body);
       const key = draftKey(page.slug);
-      const previous = await this.storage.get(key);
-      await this.storage.put(key, body);
-      const row = await this.commit(
-        page,
-        'upload',
-        { key, previous, body },
-        actor,
-        () =>
-          this.repo.update(
-            id,
-            page.updated_at,
-            { draft_sha256: digest, draft_size_bytes: body.length },
-            actor.userId ?? null,
-          ),
+      const snapshot = { key, previous: await this.storage.get(key), body };
+      await this.mutate(page, 'upload', snapshot, actor, () =>
+        this.storage.put(key, body),
+      );
+      const row = await this.commit(page, 'upload', snapshot, actor, () =>
+        this.repo.update(
+          id,
+          page.updated_at,
+          { draft_sha256: digest, draft_size_bytes: body.length },
+          actor.userId ?? null,
+        ),
       );
       await this.record(AUDIT_ACTIONS.pageUpload, actor, row, {
         slug: row.slug,
@@ -171,12 +172,12 @@ export class PublicPagesService {
     });
   }
 
-  async getContent(id: string): Promise<Buffer> {
+  async getContent(id: string, actor: AuditActor): Promise<Buffer> {
     const page = await this.load(id);
     if (page.draft_sha256 === null) {
       throw new NotFoundException(PAGE_CONTENT_NOT_FOUND);
     }
-    return this.readDraft(page);
+    return this.readDraft(page, 'read', actor);
   }
 
   publish(id: string, actor: AuditActor): Promise<PublicPage> {
@@ -185,27 +186,24 @@ export class PublicPagesService {
       if (page.draft_sha256 === null) {
         throw new BadRequestException(PAGE_CONTENT_REQUIRED);
       }
-      const body = await this.readDraft(page);
+      const body = await this.readDraft(page, 'publish', actor);
       const key = publishedKey(page.slug);
-      const previous = await this.storage.get(key);
-      await this.storage.put(key, body);
+      const snapshot = { key, previous: await this.storage.get(key), body };
+      await this.mutate(page, 'publish', snapshot, actor, () =>
+        this.storage.put(key, body),
+      );
       const digest = sha256(body);
-      const row = await this.commit(
-        page,
-        'publish',
-        { key, previous, body },
-        actor,
-        () =>
-          this.repo.update(
-            id,
-            page.updated_at,
-            {
-              status: 'published',
-              published_sha256: digest,
-              published_at: new Date().toISOString(),
-            },
-            actor.userId ?? null,
-          ),
+      const row = await this.commit(page, 'publish', snapshot, actor, () =>
+        this.repo.update(
+          id,
+          page.updated_at,
+          {
+            status: 'published',
+            published_sha256: digest,
+            published_at: new Date().toISOString(),
+          },
+          actor.userId ?? null,
+        ),
       );
       await this.record(AUDIT_ACTIONS.pagePublish, actor, row, {
         slug: row.slug,
@@ -219,20 +217,21 @@ export class PublicPagesService {
     return this.locks.run(pageLock(id), async () => {
       const page = await this.load(id);
       const key = publishedKey(page.slug);
-      const previous = await this.storage.get(key);
-      await this.storage.delete(key);
-      const row = await this.commit(
-        page,
-        'unpublish',
-        { key, previous, body: null },
-        actor,
-        () =>
-          this.repo.update(
-            id,
-            page.updated_at,
-            { status: 'draft', published_sha256: null, published_at: null },
-            actor.userId ?? null,
-          ),
+      const snapshot = {
+        key,
+        previous: await this.storage.get(key),
+        body: null,
+      };
+      await this.mutate(page, 'unpublish', snapshot, actor, () =>
+        this.storage.delete(key),
+      );
+      const row = await this.commit(page, 'unpublish', snapshot, actor, () =>
+        this.repo.update(
+          id,
+          page.updated_at,
+          { status: 'draft', published_sha256: null, published_at: null },
+          actor.userId ?? null,
+        ),
       );
       await this.record(AUDIT_ACTIONS.pageUnpublish, actor, row, {
         slug: row.slug,
@@ -255,21 +254,24 @@ export class PublicPagesService {
     actor: AuditActor,
   ): Promise<void> {
     const key = publishedKey(page.slug);
-    const previous = await this.storage.get(key);
-    await this.storage.delete(key);
-    await this.commit(
-      page,
-      'delete',
-      { key, previous, body: null },
-      actor,
-      async () =>
-        (await this.repo.delete(page.id, page.updated_at)) ? true : null,
+    const snapshot = { key, previous: await this.storage.get(key), body: null };
+    await this.mutate(page, 'delete', snapshot, actor, () =>
+      this.storage.delete(key),
     );
+    await this.commit(page, 'delete', snapshot, actor, async () =>
+      (await this.repo.delete(page.id, page.updated_at)) ? true : null,
+    );
+    const draft = draftKey(page.slug);
     try {
-      await this.storage.delete(draftKey(page.slug));
+      await this.storage.delete(draft);
     } catch (err) {
-      this.logger.warn(
-        `Orphaned draft ${draftKey(page.slug)} left after deleting page ${page.id}: ${describeError(err)}`,
+      await this.reportInconsistent(
+        page,
+        'delete',
+        draft,
+        actor,
+        toError(err),
+        `${draft} was left after the row was deleted`,
       );
     }
     await this.record(AUDIT_ACTIONS.pageDelete, actor, page, {
@@ -286,15 +288,41 @@ export class PublicPagesService {
     return row;
   }
 
-  private async readDraft(page: PublicPageRow): Promise<Buffer> {
-    const body = await this.storage.get(draftKey(page.slug));
+  private async readDraft(
+    page: PublicPageRow,
+    operation: StorageOperation,
+    actor: AuditActor,
+  ): Promise<Buffer> {
+    const key = draftKey(page.slug);
+    const body = await this.storage.get(key);
     if (body === null) {
-      this.logger.error(
-        `Draft object ${draftKey(page.slug)} for page ${page.id} is missing`,
+      await this.reportInconsistent(
+        page,
+        operation,
+        key,
+        actor,
+        new Error(`${key} is missing`),
+        `the database records draft sha256 ${page.draft_sha256}`,
       );
       throw new BadGatewayException(DOCS_STORAGE_UNAVAILABLE);
     }
     return body;
+  }
+
+  private async mutate(
+    page: PublicPageRow,
+    operation: StorageOperation,
+    snapshot: ObjectSnapshot,
+    actor: AuditActor,
+    apply: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await apply();
+    } catch (err) {
+      const failure = toError(err);
+      await this.reconcile(page, operation, snapshot, actor, failure);
+      throw failure;
+    }
   }
 
   private async commit<T>(
@@ -312,7 +340,7 @@ export class PublicPagesService {
       }
       failure = new ConflictException(PAGE_CONFLICT);
     } catch (err) {
-      failure = err instanceof Error ? err : new Error(String(err));
+      failure = toError(err);
     }
     await this.reconcile(page, operation, snapshot, actor, failure);
     throw failure;
@@ -325,8 +353,22 @@ export class PublicPagesService {
     actor: AuditActor,
     failure: Error,
   ): Promise<void> {
-    const targets = await this.reconcileTargets(page, snapshot);
-    for (const target of targets) {
+    let row: PublicPageRow | null;
+    try {
+      row = await this.repo.findById(page.id);
+    } catch (err) {
+      await this.restoreSnapshot(page.slug, snapshot);
+      await this.reportInconsistent(
+        page,
+        operation,
+        snapshot.key,
+        actor,
+        failure,
+        `re-reading the page failed (${describeError(err)})`,
+      );
+      throw new BadGatewayException(DOCS_STORAGE_UNAVAILABLE);
+    }
+    for (const target of this.reconcileTargets(page, snapshot, row)) {
       let problem: string | null;
       try {
         problem = await this.converge(page.slug, target, snapshot);
@@ -347,34 +389,35 @@ export class PublicPagesService {
     }
   }
 
-  private async reconcileTargets(
-    page: PublicPageRow,
+  private async restoreSnapshot(
+    slug: string,
     snapshot: ObjectSnapshot,
-  ): Promise<ObjectTarget[]> {
-    let row: PublicPageRow | null;
+  ): Promise<void> {
+    const target: ObjectTarget = {
+      key: snapshot.key,
+      sha256: snapshot.previous === null ? null : sha256(snapshot.previous),
+    };
     try {
-      row = await this.repo.findById(page.id);
+      await this.converge(slug, target, snapshot);
     } catch (err) {
       this.logger.warn(
-        `Re-reading page ${page.id} failed (${describeError(err)}); restoring ${snapshot.key} from its snapshot`,
+        `Restoring ${snapshot.key} from its snapshot failed: ${describeError(err)}`,
       );
-      return [
-        {
-          key: snapshot.key,
-          sha256: snapshot.previous === null ? null : sha256(snapshot.previous),
-        },
-      ];
     }
+  }
+
+  private reconcileTargets(
+    page: PublicPageRow,
+    snapshot: ObjectSnapshot,
+    row: PublicPageRow | null,
+  ): ObjectTarget[] {
     const published: ObjectTarget = {
       key: publishedKey(page.slug),
       sha256: row?.status === 'published' ? row.published_sha256 : null,
     };
-    if (row === null) {
-      return [published];
-    }
     const draft: ObjectTarget = {
       key: draftKey(page.slug),
-      sha256: row.draft_sha256,
+      sha256: row?.draft_sha256 ?? null,
     };
     return snapshot.key === draft.key ? [draft, published] : [published, draft];
   }

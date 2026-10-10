@@ -15,6 +15,10 @@ import type { BioTranslationJobRow } from './bio-translation-job.types';
 export const TRANSLATION_POLL_INTERVAL_MS = 10_000;
 export const TRANSLATION_BATCH_SIZE = 10;
 
+export function isTranslationEnabled(config: ConfigService): boolean {
+  return config.get<string>('TRANSLATION_ENABLED')?.trim() === 'true';
+}
+
 const BIO_JOBS_TABLE = 'bio_translation_jobs';
 const AUDIT_TABLE = 'audit_log';
 const BACKOFF_BASE_MS = 1_000;
@@ -70,7 +74,7 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   isEnabled(): boolean {
-    return this.config.get<string>('TRANSLATION_ENABLED')?.trim() === 'true';
+    return isTranslationEnabled(this.config);
   }
 
   onModuleInit(): void {

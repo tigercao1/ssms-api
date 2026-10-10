@@ -5,11 +5,14 @@ import type { BioTranslator } from './bio-translator.interface';
 import { GeminiBioTranslator } from './gemini-bio-translator';
 import { StubBioTranslator } from './stub-bio-translator';
 import { TranslationQueueService } from './translation-queue.service';
-import { TranslationWorkerService } from './translation-worker.service';
+import {
+  isTranslationEnabled,
+  TranslationWorkerService,
+} from './translation-worker.service';
 
 export function createBioTranslator(config: ConfigService): BioTranslator {
   const apiKey = config.get<string>('GEMINI_API_KEY')?.trim();
-  if (!apiKey) {
+  if (!apiKey || !isTranslationEnabled(config)) {
     return new StubBioTranslator();
   }
   return new GeminiBioTranslator({
@@ -21,8 +24,8 @@ export function createBioTranslator(config: ConfigService): BioTranslator {
 /**
  * Bio AI translation (BIO_TRANSLATION_PLAN.md).
  *
- * {@link BIO_TRANSLATOR} is the Gemini provider when `GEMINI_API_KEY` is set
- * and the {@link StubBioTranslator} otherwise.
+ * {@link BIO_TRANSLATOR} is Gemini when `TRANSLATION_ENABLED=true` and
+ * `GEMINI_API_KEY` is set, and the {@link StubBioTranslator} otherwise.
  *
  * DatabaseModule is @Global, so SUPABASE_CLIENT is injectable without import.
  * Exports the queue service so the instructor-profile save flow can enqueue.

@@ -1,8 +1,8 @@
 /**
  * Bio AI Translation — contract (see BIO_TRANSLATION_PLAN.md).
  *
- * BioTranslationModule binds {@link BIO_TRANSLATOR} to the Gemini provider when
- * `GEMINI_API_KEY` is set, and to the stub otherwise — no call sites change.
+ * BioTranslationModule binds {@link BIO_TRANSLATOR} to Gemini when translation
+ * is enabled and `GEMINI_API_KEY` is set, else the stub — no call sites change.
  */
 
 /** ISO-ish language codes used across the bio fields. */

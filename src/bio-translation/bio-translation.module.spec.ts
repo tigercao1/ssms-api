@@ -14,21 +14,37 @@ describe('createBioTranslator', () => {
   it('binds the stub when GEMINI_API_KEY is absent or blank', () => {
     expect(createBioTranslator(config({}))).toBeInstanceOf(StubBioTranslator);
     expect(
-      createBioTranslator(config({ GEMINI_API_KEY: '  ' })),
+      createBioTranslator(
+        config({ GEMINI_API_KEY: '  ', TRANSLATION_ENABLED: 'true' }),
+      ),
     ).toBeInstanceOf(StubBioTranslator);
   });
 
-  it('binds Gemini with GEMINI_MODEL when the key is set', () => {
+  it.each([
+    [{ GEMINI_API_KEY: 'k' }],
+    [{ GEMINI_API_KEY: 'k', TRANSLATION_ENABLED: 'false' }],
+    [{ GEMINI_API_KEY: 'k', TRANSLATION_ENABLED: 'TRUE' }],
+  ])('binds the stub unless TRANSLATION_ENABLED is "true" (%j)', (env) => {
+    expect(createBioTranslator(config(env))).toBeInstanceOf(StubBioTranslator);
+  });
+
+  it('binds Gemini with GEMINI_MODEL when enabled and the key is set', () => {
     const translator = createBioTranslator(
-      config({ GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-custom' }),
+      config({
+        GEMINI_API_KEY: 'k',
+        GEMINI_MODEL: 'gemini-custom',
+        TRANSLATION_ENABLED: 'true',
+      }),
     );
     expect(translator).toBeInstanceOf(GeminiBioTranslator);
     expect(translator.modelId).toBe('gemini-custom');
   });
 
   it('defaults the Gemini model', () => {
-    expect(createBioTranslator(config({ GEMINI_API_KEY: 'k' })).modelId).toBe(
-      DEFAULT_GEMINI_MODEL,
-    );
+    expect(
+      createBioTranslator(
+        config({ GEMINI_API_KEY: 'k', TRANSLATION_ENABLED: 'true' }),
+      ).modelId,
+    ).toBe(DEFAULT_GEMINI_MODEL);
   });
 });

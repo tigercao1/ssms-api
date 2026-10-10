@@ -4,7 +4,9 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
+import { createBioTranslator } from '../bio-translation/bio-translation.module';
 import { Test } from '@nestjs/testing';
 import { InstructorsService } from '../instructors/instructors.service';
 import { InstructorsRepository } from '../instructors/instructors.repository';
@@ -983,5 +985,104 @@ describe('AdminService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(audit.record).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('AdminService reference translation gate', () => {
+  const repo = {
+    insertReference: jest.fn((_table: string, input: Record<string, unknown>) =>
+      Promise.resolve({
+        id: 'r1',
+        key: input.key,
+        name: input.name,
+        name_zh: input.nameZh,
+        name_en_translated_by: input.nameEnTranslatedBy,
+        name_zh_translated_by: input.nameZhTranslatedBy,
+        sort_order: 0,
+        is_active: true,
+      }),
+    ),
+  };
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '翻译' }] } }],
+        }),
+        { status: 200 },
+      ),
+    );
+  });
+  afterEach(() => fetchSpy.mockRestore());
+
+  async function serviceWith(env: Record<string, string>) {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        AdminService,
+        { provide: AdminRepository, useValue: repo },
+        { provide: InstructorsService, useValue: {} },
+        { provide: AuditService, useValue: { record: jest.fn() } },
+        { provide: MailerService, useValue: {} },
+        {
+          provide: BIO_TRANSLATOR,
+          useFactory: createBioTranslator,
+          inject: [ConfigService],
+        },
+        { provide: ConfigService, useValue: new ConfigService(env) },
+      ],
+    }).compile();
+    return moduleRef.get(AdminService);
+  }
+
+  describe.each([
+    [{ GEMINI_API_KEY: 'k' }],
+    [{ GEMINI_API_KEY: 'k', TRANSLATION_ENABLED: 'false' }],
+  ])('with translation disabled (%j)', (env) => {
+    it('saves an English-only row without a Chinese name or a Gemini call', async () => {
+      const record = await (
+        await serviceWith(env)
+      ).addReference('languages', { key: 'language.fr', name: 'French' });
+
+      expect(record).toEqual(
+        expect.objectContaining({
+          name: 'French',
+          nameZh: null,
+          nameZhTranslatedBy: null,
+        }),
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a Chinese-only row with 422 and no Gemini call', async () => {
+      const error = await (await serviceWith(env))
+        .addReference('languages', { key: 'language.zh', nameZh: '普通话' })
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as Error).message).toBe(
+        'English name required (translation unavailable)',
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  it('translates inline through Gemini when TRANSLATION_ENABLED=true', async () => {
+    const record = await (
+      await serviceWith({
+        GEMINI_API_KEY: 'k',
+        GEMINI_MODEL: 'gemini-test',
+        TRANSLATION_ENABLED: 'true',
+      })
+    ).addReference('languages', { key: 'language.fr', name: 'French' });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(record).toEqual(
+      expect.objectContaining({
+        nameZh: '翻译',
+        nameZhTranslatedBy: 'gemini-test',
+      }),
+    );
   });
 });

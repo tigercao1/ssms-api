@@ -429,7 +429,14 @@ describe('/admin/pages', () => {
         .mockImplementationOnce(
           async (id: string): Promise<PublicPageRow | null> => {
             const stale = { ...ctx.repo.rows.get(id)! };
-            await upload(page.id, '<h1>v2</h1>').expect(200);
+            await new PublicPagesService(
+              ctx.repo,
+              ctx.storage,
+              ctx.audit as unknown as AuditService,
+            ).uploadContent(page.id, Buffer.from('<h1>v2</h1>'), {
+              userId: ADMIN_ID,
+              role: 'admin',
+            });
             return stale;
           },
         );

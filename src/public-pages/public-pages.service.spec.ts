@@ -39,7 +39,12 @@ function build() {
     storage,
     audit as unknown as AuditService,
   );
-  return { repo, storage, audit, service };
+  const peer = new PublicPagesService(
+    repo,
+    storage,
+    audit as unknown as AuditService,
+  );
+  return { repo, storage, audit, service, peer };
 }
 
 type Ctx = ReturnType<typeof build>;
@@ -58,6 +63,41 @@ function interleave(ctx: Ctx, concurrent: () => Promise<unknown>): void {
 
 function bucket(ctx: Ctx): Map<string, Buffer> {
   return new Map(ctx.storage.objects);
+}
+
+type RepoMethod = 'findById' | 'update' | 'delete';
+
+function real<K extends RepoMethod>(
+  ctx: Ctx,
+  method: K,
+): InMemoryPublicPagesRepository[K] {
+  return ctx.repo[method].bind(ctx.repo) as InMemoryPublicPagesRepository[K];
+}
+
+function duringDbWrite(ctx: Ctx, concurrent: () => Promise<unknown>): void {
+  const update = real(ctx, 'update');
+  jest.spyOn(ctx.repo, 'update').mockImplementationOnce(async (...args) => {
+    await concurrent();
+    return update(...args);
+  });
+}
+
+function expectStorageMatchesRow(ctx: Ctx, id: string): void {
+  const row = ctx.repo.rows.get(id)!;
+  const published = ctx.storage.objects.get('published/faq.html');
+  const draft = ctx.storage.objects.get('drafts/faq.html');
+  expect(published && sha(published)).toBe(
+    row.status === 'published' ? row.published_sha256 : undefined,
+  );
+  expect(draft && sha(draft)).toBe(row.draft_sha256 ?? undefined);
+}
+
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
 }
 
 afterEach(() => {
@@ -150,7 +190,7 @@ describe('PublicPagesService', () => {
   it('409s a title update when the page changed after it was read', async () => {
     const ctx = build();
     const page = await ctx.service.create('faq', 'FAQ', actor);
-    interleave(ctx, () => ctx.service.updateTitle(page.id, 'Other', other));
+    interleave(ctx, () => ctx.peer.updateTitle(page.id, 'Other', other));
     await expect(
       ctx.service.updateTitle(page.id, 'Mine', actor),
     ).rejects.toThrow(new ConflictException(PAGE_CONFLICT));
@@ -164,7 +204,7 @@ describe('PublicPagesService', () => {
   it('409s a title update when the page was deleted after it was read', async () => {
     const ctx = build();
     const page = await ctx.service.create('faq', 'FAQ', actor);
-    interleave(ctx, () => ctx.service.remove(page.id, other));
+    interleave(ctx, () => ctx.peer.remove(page.id, other));
     await expect(
       ctx.service.updateTitle(page.id, 'Mine', actor),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -500,7 +540,7 @@ describe('PublicPagesService', () => {
 
       it('409s and restores R2 when the page changed concurrently', async () => {
         const { ctx, id, objects, audits } = await prepare(scenario);
-        interleave(ctx, () => ctx.service.updateTitle(id, 'Other', other));
+        interleave(ctx, () => ctx.peer.updateTitle(id, 'Other', other));
         await expect(scenario.run(ctx, id)).rejects.toThrow(
           new ConflictException(PAGE_CONFLICT),
         );
@@ -547,7 +587,7 @@ describe('PublicPagesService', () => {
       await ctx.service.uploadContent(page.id, v1, actor);
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       interleave(ctx, async () => {
-        await ctx.service.updateTitle(page.id, 'Other', other);
+        await ctx.peer.updateTitle(page.id, 'Other', other);
         ctx.storage.failOn = (call) => call === 'DELETE published/faq.html';
         jest
           .spyOn(ctx.audit, 'record')
@@ -587,7 +627,7 @@ describe('PublicPagesService', () => {
       await ctx.service.uploadContent(page.id, v1, actor);
       await ctx.service.publish(page.id, actor);
       await ctx.service.uploadContent(page.id, v2, actor);
-      interleave(ctx, () => ctx.service.publish(page.id, other));
+      interleave(ctx, () => ctx.peer.publish(page.id, other));
       await expect(ctx.service.unpublish(page.id, actor)).rejects.toThrow(
         new ConflictException(PAGE_CONFLICT),
       );
@@ -603,12 +643,246 @@ describe('PublicPagesService', () => {
       await ctx.service.uploadContent(page.id, v1, actor);
       await ctx.service.publish(page.id, actor);
       await ctx.service.uploadContent(page.id, v2, actor);
-      interleave(ctx, () => ctx.service.unpublish(page.id, other));
+      interleave(ctx, () => ctx.peer.unpublish(page.id, other));
       await expect(ctx.service.publish(page.id, actor)).rejects.toThrow(
         new ConflictException(PAGE_CONFLICT),
       );
       expect(ctx.repo.rows.get(page.id)!.status).toBe('draft');
       expect(ctx.storage.objects.has('published/faq.html')).toBe(false);
+    });
+  });
+
+  describe('another request completing between the R2 write and the database write', () => {
+    const v1 = Buffer.from('<h1>v1</h1>');
+    const v2 = Buffer.from('<h1>v2</h1>');
+    const v3 = Buffer.from('<h1>v3</h1>');
+
+    async function publishedWithNewDraft() {
+      const ctx = build();
+      const page = await ctx.service.create('faq', 'FAQ', actor);
+      await ctx.service.uploadContent(page.id, v1, actor);
+      await ctx.service.publish(page.id, actor);
+      await ctx.service.uploadContent(page.id, v2, actor);
+      return { ctx, id: page.id };
+    }
+
+    it('takes the page down when a publish loses to an unpublish', async () => {
+      const { ctx, id } = await publishedWithNewDraft();
+      duringDbWrite(ctx, () => ctx.peer.unpublish(id, other));
+      await expect(ctx.service.publish(id, actor)).rejects.toThrow(
+        new ConflictException(PAGE_CONFLICT),
+      );
+      expect(ctx.repo.rows.get(id)!.status).toBe('draft');
+      expect(ctx.storage.objects.has('published/faq.html')).toBe(false);
+      expectStorageMatchesRow(ctx, id);
+    });
+
+    it('keeps the new version live when an unpublish loses to a publish', async () => {
+      const { ctx, id } = await publishedWithNewDraft();
+      duringDbWrite(ctx, () => ctx.peer.publish(id, other));
+      await expect(ctx.service.unpublish(id, actor)).rejects.toThrow(
+        new ConflictException(PAGE_CONFLICT),
+      );
+      expect(ctx.repo.rows.get(id)).toMatchObject({
+        status: 'published',
+        published_sha256: sha(v2),
+      });
+      expect(ctx.storage.objects.get('published/faq.html')).toEqual(v2);
+      expectStorageMatchesRow(ctx, id);
+    });
+
+    it('restores the recorded draft when an upload loses to a publish', async () => {
+      const ctx = build();
+      const page = await ctx.service.create('faq', 'FAQ', actor);
+      await ctx.service.uploadContent(page.id, v1, actor);
+      duringDbWrite(ctx, () => ctx.peer.publish(page.id, other));
+      await expect(
+        ctx.service.uploadContent(page.id, v2, actor),
+      ).rejects.toThrow(new ConflictException(PAGE_CONFLICT));
+      expect(ctx.repo.rows.get(page.id)).toMatchObject({
+        status: 'published',
+        draft_sha256: sha(v1),
+        published_sha256: sha(v2),
+      });
+      expect(ctx.storage.objects.get('drafts/faq.html')).toEqual(v1);
+      expect(ctx.storage.objects.get('published/faq.html')).toEqual(v2);
+      expectStorageMatchesRow(ctx, page.id);
+    });
+
+    it('reconciles to the database and keeps the error when the write fails', async () => {
+      const { ctx, id } = await publishedWithNewDraft();
+      const update = real(ctx, 'update');
+      jest.spyOn(ctx.repo, 'update').mockImplementationOnce(async (...args) => {
+        await ctx.peer.unpublish(id, other);
+        await update(...args);
+        throw new Error('db down');
+      });
+      await expect(ctx.service.publish(id, actor)).rejects.toThrow('db down');
+      expect(ctx.storage.objects.has('published/faq.html')).toBe(false);
+      expectStorageMatchesRow(ctx, id);
+    });
+
+    it('takes the published object down when the page was deleted', async () => {
+      const { ctx, id } = await publishedWithNewDraft();
+      duringDbWrite(ctx, () => ctx.peer.remove(id, other));
+      await expect(ctx.service.publish(id, actor)).rejects.toThrow(
+        new ConflictException(PAGE_CONFLICT),
+      );
+      expect(ctx.repo.rows.has(id)).toBe(false);
+      expect(ctx.storage.objects.has('published/faq.html')).toBe(false);
+    });
+
+    it('502s and audits when no stored body matches the database', async () => {
+      const { ctx, id } = await publishedWithNewDraft();
+      const logged = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      duringDbWrite(ctx, async () => {
+        await ctx.peer.uploadContent(id, v3, other);
+        await ctx.peer.publish(id, other);
+        ctx.storage.objects.delete('published/faq.html');
+        ctx.storage.objects.delete('drafts/faq.html');
+      });
+      await expect(ctx.service.publish(id, actor)).rejects.toThrow(
+        new BadGatewayException(DOCS_STORAGE_UNAVAILABLE),
+      );
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `no stored body matches sha256 ${sha(v3)} for published/faq.html`,
+        ),
+      );
+      expect(ctx.audit.entries.at(-1)).toEqual({
+        action: 'page.storage_inconsistent',
+        actor,
+        targetType: 'public_page',
+        targetId: id,
+        metadata: {
+          slug: 'faq',
+          operation: 'publish',
+          object: 'published/faq.html',
+          reason: PAGE_CONFLICT,
+        },
+      });
+    });
+
+    it('falls back to the snapshot when re-reading the page fails', async () => {
+      const { ctx, id } = await publishedWithNewDraft();
+      const objects = bucket(ctx);
+      const warned = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const findById = real(ctx, 'findById');
+      jest
+        .spyOn(ctx.repo, 'findById')
+        .mockImplementationOnce(findById)
+        .mockRejectedValueOnce(new Error('db gone'));
+      jest
+        .spyOn(ctx.repo, 'update')
+        .mockRejectedValueOnce(new Error('db down'));
+      await expect(ctx.service.publish(id, actor)).rejects.toThrow('db down');
+      expect(bucket(ctx)).toEqual(objects);
+      expect(warned).toHaveBeenCalledWith(expect.stringContaining('db gone'));
+    });
+  });
+
+  describe('page locks', () => {
+    const v1 = Buffer.from('<h1>v1</h1>');
+
+    it('serializes mutations of one page and runs other pages concurrently', async () => {
+      const ctx = build();
+      const a = await ctx.service.create('faq', 'FAQ', actor);
+      const b = await ctx.service.create('rates', 'Rates', actor);
+      await ctx.service.uploadContent(a.id, v1, actor);
+      const name = (id: string) => (id === a.id ? 'a' : 'b');
+      const events: string[] = [];
+      const blocked = gate();
+      const findById = real(ctx, 'findById');
+      const update = real(ctx, 'update');
+      jest.spyOn(ctx.repo, 'findById').mockImplementation(async (id) => {
+        events.push(`load ${name(id)}`);
+        if (events.length === 1) {
+          await blocked.wait;
+        }
+        return findById(id);
+      });
+      jest.spyOn(ctx.repo, 'update').mockImplementation(async (id, ...rest) => {
+        events.push(`update ${name(id)}`);
+        return update(id, ...rest);
+      });
+
+      const first = ctx.service.publish(a.id, actor);
+      const second = ctx.service.updateTitle(a.id, 'Questions', actor);
+      await ctx.service.updateTitle(b.id, 'Prices', actor);
+      expect(events).toEqual(['load a', 'load b', 'update b']);
+
+      blocked.open();
+      await first;
+      events.push('first resolved');
+      await second;
+      expect(events).toEqual([
+        'load a',
+        'load b',
+        'update b',
+        'update a',
+        'first resolved',
+        'load a',
+        'update a',
+      ]);
+      expect(ctx.repo.rows.get(a.id)).toMatchObject({
+        title: 'Questions',
+        status: 'published',
+      });
+      expect(ctx.service['locks'].size).toBe(0);
+    });
+
+    it('makes a re-create of the slug wait for the delete to finish', async () => {
+      const ctx = build();
+      const page = await ctx.service.create('faq', 'FAQ', actor);
+      await ctx.service.uploadContent(page.id, v1, actor);
+      const blocked = gate();
+      const remove = real(ctx, 'delete');
+      const deleting = jest
+        .spyOn(ctx.repo, 'delete')
+        .mockImplementationOnce(async (...args) => {
+          await blocked.wait;
+          return remove(...args);
+        });
+      const removing = ctx.service.remove(page.id, actor);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deleting).toHaveBeenCalled();
+      const creating = ctx.service.create('faq', 'FAQ again', actor);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(ctx.repo.rows.size).toBe(1);
+      blocked.open();
+      await removing;
+      const recreated = await creating;
+      expect(recreated).toMatchObject({ slug: 'faq', title: 'FAQ again' });
+      expect(ctx.storage.objects.size).toBe(0);
+      expect(ctx.service['locks'].size).toBe(0);
+    });
+
+    it('releases locks after success and after errors', async () => {
+      const ctx = build();
+      const page = await ctx.service.create('faq', 'FAQ', actor);
+      await ctx.service.uploadContent(page.id, v1, actor);
+      await ctx.service.publish(page.id, actor);
+      await ctx.service.unpublish(page.id, actor);
+      expect(ctx.service['locks'].size).toBe(0);
+
+      await expect(
+        ctx.service.updateTitle(UNKNOWN_ID, 'x', actor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        ctx.service.create('faq', 'Dup', actor),
+      ).rejects.toBeInstanceOf(ConflictException);
+      interleave(ctx, () => ctx.peer.updateTitle(page.id, 'Other', other));
+      await expect(ctx.service.publish(page.id, actor)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(ctx.service['locks'].size).toBe(0);
+
+      await ctx.service.remove(page.id, actor);
+      expect(ctx.service['locks'].size).toBe(0);
     });
   });
 });

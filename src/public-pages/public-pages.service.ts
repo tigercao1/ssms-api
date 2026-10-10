@@ -18,6 +18,7 @@ import {
   DOCS_STORAGE_UNAVAILABLE,
   DocsStorageClient,
 } from './docs-storage.client';
+import { KeyedLock } from './keyed-lock';
 import {
   DuplicateSlugError,
   PublicPagesRepository,
@@ -41,10 +42,19 @@ export const PAGE_CONFLICT =
 
 type StorageOperation = 'upload' | 'publish' | 'unpublish' | 'delete';
 
-interface ObjectRestore {
+interface ObjectSnapshot {
   key: string;
   previous: Buffer | null;
+  body: Buffer | null;
 }
+
+interface ObjectTarget {
+  key: string;
+  sha256: string | null;
+}
+
+const pageLock = (id: string): string => `page:${id}`;
+const slugLock = (slug: string): string => `slug:${slug}`;
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -57,6 +67,7 @@ function sha256(body: Buffer): string {
 @Injectable()
 export class PublicPagesService {
   private readonly logger = new Logger(PublicPagesService.name);
+  private readonly locks = new KeyedLock();
 
   constructor(
     private readonly repo: PublicPagesRepository,
@@ -74,47 +85,51 @@ export class PublicPagesService {
     title: string,
     actor: AuditActor,
   ): Promise<PublicPage> {
-    let row: PublicPageRow;
-    try {
-      row = await this.repo.create({
-        slug,
-        title: title.trim(),
-        userId: actor.userId ?? null,
-      });
-    } catch (err) {
-      if (err instanceof DuplicateSlugError) {
-        throw new ConflictException(`Slug '${slug}' is already taken`);
+    return this.locks.run(slugLock(slug), async () => {
+      let row: PublicPageRow;
+      try {
+        row = await this.repo.create({
+          slug,
+          title: title.trim(),
+          userId: actor.userId ?? null,
+        });
+      } catch (err) {
+        if (err instanceof DuplicateSlugError) {
+          throw new ConflictException(`Slug '${slug}' is already taken`);
+        }
+        throw err;
       }
-      throw err;
-    }
-    await this.record(AUDIT_ACTIONS.pageCreate, actor, row, {
-      slug: row.slug,
-      title: row.title,
+      await this.record(AUDIT_ACTIONS.pageCreate, actor, row, {
+        slug: row.slug,
+        title: row.title,
+      });
+      return this.toPublicPage(row);
     });
-    return this.toPublicPage(row);
   }
 
-  async updateTitle(
+  updateTitle(
     id: string,
     title: string,
     actor: AuditActor,
   ): Promise<PublicPage> {
-    const before = await this.load(id);
-    const row = await this.repo.update(
-      id,
-      before.updated_at,
-      { title: title.trim() },
-      actor.userId ?? null,
-    );
-    if (!row) {
-      throw new ConflictException(PAGE_CONFLICT);
-    }
-    await this.record(AUDIT_ACTIONS.pageUpdate, actor, row, {
-      slug: row.slug,
-      before: { title: before.title },
-      after: { title: row.title },
+    return this.locks.run(pageLock(id), async () => {
+      const before = await this.load(id);
+      const row = await this.repo.update(
+        id,
+        before.updated_at,
+        { title: title.trim() },
+        actor.userId ?? null,
+      );
+      if (!row) {
+        throw new ConflictException(PAGE_CONFLICT);
+      }
+      await this.record(AUDIT_ACTIONS.pageUpdate, actor, row, {
+        slug: row.slug,
+        before: { title: before.title },
+        after: { title: row.title },
+      });
+      return this.toPublicPage(row);
     });
-    return this.toPublicPage(row);
   }
 
   async uploadContent(
@@ -128,30 +143,32 @@ export class PublicPagesService {
     if (body.length > PAGE_CONTENT_MAX_BYTES) {
       throw new PayloadTooLargeException(PAGE_CONTENT_TOO_LARGE);
     }
-    const page = await this.load(id);
-    const digest = sha256(body);
-    const key = draftKey(page.slug);
-    const previous = await this.storage.get(key);
-    await this.storage.put(key, body);
-    const row = await this.commit(
-      page,
-      'upload',
-      { key, previous },
-      actor,
-      () =>
-        this.repo.update(
-          id,
-          page.updated_at,
-          { draft_sha256: digest, draft_size_bytes: body.length },
-          actor.userId ?? null,
-        ),
-    );
-    await this.record(AUDIT_ACTIONS.pageUpload, actor, row, {
-      slug: row.slug,
-      sizeBytes: body.length,
-      sha256: digest,
+    return this.locks.run(pageLock(id), async () => {
+      const page = await this.load(id);
+      const digest = sha256(body);
+      const key = draftKey(page.slug);
+      const previous = await this.storage.get(key);
+      await this.storage.put(key, body);
+      const row = await this.commit(
+        page,
+        'upload',
+        { key, previous, body },
+        actor,
+        () =>
+          this.repo.update(
+            id,
+            page.updated_at,
+            { draft_sha256: digest, draft_size_bytes: body.length },
+            actor.userId ?? null,
+          ),
+      );
+      await this.record(AUDIT_ACTIONS.pageUpload, actor, row, {
+        slug: row.slug,
+        sizeBytes: body.length,
+        sha256: digest,
+      });
+      return this.toPublicPage(row);
     });
-    return this.toPublicPage(row);
   }
 
   async getContent(id: string): Promise<Buffer> {
@@ -162,71 +179,91 @@ export class PublicPagesService {
     return this.readDraft(page);
   }
 
-  async publish(id: string, actor: AuditActor): Promise<PublicPage> {
-    const page = await this.load(id);
-    if (page.draft_sha256 === null) {
-      throw new BadRequestException(PAGE_CONTENT_REQUIRED);
-    }
-    const body = await this.readDraft(page);
-    const key = publishedKey(page.slug);
-    const previous = await this.storage.get(key);
-    await this.storage.put(key, body);
-    const digest = sha256(body);
-    const row = await this.commit(
-      page,
-      'publish',
-      { key, previous },
-      actor,
-      () =>
-        this.repo.update(
-          id,
-          page.updated_at,
-          {
-            status: 'published',
-            published_sha256: digest,
-            published_at: new Date().toISOString(),
-          },
-          actor.userId ?? null,
-        ),
-    );
-    await this.record(AUDIT_ACTIONS.pagePublish, actor, row, {
-      slug: row.slug,
-      sha256: digest,
+  publish(id: string, actor: AuditActor): Promise<PublicPage> {
+    return this.locks.run(pageLock(id), async () => {
+      const page = await this.load(id);
+      if (page.draft_sha256 === null) {
+        throw new BadRequestException(PAGE_CONTENT_REQUIRED);
+      }
+      const body = await this.readDraft(page);
+      const key = publishedKey(page.slug);
+      const previous = await this.storage.get(key);
+      await this.storage.put(key, body);
+      const digest = sha256(body);
+      const row = await this.commit(
+        page,
+        'publish',
+        { key, previous, body },
+        actor,
+        () =>
+          this.repo.update(
+            id,
+            page.updated_at,
+            {
+              status: 'published',
+              published_sha256: digest,
+              published_at: new Date().toISOString(),
+            },
+            actor.userId ?? null,
+          ),
+      );
+      await this.record(AUDIT_ACTIONS.pagePublish, actor, row, {
+        slug: row.slug,
+        sha256: digest,
+      });
+      return this.toPublicPage(row);
     });
-    return this.toPublicPage(row);
   }
 
-  async unpublish(id: string, actor: AuditActor): Promise<PublicPage> {
-    const page = await this.load(id);
+  unpublish(id: string, actor: AuditActor): Promise<PublicPage> {
+    return this.locks.run(pageLock(id), async () => {
+      const page = await this.load(id);
+      const key = publishedKey(page.slug);
+      const previous = await this.storage.get(key);
+      await this.storage.delete(key);
+      const row = await this.commit(
+        page,
+        'unpublish',
+        { key, previous, body: null },
+        actor,
+        () =>
+          this.repo.update(
+            id,
+            page.updated_at,
+            { status: 'draft', published_sha256: null, published_at: null },
+            actor.userId ?? null,
+          ),
+      );
+      await this.record(AUDIT_ACTIONS.pageUnpublish, actor, row, {
+        slug: row.slug,
+      });
+      return this.toPublicPage(row);
+    });
+  }
+
+  remove(id: string, actor: AuditActor): Promise<void> {
+    return this.locks.run(pageLock(id), async () => {
+      const page = await this.load(id);
+      await this.locks.run(slugLock(page.slug), () =>
+        this.removeLoaded(page, actor),
+      );
+    });
+  }
+
+  private async removeLoaded(
+    page: PublicPageRow,
+    actor: AuditActor,
+  ): Promise<void> {
     const key = publishedKey(page.slug);
     const previous = await this.storage.get(key);
     await this.storage.delete(key);
-    const row = await this.commit(
+    await this.commit(
       page,
-      'unpublish',
-      { key, previous },
+      'delete',
+      { key, previous, body: null },
       actor,
-      () =>
-        this.repo.update(
-          id,
-          page.updated_at,
-          { status: 'draft', published_sha256: null, published_at: null },
-          actor.userId ?? null,
-        ),
-    );
-    await this.record(AUDIT_ACTIONS.pageUnpublish, actor, row, {
-      slug: row.slug,
-    });
-    return this.toPublicPage(row);
-  }
-
-  async remove(id: string, actor: AuditActor): Promise<void> {
-    const page = await this.load(id);
-    const key = publishedKey(page.slug);
-    const previous = await this.storage.get(key);
-    await this.storage.delete(key);
-    await this.commit(page, 'delete', { key, previous }, actor, async () =>
-      (await this.repo.delete(id, page.updated_at)) ? true : null,
+      async () =>
+        (await this.repo.delete(page.id, page.updated_at)) ? true : null,
     );
     try {
       await this.storage.delete(draftKey(page.slug));
@@ -263,7 +300,7 @@ export class PublicPagesService {
   private async commit<T>(
     page: PublicPageRow,
     operation: StorageOperation,
-    restore: ObjectRestore,
+    snapshot: ObjectSnapshot,
     actor: AuditActor,
     write: () => Promise<T | null>,
   ): Promise<T> {
@@ -277,44 +314,129 @@ export class PublicPagesService {
     } catch (err) {
       failure = err instanceof Error ? err : new Error(String(err));
     }
-    await this.compensate(page, operation, restore, actor, failure);
+    await this.reconcile(page, operation, snapshot, actor, failure);
     throw failure;
   }
 
-  private async compensate(
+  private async reconcile(
     page: PublicPageRow,
     operation: StorageOperation,
-    { key, previous }: ObjectRestore,
+    snapshot: ObjectSnapshot,
     actor: AuditActor,
     failure: Error,
   ): Promise<void> {
-    try {
-      if (previous === null) {
-        await this.storage.delete(key);
-      } else {
-        await this.storage.put(key, previous);
-      }
-      return;
-    } catch (err) {
-      const reason = failure.message;
-      this.logger.error(
-        `Storage inconsistent: ${operation} of page ${page.id} (${page.slug}) failed (${reason}) and restoring ${key} failed (${describeError(err)})`,
-      );
+    const targets = await this.reconcileTargets(page, snapshot);
+    for (const target of targets) {
+      let problem: string | null;
       try {
-        await this.audit.record({
-          action: AUDIT_ACTIONS.pageStorageInconsistent,
+        problem = await this.converge(page.slug, target, snapshot);
+      } catch (err) {
+        problem = `restoring ${target.key} failed (${describeError(err)})`;
+      }
+      if (problem !== null) {
+        await this.reportInconsistent(
+          page,
+          operation,
+          target.key,
           actor,
-          targetType: 'public_page',
-          targetId: page.id,
-          metadata: { slug: page.slug, operation, object: key, reason },
-        });
-      } catch (auditErr) {
-        this.logger.error(
-          `Failed to audit storage inconsistency for page ${page.id}: ${describeError(auditErr)}`,
+          failure,
+          problem,
         );
+        throw new BadGatewayException(DOCS_STORAGE_UNAVAILABLE);
       }
     }
-    throw new BadGatewayException(DOCS_STORAGE_UNAVAILABLE);
+  }
+
+  private async reconcileTargets(
+    page: PublicPageRow,
+    snapshot: ObjectSnapshot,
+  ): Promise<ObjectTarget[]> {
+    let row: PublicPageRow | null;
+    try {
+      row = await this.repo.findById(page.id);
+    } catch (err) {
+      this.logger.warn(
+        `Re-reading page ${page.id} failed (${describeError(err)}); restoring ${snapshot.key} from its snapshot`,
+      );
+      return [
+        {
+          key: snapshot.key,
+          sha256: snapshot.previous === null ? null : sha256(snapshot.previous),
+        },
+      ];
+    }
+    const published: ObjectTarget = {
+      key: publishedKey(page.slug),
+      sha256: row?.status === 'published' ? row.published_sha256 : null,
+    };
+    if (row === null) {
+      return [published];
+    }
+    const draft: ObjectTarget = {
+      key: draftKey(page.slug),
+      sha256: row.draft_sha256,
+    };
+    return snapshot.key === draft.key ? [draft, published] : [published, draft];
+  }
+
+  private async converge(
+    slug: string,
+    target: ObjectTarget,
+    snapshot: ObjectSnapshot,
+  ): Promise<string | null> {
+    const existing = await this.storage.get(target.key);
+    if (target.sha256 === null) {
+      if (existing !== null) {
+        await this.storage.delete(target.key);
+      }
+      return null;
+    }
+    const candidates: (() => Promise<Buffer | null>)[] = [
+      () => Promise.resolve(existing),
+      () =>
+        Promise.resolve(snapshot.key === target.key ? snapshot.previous : null),
+      () => Promise.resolve(snapshot.body),
+    ];
+    if (target.key === publishedKey(slug)) {
+      candidates.push(() => this.storage.get(draftKey(slug)));
+    }
+    for (const candidate of candidates) {
+      const body = await candidate();
+      if (body !== null && sha256(body) === target.sha256) {
+        if (body !== existing) {
+          await this.storage.put(target.key, body);
+        }
+        return null;
+      }
+    }
+    return `no stored body matches sha256 ${target.sha256} for ${target.key}`;
+  }
+
+  private async reportInconsistent(
+    page: PublicPageRow,
+    operation: StorageOperation,
+    key: string,
+    actor: AuditActor,
+    failure: Error,
+    problem: string,
+  ): Promise<void> {
+    const reason = failure.message;
+    this.logger.error(
+      `Storage inconsistent: ${operation} of page ${page.id} (${page.slug}) failed (${reason}) and ${problem}`,
+    );
+    try {
+      await this.audit.record({
+        action: AUDIT_ACTIONS.pageStorageInconsistent,
+        actor,
+        targetType: 'public_page',
+        targetId: page.id,
+        metadata: { slug: page.slug, operation, object: key, reason },
+      });
+    } catch (auditErr) {
+      this.logger.error(
+        `Failed to audit storage inconsistency for page ${page.id}: ${describeError(auditErr)}`,
+      );
+    }
   }
 
   private record(

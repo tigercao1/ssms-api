@@ -9,8 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { Request } from 'express';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import request from 'supertest';
-import type { App } from 'supertest/types';
 import { AdminMediaController } from '../admin/admin-media.controller';
 import { AdminService } from '../admin/admin.service';
 import { EmailVerifiedGuard } from '../auth/email-verified.guard';
@@ -168,7 +169,7 @@ async function build() {
     .overrideGuard(EmailVerifiedGuard)
     .useValue({ canActivate: () => true })
     .compile();
-  const app = moduleRef.createNestApplication<INestApplication<App>>();
+  const app = moduleRef.createNestApplication<INestApplication>();
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -176,8 +177,10 @@ async function build() {
       transform: true,
     }),
   );
-  await app.init();
-  return { app, repo, storage };
+  await app.listen(0, '127.0.0.1');
+  const address = (app.getHttpServer() as Server).address() as AddressInfo;
+  const url = `http://127.0.0.1:${address.port}`;
+  return { app, repo, storage, url };
 }
 
 describe.each([
@@ -185,7 +188,7 @@ describe.each([
   ['admin', `/admin/instructors/${INSTRUCTOR_ID}/photo`, 'Bearer jwt-admin'],
 ])('photo slots via the %s routes', (_label, base, auth) => {
   let ctx: Awaited<ReturnType<typeof build>>;
-  const http = () => request(ctx.app.getHttpServer());
+  const http = () => request(ctx.url);
 
   beforeEach(async () => {
     ctx = await build();
@@ -303,7 +306,7 @@ describe.each([
 
 describe('admin photo slot routes', () => {
   let ctx: Awaited<ReturnType<typeof build>>;
-  const http = () => request(ctx.app.getHttpServer());
+  const http = () => request(ctx.url);
 
   beforeEach(async () => {
     ctx = await build();

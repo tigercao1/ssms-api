@@ -6,6 +6,7 @@ import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { InstructorProfile } from './instructors.types';
 import { InstructorsService } from './instructors.service';
+import { signupNamesFromJwt } from './signup-names.util';
 
 /**
  * Self-service instructor profile endpoints (`/me/instructor`).
@@ -26,7 +27,11 @@ export class InstructorsController {
    */
   @Get()
   getMe(@CurrentUser() user: SupabaseJwtPayload): Promise<InstructorProfile> {
-    return this.instructors.getOrCreateForUser(user.sub, user.email ?? '');
+    return this.instructors.getOrCreateForUser(
+      user.sub,
+      user.email ?? '',
+      signupNamesFromJwt(user),
+    );
   }
 
   /**

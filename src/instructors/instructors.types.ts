@@ -12,6 +12,10 @@ export interface InstructorRow {
   id: string;
   auth_user_id: string;
   email: string;
+  /** Captured at sign-up from Supabase user_metadata; nickname is optional. */
+  first_name: string;
+  last_name: string;
+  nickname: string | null;
   display_name_en: string;
   display_name_zh: string | null;
   bio_en: string | null;
@@ -55,6 +59,9 @@ export interface TrainerStatusRow {
 export interface InstructorProfile {
   id: string;
   email: string;
+  firstName: string;
+  lastName: string;
+  nickname: string | null;
   displayNameEn: string;
   displayNameZh: string | null;
   bioEn: string | null;

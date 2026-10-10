@@ -28,6 +28,9 @@ export abstract class InstructorsRepository {
   abstract insertPending(
     authUserId: string,
     email: string,
+    firstName: string,
+    lastName: string,
+    nickname: string | null,
   ): Promise<InstructorRow | null>;
   abstract getTeachingLocations(instructorId: string): Promise<ReferenceRow[]>;
   abstract getLanguages(instructorId: string): Promise<ReferenceRow[]>;
@@ -43,7 +46,8 @@ export abstract class InstructorsRepository {
 }
 
 const INSTRUCTOR_COLUMNS =
-  'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
+  'id, auth_user_id, email, first_name, last_name, nickname, display_name_en, ' +
+  'display_name_zh, bio_en, bio_zh, ' +
   'bio_en_machine_translated, bio_zh_machine_translated, date_of_birth, ' +
   'profile_photo_url, preferred_language, approval_status, is_active, ' +
   'min_student_age, inserted_at, updated_at';
@@ -87,10 +91,19 @@ export class SupabaseInstructorsRepository extends InstructorsRepository {
   async insertPending(
     authUserId: string,
     email: string,
+    firstName: string,
+    lastName: string,
+    nickname: string | null,
   ): Promise<InstructorRow | null> {
     const { data, error } = await this.supabase
       .from('instructors')
-      .insert({ auth_user_id: authUserId, email })
+      .insert({
+        auth_user_id: authUserId,
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        nickname,
+      })
       .select(INSTRUCTOR_COLUMNS)
       .single();
     if (error) {

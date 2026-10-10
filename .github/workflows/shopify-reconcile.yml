@@ -13,6 +13,7 @@ jobs:
   reconcile:
     name: Re-enqueue every instructor for Shopify sync
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: POST /internal/shopify-sync/reconcile
         env:

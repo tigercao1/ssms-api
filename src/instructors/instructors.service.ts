@@ -243,6 +243,7 @@ export class InstructorsService {
       isActive: row.is_active,
       profilePhotoUrl: row.profile_photo_url,
       minStudentAge: row.min_student_age,
+      displayOrder: row.display_order,
       teachingLocations,
       languages,
       courseLevelsOffered,

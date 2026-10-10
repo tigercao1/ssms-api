@@ -33,6 +33,7 @@ function makeRow(over: Partial<AdminInstructorRow> = {}): AdminInstructorRow {
     date_of_birth: null,
     profile_photo_url: null,
     min_student_age: 5,
+    display_order: null,
     preferred_language: 'en',
     approval_status: 'pending',
     is_active: true,

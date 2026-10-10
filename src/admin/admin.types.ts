@@ -41,6 +41,7 @@ export interface AdminInstructorRow {
   date_of_birth: string | null;
   profile_photo_url: string | null;
   min_student_age: number;
+  display_order: number | null;
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
   is_active: boolean;
@@ -60,6 +61,7 @@ export interface AdminInstructorRecord {
   dateOfBirth: string | null;
   profilePhotoUrl: string | null;
   minStudentAge: number;
+  displayOrder: number | null;
   preferredLanguage: PreferredLanguage;
   approvalStatus: ApprovalStatus;
   isActive: boolean;
@@ -77,6 +79,7 @@ export interface ListInstructorsFilter {
 export interface AdminInstructorPatch {
   approval_status?: ApprovalStatus;
   is_active?: boolean;
+  display_order?: number | null;
 }
 
 /**

@@ -23,6 +23,20 @@ describe('UpdateInstructorProfileDto validation (T3.2)', () => {
     expect(validate({})).toHaveLength(0);
   });
 
+  it('rejects displayOrder, which only admins can set', () => {
+    expect(errorsOn({ displayOrder: 1 })).toEqual(['displayOrder']);
+  });
+
+  it('accepts a trainer level without the rookie session', () => {
+    expect(
+      validate({
+        trainerStatus: [
+          { discipline: 'ski', rookieSessionCompleted: false, trainerLevel: 2 },
+        ],
+      }),
+    ).toHaveLength(0);
+  });
+
   it('accepts a full valid patch', () => {
     expect(
       validate({

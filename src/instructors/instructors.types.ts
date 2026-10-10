@@ -23,6 +23,7 @@ export interface InstructorRow {
   date_of_birth: string | null;
   profile_photo_url: string | null;
   min_student_age: number;
+  display_order: number | null;
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
   is_active: boolean;
@@ -71,6 +72,7 @@ export interface InstructorProfile {
   isActive: boolean;
   profilePhotoUrl: string | null;
   minStudentAge: number;
+  displayOrder: number | null;
   teachingLocations: Array<{ id: string; key: string; name: string }>;
   languages: Array<{ id: string; key: string; name: string }>;
   courseLevelsOffered: Array<{ id: string; key: string; name: string }>;

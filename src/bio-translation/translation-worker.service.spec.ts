@@ -86,6 +86,7 @@ describe('TranslationWorkerService', () => {
   it('completes and sets the MT flag when a real provider returns text', async () => {
     const { client, updates } = makeSupabase(jobRow());
     const realProvider: BioTranslator = {
+      modelId: 'gemini-test',
       translate: () => Promise.resolve('我教滑雪。'),
     };
     const worker = new TranslationWorkerService(client, realProvider);

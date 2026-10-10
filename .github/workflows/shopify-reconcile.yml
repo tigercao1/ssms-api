@@ -1,0 +1,27 @@
+name: Shopify reconcile
+
+on:
+  schedule:
+    - cron: '30 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: shopify-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Re-enqueue every instructor for Shopify sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /internal/shopify-sync/reconcile
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SHOPIFY_RECONCILE_TOKEN: ${{ secrets.SHOPIFY_RECONCILE_TOKEN }}
+        run: |
+          set -euo pipefail
+          status="$(curl -sS --max-time 30 -o response.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${SHOPIFY_RECONCILE_TOKEN}" \
+            "${API_BASE_URL%/}/internal/shopify-sync/reconcile")"
+          cat response.json; echo
+          [[ "$status" == 2* ]] || { echo "::error::reconcile returned HTTP $status"; exit 1; }

@@ -14,6 +14,7 @@ import { MediaModule } from './media/media.module';
 import { AdminModule } from './admin/admin.module';
 import { PublicApiModule } from './public-api/public-api.module';
 import { MailerModule } from './mailer/mailer.module';
+import { ShopifySyncModule } from './shopify-sync/shopify-sync.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { MailerModule } from './mailer/mailer.module';
     AdminModule,
     PublicApiModule,
     MailerModule,
+    ShopifySyncModule,
   ],
   controllers: [AppController],
   providers: [AppService],

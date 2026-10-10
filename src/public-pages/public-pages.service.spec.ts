@@ -566,7 +566,9 @@ describe('PublicPagesService', () => {
         const logged = jest
           .spyOn(Logger.prototype, 'error')
           .mockImplementation(() => undefined);
-        jest.spyOn(ctx.repo, scenario.dbWrite).mockImplementationOnce(() => {
+        (
+          jest.spyOn(ctx.repo, scenario.dbWrite) as jest.SpyInstance
+        ).mockImplementationOnce(() => {
           ctx.storage.failing = true;
           return Promise.reject(new Error('db down'));
         });

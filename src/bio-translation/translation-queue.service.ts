@@ -88,10 +88,9 @@ export class TranslationQueueService {
   ) {}
 
   /**
-   * Enqueues a translation job for the just-saved profile when
-   * {@link planTranslationJob} asks for one. Supersedes any outstanding job for
-   * the same instructor and direction so that re-editing the source
-   * re-translates from the latest text.
+   * Enqueues the job {@link planTranslationJob} asks for, if any. Supersedes
+   * outstanding jobs for the same instructor and direction so that re-editing
+   * the source re-translates from the latest text.
    *
    * @returns `true` if a job was enqueued, `false` otherwise.
    */

@@ -10,7 +10,7 @@ import { SUPABASE_CLIENT } from '../database/supabase-client.token';
  * Shape returned to API consumers for every reference-data list.
  *
  * `key` is the stable i18n key (e.g. `language.fr`) the frontend uses to look
- * up a translated label; `name` / `nameZh` are the English / Chinese names.
+ * up a translated label; `name` is the canonical/default display string.
  */
 export interface ReferenceItem {
   id: string;

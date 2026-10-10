@@ -52,3 +52,18 @@ revoke all on function public.enqueue_all_instructor_sync()
   from public, anon, authenticated;
 grant execute on function public.enqueue_all_instructor_sync()
   to service_role;
+
+drop trigger if exists instructors_exam_preparations_enqueue_sync
+  on instructors_exam_preparations;
+create trigger instructors_exam_preparations_enqueue_sync
+  after insert or update or delete on instructors_exam_preparations
+  for each row execute function public.enqueue_instructor_sync('instructor_id');
+
+drop trigger if exists exam_preparations_enqueue_sync on exam_preparations;
+create trigger exam_preparations_enqueue_sync
+  after update on exam_preparations
+  for each row
+  when (old.name is distinct from new.name
+        or old.is_active is distinct from new.is_active)
+  execute function public.enqueue_instructor_sync_for_reference(
+    'instructors_exam_preparations', 'exam_preparation_id');

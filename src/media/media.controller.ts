@@ -28,9 +28,6 @@ import { ParsePhotoSlotPipe } from './photo-slot.pipe';
  *   1. POST .../signed-upload-url  → validate mime+size, get { uploadUrl, publicUrl }
  *   2. client PUTs the file to uploadUrl
  *   3. POST .../confirm            → persist publicUrl on the profile
- *
- * Both take an optional `slot` (1 = profile photo, default; 2 and 3 = extra
- * photos). `DELETE .../:slot` clears a slot.
  */
 @Controller('me/instructor/photo')
 @UseGuards(SupabaseAuthGuard, EmailVerifiedGuard)

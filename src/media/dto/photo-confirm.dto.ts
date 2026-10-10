@@ -8,8 +8,8 @@ import type { AllowedAvatarMime, PhotoSlot } from './photo-upload-request.dto';
 
 /**
  * Body for `POST /me/instructor/photo/confirm`. Only the content type and slot
- * are needed — the public URL is recomputed server-side from the deterministic avatar path
- * so a client cannot persist an arbitrary URL on the profile.
+ * are needed — the public URL is recomputed server-side from the deterministic
+ * photo path so a client cannot persist an arbitrary URL on the profile.
  */
 export class PhotoConfirmDto {
   @IsIn(ALLOWED_AVATAR_MIME, {

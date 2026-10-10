@@ -25,13 +25,20 @@ const BACKOFF_BASE_MS = 1_000;
 const BIO_MAX_LENGTH = 1_000;
 
 const HUMAN_TARGET = 'target bio was written by a human';
+const SOURCE_CHANGED = 'source bio changed since the job was queued';
+const BIO_CHANGED = 'bio changed while translating';
 
 interface TargetState {
   text: string | null;
   machineTranslated: boolean;
 }
 
-function targetColumns(lang: BioLang) {
+interface BioRowState {
+  source: string;
+  target: TargetState;
+}
+
+function bioColumns(lang: BioLang) {
   return lang === 'en'
     ? { text: 'bio_en', flag: 'bio_en_machine_translated' }
     : { text: 'bio_zh', flag: 'bio_zh_machine_translated' };
@@ -49,7 +56,7 @@ function isWritable(target: TargetState): boolean {
 export type WorkerOutcome =
   | 'idle' // nothing due
   | 'completed' // target field written + flag set
-  | 'skipped' // stub returned '', or the target is human text — left as is
+  | 'skipped' // stub returned '', human target, or stale source — left as is
   | 'retried' // transient failure, re-queued with backoff
   | 'failed'; // gave up after max_attempts
 
@@ -137,10 +144,16 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const target = await this.loadTarget(job);
-      if (!target || !isWritable(target)) {
+      const state = await this.loadBioState(job);
+      if (!state || !isWritable(state.target)) {
         await this.markStatus(job.id, 'skipped', {
-          last_error: target ? HUMAN_TARGET : 'instructor not found',
+          last_error: state ? HUMAN_TARGET : 'instructor not found',
+        });
+        return 'skipped';
+      }
+      if (state.source.trim() !== job.source_text) {
+        await this.markStatus(job.id, 'skipped', {
+          last_error: SOURCE_CHANGED,
         });
         return 'skipped';
       }
@@ -157,7 +170,10 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
         return 'skipped';
       }
 
-      await this.applyTranslation(job, translated.trim(), target);
+      if (!(await this.applyTranslation(job, translated.trim(), state))) {
+        await this.markStatus(job.id, 'skipped', { last_error: BIO_CHANGED });
+        return 'skipped';
+      }
       await this.markStatus(job.id, 'completed');
       return 'completed';
     } catch (err) {
@@ -165,7 +181,7 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Picks the oldest due job and flips it to `processing` (skips it if another worker won). */
+  /** Picks the oldest due job and flips it to `processing` (best-effort claim). */
   private async claimNextDueJob(): Promise<BioTranslationJobRow | null> {
     const result = await this.supabase
       .from(BIO_JOBS_TABLE)
@@ -202,13 +218,14 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     return { ...job, status: 'processing', attempts: job.attempts + 1 };
   }
 
-  private async loadTarget(
+  private async loadBioState(
     job: BioTranslationJobRow,
-  ): Promise<TargetState | null> {
-    const columns = targetColumns(job.target_lang);
+  ): Promise<BioRowState | null> {
+    const source = bioColumns(job.source_lang);
+    const columns = bioColumns(job.target_lang);
     const { data, error } = await this.supabase
       .from('instructors')
-      .select(`${columns.text}, ${columns.flag}`)
+      .select(`${source.text}, ${columns.text}, ${columns.flag}`)
       .eq('id', job.instructor_id)
       .maybeSingle();
     if (error) {
@@ -219,17 +236,20 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     const row = data as unknown as Record<string, string | boolean | null>;
     return {
-      text: (row[columns.text] as string | null) ?? null,
-      machineTranslated: row[columns.flag] === true,
+      source: (row[source.text] as string | null) ?? '',
+      target: {
+        text: (row[columns.text] as string | null) ?? null,
+        machineTranslated: row[columns.flag] === true,
+      },
     };
   }
 
-  /** Writes the translated text into the target bio + sets its MT flag and model. */
+  /** Writes the translation + MT flag and model; false if the bios changed. */
   private async applyTranslation(
     job: BioTranslationJobRow,
     translated: string,
-    expected: TargetState,
-  ): Promise<void> {
+    expected: BioRowState,
+  ): Promise<boolean> {
     if (translated.length > BIO_MAX_LENGTH) {
       throw new Error(
         `translation is ${translated.length} characters, over the ${BIO_MAX_LENGTH} limit`,
@@ -249,24 +269,23 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
             bio_zh_translated_by: modelId,
           };
 
-    const columns = targetColumns(job.target_lang);
+    const columns = bioColumns(job.target_lang);
     const guardedUpdate = this.supabase
       .from('instructors')
       .update(patch)
       .eq('id', job.instructor_id)
-      .eq(columns.flag, expected.machineTranslated);
+      .eq(bioColumns(job.source_lang).text, expected.source)
+      .eq(columns.flag, expected.target.machineTranslated);
     const { data, error } = await (
-      expected.text === null
+      expected.target.text === null
         ? guardedUpdate.is(columns.text, null)
-        : guardedUpdate.eq(columns.text, expected.text)
+        : guardedUpdate.eq(columns.text, expected.target.text)
     ).select('id');
 
     if (error) {
       throw new Error(`instructor update failed: ${error.message}`);
     }
-    if (!data || data.length === 0) {
-      throw new Error(`${columns.text} changed while translating`);
-    }
+    return !!data && data.length > 0;
   }
 
   private async markStatus(

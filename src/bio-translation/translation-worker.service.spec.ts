@@ -205,7 +205,11 @@ describe('TranslationWorkerService', () => {
 
   it('replaces an earlier machine translation in the target', async () => {
     const { client, row } = makeSupabase({
-      job: jobRow({ source_lang: 'zh-CN', target_lang: 'en' }),
+      job: jobRow({
+        source_lang: 'zh-CN',
+        target_lang: 'en',
+        source_text: '我教滑雪。',
+      }),
       instructor: instructor({
         bio_en: 'Old machine text',
         bio_en_machine_translated: true,
@@ -250,7 +254,7 @@ describe('TranslationWorkerService', () => {
     expect(await worker.processNext()).toBe('skipped');
   });
 
-  it('does not overwrite a human edit made while translating; it retries instead', async () => {
+  it('does not overwrite a human edit made while translating', async () => {
     const { client, row, jobUpdates } = makeSupabase({
       job: jobRow(),
       beforeInstructorUpdate: (r) => {
@@ -259,13 +263,59 @@ describe('TranslationWorkerService', () => {
     });
     const worker = makeWorker(client, provider().translator);
 
-    expect(await worker.processNext()).toBe('retried');
+    expect(await worker.processNext()).toBe('skipped');
     expect(row.bio_zh).toBe('刚刚人写的');
     expect(row.bio_zh_machine_translated).toBe(false);
     expect(jobUpdates).toContainEqual(
       expect.objectContaining({
-        status: 'pending',
-        last_error: 'bio_zh changed while translating',
+        status: 'skipped',
+        last_error: 'bio changed while translating',
+      }),
+    );
+  });
+
+  it('writes nothing when the source bio changes during the provider call', async () => {
+    const { client, row, jobUpdates } = makeSupabase({ job: jobRow() });
+    const translate = jest.fn(() => {
+      row.bio_en = 'I teach snowboarding.';
+      return Promise.resolve('我教滑雪。');
+    });
+    const worker = makeWorker(client, { modelId: 'gemini-test', translate });
+
+    expect(await worker.processNext()).toBe('skipped');
+    expect(translate).toHaveBeenCalledTimes(1);
+    expect(row).toEqual(
+      expect.objectContaining({
+        bio_en: 'I teach snowboarding.',
+        bio_zh: null,
+        bio_zh_machine_translated: false,
+      }),
+    );
+    expect(row.bio_zh_translated_by).toBeUndefined();
+    expect(jobUpdates).toContainEqual(
+      expect.objectContaining({
+        status: 'skipped',
+        last_error: 'bio changed while translating',
+      }),
+    );
+    expect(jobUpdates).not.toContainEqual({ status: 'completed' });
+  });
+
+  it('skips without calling the provider when the source changed after enqueue', async () => {
+    const { client, row, jobUpdates } = makeSupabase({
+      job: jobRow(),
+      instructor: instructor({ bio_en: 'I teach snowboarding.' }),
+    });
+    const { translator, translate } = provider();
+    const worker = makeWorker(client, translator);
+
+    expect(await worker.processNext()).toBe('skipped');
+    expect(translate).not.toHaveBeenCalled();
+    expect(row.bio_zh).toBeNull();
+    expect(jobUpdates).toContainEqual(
+      expect.objectContaining({
+        status: 'skipped',
+        last_error: 'source bio changed since the job was queued',
       }),
     );
   });

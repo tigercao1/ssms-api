@@ -10,6 +10,7 @@ import {
 } from './cert-display.formatter';
 import { InstructorsRepository } from './instructors.repository';
 import {
+  AdditionalPhotoSlot,
   InstructorProfile,
   InstructorProfilePatch,
   InstructorRow,
@@ -164,6 +165,19 @@ export class InstructorsService {
     return this.repo.bumpProfilePhotoVersion(instructorId);
   }
 
+  async setAdditionalPhoto(
+    instructorId: string,
+    slot: AdditionalPhotoSlot,
+    url: string | null,
+  ): Promise<InstructorProfile> {
+    const existing = await this.repo.findById(instructorId);
+    if (!existing) {
+      throw new NotFoundException('Instructor profile not found');
+    }
+    await this.repo.setAdditionalPhoto(instructorId, slot, url);
+    return this.getProfileById(instructorId);
+  }
+
   private buildPatch(dto: UpdateInstructorProfileDto): InstructorProfilePatch {
     const patch: InstructorProfilePatch = {};
     // A key counts as "present" only when it carries a real value. The global
@@ -242,6 +256,8 @@ export class InstructorsService {
       approvalStatus: row.approval_status,
       isActive: row.is_active,
       profilePhotoUrl: row.profile_photo_url,
+      photo2Url: row.photo_2_url,
+      photo3Url: row.photo_3_url,
       minStudentAge: row.min_student_age,
       displayOrder: row.display_order,
       teachingLocations,

@@ -107,6 +107,9 @@ describe('SupabasePublicInstructorsRepository', () => {
       expect(builder.select).toHaveBeenCalledWith(
         expect.stringContaining('min_student_age'),
       );
+      expect(builder.select).toHaveBeenCalledWith(
+        expect.stringMatching(/profile_photo_url, photo_2_url, photo_3_url/),
+      );
       expect(calls.eq).toEqual([
         ['id', 'a'],
         ['approval_status', 'approved'],

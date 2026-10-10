@@ -1,13 +1,24 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailVerifiedGuard } from '../auth/email-verified.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { InstructorsService } from '../instructors/instructors.service';
 import type { InstructorProfile } from '../instructors/instructors.types';
-import { PhotoUploadRequestDto } from './dto/photo-upload-request.dto';
+import {
+  PhotoUploadRequestDto,
+  type PhotoSlot,
+} from './dto/photo-upload-request.dto';
 import { PhotoConfirmDto } from './dto/photo-confirm.dto';
 import { AvatarUploadTicket, MediaService } from './media.service';
+import { ParsePhotoSlotPipe } from './photo-slot.pipe';
 
 /**
  * Profile-photo endpoints (T3.5). Same guard stack as `/me/instructor`:
@@ -36,6 +47,7 @@ export class MediaController {
       instructorId,
       dto.contentType,
       dto.contentLength,
+      dto.slot,
     );
   }
 
@@ -45,7 +57,20 @@ export class MediaController {
     @Body() dto: PhotoConfirmDto,
   ): Promise<InstructorProfile> {
     const instructorId = await this.resolveInstructorId(user);
-    return this.media.confirmAvatarUpload(instructorId, dto.contentType);
+    return this.media.confirmAvatarUpload(
+      instructorId,
+      dto.contentType,
+      dto.slot,
+    );
+  }
+
+  @Delete(':slot')
+  async remove(
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Param('slot', ParsePhotoSlotPipe) slot: PhotoSlot,
+  ): Promise<InstructorProfile> {
+    const instructorId = await this.resolveInstructorId(user);
+    return this.media.removePhoto(instructorId, slot);
   }
 
   /** Resolve (or lazily create) the caller's instructor row id from the JWT. */

@@ -16,8 +16,62 @@ export const PHOTO_POLL_ATTEMPTS = 10;
 export const PHOTO_POLL_INTERVAL_MS = 2_000;
 export const SIGNED_PHOTO_URL_TTL_SECONDS = 600;
 
+export type PhotoField = 'picture' | 'image_1' | 'image_2';
+
 export interface PhotoPlan {
-  picture: string | null;
+  fields: Partial<Record<PhotoField, string | null>>;
+  statePatch: InstructorShopifyStatePatch;
+  replacedFileIds: string[];
+}
+
+interface PhotoSlot {
+  field: PhotoField;
+  filenameTag: string;
+  url: 'profile_photo_url' | 'photo_2_url' | 'photo_3_url';
+  version: 'profile_photo_version' | 'photo_2_version' | 'photo_3_version';
+  fileId:
+    | 'shopify_photo_file_id'
+    | 'shopify_photo_2_file_id'
+    | 'shopify_photo_3_file_id';
+  syncedVersion:
+    | 'synced_photo_version'
+    | 'synced_photo_2_version'
+    | 'synced_photo_3_version';
+  alwaysWrite: boolean;
+}
+
+export const PHOTO_SLOTS: readonly PhotoSlot[] = [
+  {
+    field: 'picture',
+    filenameTag: '',
+    url: 'profile_photo_url',
+    version: 'profile_photo_version',
+    fileId: 'shopify_photo_file_id',
+    syncedVersion: 'synced_photo_version',
+    alwaysWrite: true,
+  },
+  {
+    field: 'image_1',
+    filenameTag: '2-',
+    url: 'photo_2_url',
+    version: 'photo_2_version',
+    fileId: 'shopify_photo_2_file_id',
+    syncedVersion: 'synced_photo_2_version',
+    alwaysWrite: false,
+  },
+  {
+    field: 'image_2',
+    filenameTag: '3-',
+    url: 'photo_3_url',
+    version: 'photo_3_version',
+    fileId: 'shopify_photo_3_file_id',
+    syncedVersion: 'synced_photo_3_version',
+    alwaysWrite: false,
+  },
+];
+
+interface SlotPlan {
+  value: string | null | undefined;
   statePatch: InstructorShopifyStatePatch;
   replacedFileId: string | null;
 }
@@ -50,29 +104,18 @@ export class InstructorPhotoSync {
     instructor: SyncInstructorRow,
     state: InstructorShopifyState | null,
   ): Promise<PhotoPlan> {
-    const currentFileId = state?.shopify_photo_file_id ?? null;
-    const version = instructor.profile_photo_version;
-    if (!instructor.profile_photo_url) {
-      return {
-        picture: null,
-        statePatch: currentFileId
-          ? { shopify_photo_file_id: null, synced_photo_version: version }
-          : {},
-        replacedFileId: currentFileId,
-      };
+    const plan: PhotoPlan = { fields: {}, statePatch: {}, replacedFileIds: [] };
+    for (const slot of PHOTO_SLOTS) {
+      const slotPlan = await this.prepareSlot(slot, instructor, state);
+      if (slotPlan.value !== undefined) {
+        plan.fields[slot.field] = slotPlan.value;
+      }
+      Object.assign(plan.statePatch, slotPlan.statePatch);
+      if (slotPlan.replacedFileId) {
+        plan.replacedFileIds.push(slotPlan.replacedFileId);
+      }
     }
-    if (currentFileId && state?.synced_photo_version === version) {
-      return { picture: currentFileId, statePatch: {}, replacedFileId: null };
-    }
-    const fileId = await this.upload(instructor);
-    return {
-      picture: fileId,
-      statePatch: {
-        shopify_photo_file_id: fileId,
-        synced_photo_version: version,
-      },
-      replacedFileId: currentFileId !== fileId ? currentFileId : null,
-    };
+    return plan;
   }
 
   async discard(fileId: string | null): Promise<void> {
@@ -88,19 +131,55 @@ export class InstructorPhotoSync {
     }
   }
 
-  private async upload(instructor: SyncInstructorRow): Promise<string> {
-    const object = storageObject(instructor.profile_photo_url as string);
+  private async prepareSlot(
+    slot: PhotoSlot,
+    instructor: SyncInstructorRow,
+    state: InstructorShopifyState | null,
+  ): Promise<SlotPlan> {
+    const currentFileId = state?.[slot.fileId] ?? null;
+    const version = instructor[slot.version];
+    const url = instructor[slot.url];
+    if (!url) {
+      if (!currentFileId) {
+        return {
+          value: slot.alwaysWrite ? null : undefined,
+          statePatch: {},
+          replacedFileId: null,
+        };
+      }
+      return {
+        value: null,
+        statePatch: { [slot.fileId]: null, [slot.syncedVersion]: version },
+        replacedFileId: currentFileId,
+      };
+    }
+    if (currentFileId && state?.[slot.syncedVersion] === version) {
+      return { value: currentFileId, statePatch: {}, replacedFileId: null };
+    }
+    const fileId = await this.upload(instructor, slot, url, version);
+    return {
+      value: fileId,
+      statePatch: { [slot.fileId]: fileId, [slot.syncedVersion]: version },
+      replacedFileId: currentFileId !== fileId ? currentFileId : null,
+    };
+  }
+
+  private async upload(
+    instructor: SyncInstructorRow,
+    slot: PhotoSlot,
+    url: string,
+    version: string | null,
+  ): Promise<string> {
+    const object = storageObject(url);
     const signedUrl = await this.repo.createSignedPhotoUrl(
       object.bucket,
       object.path,
       SIGNED_PHOTO_URL_TTL_SECONDS,
     );
-    const versionEpoch = instructor.profile_photo_version
-      ? Date.parse(instructor.profile_photo_version) || 0
-      : 0;
+    const versionEpoch = version ? Date.parse(version) || 0 : 0;
     const file = await this.gateway.createImage(
       signedUrl,
-      `instructor-${instructor.id}-${versionEpoch}.${object.extension}`,
+      `instructor-${instructor.id}-${slot.filenameTag}${versionEpoch}.${object.extension}`,
     );
     await this.waitUntilReady(file.id, file.fileStatus);
     return file.id;

@@ -95,6 +95,8 @@ function row(
     bio_en: null,
     bio_zh: null,
     profile_photo_url: null,
+    photo_2_url: null,
+    photo_3_url: null,
     min_student_age: 5,
     ...over,
   };
@@ -185,6 +187,8 @@ describe('PublicInstructorsService', () => {
               bio_en: 'Hello',
               bio_zh: '你好',
               profile_photo_url: 'https://img/a.png',
+              photo_2_url: 'https://img/a-2.png',
+              photo_3_url: null,
               min_student_age: 10,
             }),
           ],
@@ -197,6 +201,8 @@ describe('PublicInstructorsService', () => {
       expect(dto.display_name).toBe('简');
       expect(dto.bio).toBe('你好');
       expect(dto.profile_photo_url).toBe('https://img/a.png');
+      expect(dto.photo_2_url).toBe('https://img/a-2.png');
+      expect(dto.photo_3_url).toBeNull();
       expect(dto.min_student_age).toBe(10);
       // No internal fields leak through.
       expect(dto).not.toHaveProperty('email');

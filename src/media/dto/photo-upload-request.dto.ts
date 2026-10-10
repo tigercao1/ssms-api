@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsPositive } from 'class-validator';
+import { IsIn, IsInt, IsPositive, ValidateIf } from 'class-validator';
 
 /** Allowed avatar mime types (INSTRUCTOR_PROFILE_FIELDS.md / backend-architecture.md §2). */
 export const ALLOWED_AVATAR_MIME = [
@@ -10,6 +10,10 @@ export type AllowedAvatarMime = (typeof ALLOWED_AVATAR_MIME)[number];
 
 /** 5 MB hard cap on avatar uploads. */
 export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
+export const PHOTO_SLOTS = [1, 2, 3] as const;
+export type PhotoSlot = (typeof PHOTO_SLOTS)[number];
+export const PHOTO_SLOT_MESSAGE = `slot must be one of: ${PHOTO_SLOTS.join(', ')}`;
 
 /**
  * Body for `POST /me/instructor/photo/signed-upload-url`. The client declares
@@ -25,4 +29,8 @@ export class PhotoUploadRequestDto {
   @IsInt()
   @IsPositive()
   contentLength!: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(PHOTO_SLOTS, { message: PHOTO_SLOT_MESSAGE })
+  slot?: PhotoSlot;
 }

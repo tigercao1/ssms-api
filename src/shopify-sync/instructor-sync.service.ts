@@ -80,7 +80,7 @@ export class InstructorSyncService {
     const photo = await this.photos.prepare(instructor, state);
     const fields = buildInstructorFields(snapshot, {
       existingEntry,
-      picture: photo.picture,
+      ...photo.fields,
     });
     const entry = await this.gateway.upsertEntry(handle, fields, 'ACTIVE');
     await this.repo.saveState(instructor.id, {
@@ -89,7 +89,9 @@ export class InstructorSyncService {
       last_synced_at: new Date().toISOString(),
       last_status: 'active',
     });
-    await this.photos.discard(photo.replacedFileId);
+    for (const fileId of photo.replacedFileIds) {
+      await this.photos.discard(fileId);
+    }
     await this.translations.apply(entry.id, englishTranslations(snapshot));
     return 'active';
   }

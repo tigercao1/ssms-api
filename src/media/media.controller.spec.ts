@@ -17,6 +17,7 @@ describe('MediaController', () => {
   const media = {
     createAvatarUploadUrl: jest.fn().mockResolvedValue(ticket),
     confirmAvatarUpload: jest.fn().mockResolvedValue(profile),
+    removePhoto: jest.fn().mockResolvedValue(profile),
   };
   const instructors = {
     getOrCreateForUser: jest.fn().mockResolvedValue({ id: 'inst-1' }),
@@ -57,6 +58,7 @@ describe('MediaController', () => {
       'inst-1',
       'image/jpeg',
       1024,
+      undefined,
     );
   });
 
@@ -66,6 +68,32 @@ describe('MediaController', () => {
     expect(media.confirmAvatarUpload).toHaveBeenCalledWith(
       'inst-1',
       'image/png',
+      undefined,
     );
+  });
+
+  it('passes the requested slot through to upload and confirm', async () => {
+    await controller.getSignedUploadUrl(user, {
+      contentType: 'image/webp',
+      contentLength: 10,
+      slot: 3,
+    });
+    await controller.confirm(user, { contentType: 'image/webp', slot: 3 });
+    expect(media.createAvatarUploadUrl).toHaveBeenCalledWith(
+      'inst-1',
+      'image/webp',
+      10,
+      3,
+    );
+    expect(media.confirmAvatarUpload).toHaveBeenCalledWith(
+      'inst-1',
+      'image/webp',
+      3,
+    );
+  });
+
+  it('DELETE :slot removes that slot for the caller', async () => {
+    await expect(controller.remove(user, 2)).resolves.toBe(profile);
+    expect(media.removePhoto).toHaveBeenCalledWith('inst-1', 2);
   });
 });

@@ -30,6 +30,8 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     bio_zh_translated_by: null,
     date_of_birth: null,
     profile_photo_url: null,
+    photo_2_url: null,
+    photo_3_url: null,
     min_student_age: 5,
     display_order: null,
     preferred_language: 'en',
@@ -115,6 +117,17 @@ class FakeRepo extends InstructorsRepository {
   }
   bumpProfilePhotoVersion(id: string): Promise<void> {
     this.photoVersionBumps.push(id);
+    return Promise.resolve();
+  }
+  setAdditionalPhoto(
+    id: string,
+    slot: 2 | 3,
+    url: string | null,
+  ): Promise<void> {
+    const row = this.rows.find((r) => r.id === id);
+    if (row) {
+      row[slot === 2 ? 'photo_2_url' : 'photo_3_url'] = url;
+    }
     return Promise.resolve();
   }
 }
@@ -445,6 +458,51 @@ describe('InstructorsService', () => {
     it('bumps the photo version for the given instructor', async () => {
       await service.bumpProfilePhotoVersion('inst-1');
       expect(repo.photoVersionBumps).toEqual(['inst-1']);
+    });
+  });
+
+  describe('photo slots', () => {
+    it('returns all three photo URLs on the profile', async () => {
+      repo.rows.push(
+        makeRow({
+          profile_photo_url: 'https://cdn.test/avatar.jpg',
+          photo_2_url: 'https://cdn.test/photo-2.jpg',
+          photo_3_url: null,
+        }),
+      );
+      const profile = await service.getProfileById('inst-1');
+      expect(profile).toMatchObject({
+        profilePhotoUrl: 'https://cdn.test/avatar.jpg',
+        photo2Url: 'https://cdn.test/photo-2.jpg',
+        photo3Url: null,
+      });
+    });
+
+    it('sets and clears an additional photo, returning the updated profile', async () => {
+      repo.rows.push(makeRow({ profile_photo_url: 'https://cdn.test/a.jpg' }));
+
+      const set = await service.setAdditionalPhoto(
+        'inst-1',
+        3,
+        'https://cdn.test/photo-3.png',
+      );
+      expect(set).toMatchObject({
+        profilePhotoUrl: 'https://cdn.test/a.jpg',
+        photo2Url: null,
+        photo3Url: 'https://cdn.test/photo-3.png',
+      });
+
+      const cleared = await service.setAdditionalPhoto('inst-1', 3, null);
+      expect(cleared.photo3Url).toBeNull();
+      expect(cleared.profilePhotoUrl).toBe('https://cdn.test/a.jpg');
+    });
+
+    it('throws NotFound for an unknown instructor without writing', async () => {
+      const spy = jest.spyOn(repo, 'setAdditionalPhoto');
+      await expect(
+        service.setAdditionalPhoto('ghost', 2, 'https://cdn.test/x.jpg'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 

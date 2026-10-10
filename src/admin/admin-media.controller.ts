@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Param,
   ParseUUIDPipe,
   Post,
@@ -9,8 +10,12 @@ import {
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { PhotoConfirmDto } from '../media/dto/photo-confirm.dto';
-import { PhotoUploadRequestDto } from '../media/dto/photo-upload-request.dto';
+import {
+  PhotoUploadRequestDto,
+  type PhotoSlot,
+} from '../media/dto/photo-upload-request.dto';
 import { AvatarUploadTicket, MediaService } from '../media/media.service';
+import { ParsePhotoSlotPipe } from '../media/photo-slot.pipe';
 import { AdminService } from './admin.service';
 import { Roles, RolesGuard } from './roles.guard';
 
@@ -33,6 +38,7 @@ export class AdminMediaController {
       id,
       dto.contentType,
       dto.contentLength,
+      dto.slot,
     );
   }
 
@@ -42,6 +48,15 @@ export class AdminMediaController {
     @Body() dto: PhotoConfirmDto,
   ): Promise<InstructorProfile> {
     await this.admin.getInstructor(id);
-    return this.media.confirmAvatarUpload(id, dto.contentType);
+    return this.media.confirmAvatarUpload(id, dto.contentType, dto.slot);
+  }
+
+  @Delete(':slot')
+  async remove(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Param('slot', ParsePhotoSlotPipe) slot: PhotoSlot,
+  ): Promise<InstructorProfile> {
+    await this.admin.getInstructor(id);
+    return this.media.removePhoto(id, slot);
   }
 }

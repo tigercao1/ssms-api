@@ -215,6 +215,149 @@ describe('photo sync', () => {
   });
 });
 
+describe('extra photo slots', () => {
+  const photo2 = `https://abc.supabase.co/storage/v1/object/public/instructor-public/${INSTRUCTOR_ID}/photo-2.png`;
+  const photo3 = `https://abc.supabase.co/storage/v1/object/public/instructor-public/${INSTRUCTOR_ID}/photo-3.webp`;
+  const withAllPhotos = {
+    ...withPhoto,
+    photo_2_url: photo2,
+    photo_2_version: V1,
+    photo_3_url: photo3,
+    photo_3_version: V1,
+  };
+  const createdNames = (shopify: FakeShopify) =>
+    shopify.calls
+      .filter((c) => c.operation === 'SsmsPhotoCreate')
+      .map((c) => (c.variables.files as { filename: string }[])[0].filename);
+
+  it('uploads slot 2 to image_1 and slot 3 to image_2 with per-slot names and state', async () => {
+    const { repo, shopify, service } = setup(withAllPhotos);
+
+    await service.sync(INSTRUCTOR_ID);
+
+    expect(createdNames(shopify)).toEqual([
+      `instructor-${INSTRUCTOR_ID}-${V1_EPOCH}.jpg`,
+      `instructor-${INSTRUCTOR_ID}-2-${V1_EPOCH}.png`,
+      `instructor-${INSTRUCTOR_ID}-3-${V1_EPOCH}.webp`,
+    ]);
+    expect(repo.signedUrls.map((u) => u.path)).toEqual([
+      `${INSTRUCTOR_ID}/avatar.jpg`,
+      `${INSTRUCTOR_ID}/photo-2.png`,
+      `${INSTRUCTOR_ID}/photo-3.webp`,
+    ]);
+    const image1 = shopify.fileNamed(
+      `instructor-${INSTRUCTOR_ID}-2-${V1_EPOCH}.png`,
+    );
+    const image2 = shopify.fileNamed(
+      `instructor-${INSTRUCTOR_ID}-3-${V1_EPOCH}.webp`,
+    );
+    expect(shopify.entry('eddie-chen')?.fields).toMatchObject({
+      image_1: image1?.id,
+      image_2: image2?.id,
+    });
+    expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+      shopify_photo_2_file_id: image1?.id,
+      synced_photo_2_version: V1,
+      shopify_photo_3_file_id: image2?.id,
+      synced_photo_3_version: V1,
+    });
+  });
+
+  it('re-uploads only the slot whose version changed and deletes its old file', async () => {
+    const { repo, shopify, service, setInstructor } = setup(withAllPhotos);
+    await service.sync(INSTRUCTOR_ID);
+    const before = { ...repo.states.get(INSTRUCTOR_ID) };
+
+    setInstructor({ photo_2_version: V2 });
+    await service.sync(INSTRUCTOR_ID);
+
+    expect(createdNames(shopify)).toHaveLength(4);
+    expect(createdNames(shopify)[3]).toBe(
+      `instructor-${INSTRUCTOR_ID}-2-${V2_EPOCH}.png`,
+    );
+    const after = repo.states.get(INSTRUCTOR_ID);
+    expect(after?.shopify_photo_2_file_id).not.toBe(
+      before.shopify_photo_2_file_id,
+    );
+    expect(after?.synced_photo_2_version).toBe(V2);
+    expect(after?.shopify_photo_file_id).toBe(before.shopify_photo_file_id);
+    expect(after?.shopify_photo_3_file_id).toBe(before.shopify_photo_3_file_id);
+    expect(shopify.files.has(before.shopify_photo_2_file_id as string)).toBe(
+      false,
+    );
+    expect(shopify.files.size).toBe(3);
+    expect(shopify.entry('eddie-chen')?.fields).toMatchObject({
+      picture: before.shopify_photo_file_id,
+      image_1: after?.shopify_photo_2_file_id,
+      image_2: before.shopify_photo_3_file_id,
+    });
+  });
+
+  it('does not upload anything while no slot version changed', async () => {
+    const { shopify, service } = setup(withAllPhotos);
+    await service.sync(INSTRUCTOR_ID);
+    await service.sync(INSTRUCTOR_ID);
+    expect(createdNames(shopify)).toHaveLength(3);
+  });
+
+  it('clears image_1 and deletes its file when slot 2 is removed', async () => {
+    const { repo, shopify, service, setInstructor } = setup(withAllPhotos);
+    await service.sync(INSTRUCTOR_ID);
+    const oldId = repo.states.get(INSTRUCTOR_ID)?.shopify_photo_2_file_id;
+
+    setInstructor({ photo_2_url: null, photo_2_version: V2 });
+    await service.sync(INSTRUCTOR_ID);
+
+    const fields = shopify.entry('eddie-chen')?.fields;
+    expect(fields?.image_1).toBe('');
+    expect(fields?.image_2).toBe(
+      repo.states.get(INSTRUCTOR_ID)?.shopify_photo_3_file_id,
+    );
+    expect(shopify.files.has(oldId as string)).toBe(false);
+    expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+      shopify_photo_2_file_id: null,
+      synced_photo_2_version: V2,
+    });
+    const ops = shopify.operations();
+    expect(ops.lastIndexOf('SsmsPhotoDelete')).toBeGreaterThan(
+      ops.lastIndexOf('SsmsInstructorUpsert'),
+    );
+  });
+
+  it('leaves image_1 and image_2 out while the extra slots were never used', async () => {
+    const { shopify, service } = setup(withPhoto);
+    await service.sync(INSTRUCTOR_ID);
+    await service.sync(INSTRUCTOR_ID);
+    const upserts = shopify.calls.filter(
+      (c) => c.operation === 'SsmsInstructorUpsert',
+    );
+    expect(upserts).toHaveLength(2);
+    for (const call of upserts) {
+      expect(JSON.stringify(call.variables)).not.toMatch(/image_[12]/);
+    }
+  });
+
+  it('only uploads extra slots for a profile without a profile photo', async () => {
+    const { shopify, service } = setup({
+      photo_3_url: photo3,
+      photo_3_version: V1,
+    });
+    await service.sync(INSTRUCTOR_ID);
+    expect(createdNames(shopify)).toEqual([
+      `instructor-${INSTRUCTOR_ID}-3-${V1_EPOCH}.webp`,
+    ]);
+    const fields = shopify.entry('eddie-chen')?.fields;
+    expect(fields?.picture).toBeUndefined();
+    expect(fields?.image_2).toBeDefined();
+  });
+
+  it('never writes to the legacy our_team type', async () => {
+    const { shopify, service } = setup(withAllPhotos);
+    await service.sync(INSTRUCTOR_ID);
+    expect(JSON.stringify(shopify.calls)).not.toContain('our_team');
+  });
+});
+
 describe('storageObject', () => {
   it('reads bucket, path and extension from a Supabase storage URL', () => {
     expect(storageObject(`${PHOTO_URL}?v=3`)).toEqual({

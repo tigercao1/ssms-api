@@ -16,6 +16,10 @@ export interface SyncInstructorRow {
   bio_zh: string | null;
   profile_photo_url: string | null;
   profile_photo_version: string | null;
+  photo_2_url: string | null;
+  photo_2_version: string | null;
+  photo_3_url: string | null;
+  photo_3_version: string | null;
   min_student_age: number | null;
   approval_status: string;
   is_active: boolean;
@@ -54,6 +58,10 @@ export interface InstructorShopifyState {
   shopify_handle: string | null;
   shopify_photo_file_id: string | null;
   synced_photo_version: string | null;
+  shopify_photo_2_file_id: string | null;
+  synced_photo_2_version: string | null;
+  shopify_photo_3_file_id: string | null;
+  synced_photo_3_version: string | null;
   last_synced_at: string | null;
   last_status: string | null;
 }

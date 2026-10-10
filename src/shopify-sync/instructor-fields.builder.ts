@@ -14,6 +14,8 @@ import type {
 export interface BuildFieldsOptions {
   existingEntry: boolean;
   picture?: string | null;
+  image_1?: string | null;
+  image_2?: string | null;
 }
 
 export interface EnglishTranslations {
@@ -65,10 +67,9 @@ export function buildInstructorFields(
         : String(instructor.min_student_age),
     ],
     ['ssms_id', instructor.id],
-    [
-      'picture',
-      options.picture === undefined ? undefined : (options.picture ?? ''),
-    ],
+    ['picture', fileReference(options.picture)],
+    ['image_1', fileReference(options.image_1)],
+    ['image_2', fileReference(options.image_2)],
   ];
   return candidates
     .filter(
@@ -101,6 +102,10 @@ export function englishTranslations(
       jsonList(snapshot.languages.map(zhName)),
     ),
   };
+}
+
+function fileReference(fileId: string | null | undefined): string | undefined {
+  return fileId === undefined ? undefined : (fileId ?? '');
 }
 
 function zhName(ref: SyncRefName): string {

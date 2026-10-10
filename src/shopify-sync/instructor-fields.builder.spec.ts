@@ -1,5 +1,8 @@
 import { snapshotOf } from '../../test/helpers/shopify-sync-fakes';
-import { buildInstructorFields } from './instructor-fields.builder';
+import {
+  type BuildFieldsOptions,
+  buildInstructorFields,
+} from './instructor-fields.builder';
 import type { InstructorSnapshot, SyncRefName } from './instructor-sync.types';
 
 function refs(...names: string[]): SyncRefName[] {
@@ -8,12 +11,12 @@ function refs(...names: string[]): SyncRefName[] {
 
 function fieldsOf(
   snapshot: InstructorSnapshot,
-  options: { existingEntry?: boolean; picture?: string | null } = {},
+  options: Partial<BuildFieldsOptions> = {},
 ): Record<string, string> {
   return Object.fromEntries(
     buildInstructorFields(snapshot, {
+      ...options,
       existingEntry: options.existingEntry ?? false,
-      picture: options.picture,
     }).map((f) => [f.key, f.value]),
   );
 }
@@ -96,7 +99,7 @@ describe('buildInstructorFields', () => {
       existingEntry: true,
       picture: 'gid://shopify/MediaImage/1',
     }).map((f) => f.key);
-    for (const key of ['image_1', 'image_2', 'collection_url', 'sort_order']) {
+    for (const key of ['collection_url', 'sort_order']) {
       expect(keys).not.toContain(key);
     }
   });
@@ -110,6 +113,20 @@ describe('buildInstructorFields', () => {
       fieldsOf(snapshotOf(), { existingEntry: true, picture: null }).picture,
     ).toBe('');
   });
+
+  it.each(['image_1', 'image_2'] as const)(
+    'writes %s only when told, and clears it with an empty value',
+    (key) => {
+      expect(fieldsOf(snapshotOf())).not.toHaveProperty(key);
+      expect(
+        fieldsOf(snapshotOf(), { [key]: 'gid://shopify/MediaImage/8' })[key],
+      ).toBe('gid://shopify/MediaImage/8');
+      expect(
+        fieldsOf(snapshotOf(), { existingEntry: true, [key]: null })[key],
+      ).toBe('');
+      expect(fieldsOf(snapshotOf(), { [key]: null })).not.toHaveProperty(key);
+    },
+  );
 
   describe('type', () => {
     it.each([

@@ -19,9 +19,13 @@ export class InMemoryPublicPagesRepository extends PublicPagesRepository {
   readonly rows = new Map<string, PublicPageRow>();
   private clock = Date.parse('2026-10-01T00:00:00.000Z');
 
+  private micros = 0;
+
   private tick(): string {
     this.clock += 1000;
-    return new Date(this.clock).toISOString();
+    this.micros = (this.micros + 1) % 1000;
+    const micros = String(this.micros).padStart(3, '0');
+    return new Date(this.clock).toISOString().replace('Z', `${micros}+00:00`);
   }
 
   list(): Promise<PublicPageRow[]> {
@@ -62,11 +66,12 @@ export class InMemoryPublicPagesRepository extends PublicPagesRepository {
 
   update(
     id: string,
+    expectedUpdatedAt: string,
     patch: PublicPagePatch,
     userId: string | null,
   ): Promise<PublicPageRow | null> {
     const row = this.rows.get(id);
-    if (!row) {
+    if (!row || row.updated_at !== expectedUpdatedAt) {
       return Promise.resolve(null);
     }
     const next = {
@@ -79,9 +84,12 @@ export class InMemoryPublicPagesRepository extends PublicPagesRepository {
     return Promise.resolve({ ...next });
   }
 
-  delete(id: string): Promise<void> {
+  delete(id: string, expectedUpdatedAt: string): Promise<boolean> {
+    if (this.rows.get(id)?.updated_at !== expectedUpdatedAt) {
+      return Promise.resolve(false);
+    }
     this.rows.delete(id);
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   snapshot(): PublicPageRow[] {
@@ -94,6 +102,7 @@ export class FakeDocsStorage extends DocsStorageClient {
   readonly calls: string[] = [];
   configured = true;
   failing = false;
+  failOn: ((call: string) => boolean) | null = null;
 
   isConfigured(): boolean {
     return this.configured;
@@ -105,26 +114,26 @@ export class FakeDocsStorage extends DocsStorageClient {
 
   put(key: string, body: Buffer): Promise<void> {
     this.calls.push(`PUT ${key}`);
-    this.fail();
+    this.fail(`PUT ${key}`);
     this.objects.set(key, Buffer.from(body));
     return Promise.resolve();
   }
 
   get(key: string): Promise<Buffer | null> {
     this.calls.push(`GET ${key}`);
-    this.fail();
+    this.fail(`GET ${key}`);
     return Promise.resolve(this.objects.get(key) ?? null);
   }
 
   delete(key: string): Promise<void> {
     this.calls.push(`DELETE ${key}`);
-    this.fail();
+    this.fail(`DELETE ${key}`);
     this.objects.delete(key);
     return Promise.resolve();
   }
 
-  private fail(): void {
-    if (this.failing) {
+  private fail(call: string): void {
+    if (this.failing || this.failOn?.(call)) {
       throw new BadGatewayException(DOCS_STORAGE_UNAVAILABLE);
     }
   }

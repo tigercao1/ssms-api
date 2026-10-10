@@ -58,6 +58,7 @@ const row: PublicPageRow = {
   created_at: '2026-10-10T04:00:00.000Z',
   updated_at: '2026-10-10T04:00:00.000Z',
 };
+const PG_UPDATED_AT = '2026-10-10T04:00:00.123456+00:00';
 const failure: Result = { data: null, error: { message: 'boom' } };
 
 describe('SupabasePublicPagesRepository', () => {
@@ -131,28 +132,49 @@ describe('SupabasePublicPagesRepository', () => {
     ).rejects.toThrow('no row returned');
   });
 
-  it('updates a page and stamps updated_by', async () => {
-    const { repo, queries } = fakeSupabase({ data: row, error: null });
+  it('updates a page only while updated_at is unchanged', async () => {
+    const { repo, queries } = fakeSupabase({ data: [row], error: null });
     await expect(
-      repo.update(row.id, { title: 'Questions' }, 'admin-2'),
+      repo.update(row.id, PG_UPDATED_AT, { title: 'Questions' }, 'admin-2'),
     ).resolves.toEqual(row);
     expect(queries[0].ops).toEqual([
       ['update', { title: 'Questions', updated_by: 'admin-2' }],
       ['eq', 'id', row.id],
+      ['eq', 'updated_at', PG_UPDATED_AT],
       ['select', PUBLIC_PAGE_COLUMNS],
-      ['maybeSingle'],
     ]);
   });
 
-  it('returns null when updating a missing page', async () => {
-    const { repo } = fakeSupabase();
-    await expect(repo.update(row.id, { title: 'x' }, null)).resolves.toBeNull();
+  it.each([
+    ['an empty result', { data: [], error: null }],
+    ['no data', { data: null, error: null }],
+  ])('returns null when no row matched (%s)', async (_name, result) => {
+    const { repo } = fakeSupabase(result);
+    await expect(
+      repo.update(row.id, PG_UPDATED_AT, { title: 'x' }, null),
+    ).resolves.toBeNull();
   });
 
-  it('deletes a page by id', async () => {
-    const { repo, queries } = fakeSupabase();
-    await repo.delete(row.id);
-    expect(queries[0].ops).toEqual([['delete'], ['eq', 'id', row.id]]);
+  it('deletes a page only while updated_at is unchanged', async () => {
+    const { repo, queries } = fakeSupabase({
+      data: [{ id: row.id }],
+      error: null,
+    });
+    await expect(repo.delete(row.id, PG_UPDATED_AT)).resolves.toBe(true);
+    expect(queries[0].ops).toEqual([
+      ['delete'],
+      ['eq', 'id', row.id],
+      ['eq', 'updated_at', PG_UPDATED_AT],
+      ['select', 'id'],
+    ]);
+  });
+
+  it.each([
+    ['an empty result', { data: [], error: null }],
+    ['no data', { data: null, error: null }],
+  ])('reports false when no row was deleted (%s)', async (_name, result) => {
+    const { repo } = fakeSupabase(result);
+    await expect(repo.delete(row.id, PG_UPDATED_AT)).resolves.toBe(false);
   });
 
   it.each([
@@ -165,9 +187,13 @@ describe('SupabasePublicPagesRepository', () => {
     ],
     [
       'update',
-      (r: SupabasePublicPagesRepository) => r.update(row.id, {}, null),
+      (r: SupabasePublicPagesRepository) =>
+        r.update(row.id, PG_UPDATED_AT, {}, null),
     ],
-    ['delete', (r: SupabasePublicPagesRepository) => r.delete(row.id)],
+    [
+      'delete',
+      (r: SupabasePublicPagesRepository) => r.delete(row.id, PG_UPDATED_AT),
+    ],
   ])('%s surfaces database errors', async (_name, call) => {
     const { repo } = fakeSupabase(failure);
     await expect(call(repo)).rejects.toThrow('boom');

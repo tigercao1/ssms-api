@@ -33,6 +33,7 @@ export const AUDIT_ACTIONS = {
   pagePublish: 'page.publish',
   pageUnpublish: 'page.unpublish',
   pageDelete: 'page.delete',
+  pageStorageInconsistent: 'page.storage_inconsistent',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

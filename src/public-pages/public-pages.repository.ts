@@ -34,10 +34,11 @@ export abstract class PublicPagesRepository {
   abstract create(input: CreatePublicPageInput): Promise<PublicPageRow>;
   abstract update(
     id: string,
+    expectedUpdatedAt: string,
     patch: PublicPagePatch,
     userId: string | null,
   ): Promise<PublicPageRow | null>;
-  abstract delete(id: string): Promise<void>;
+  abstract delete(id: string, expectedUpdatedAt: string): Promise<boolean>;
 }
 
 interface DbError {
@@ -101,6 +102,7 @@ export class SupabasePublicPagesRepository extends PublicPagesRepository {
 
   async update(
     id: string,
+    expectedUpdatedAt: string,
     patch: PublicPagePatch,
     userId: string | null,
   ): Promise<PublicPageRow | null> {
@@ -108,18 +110,27 @@ export class SupabasePublicPagesRepository extends PublicPagesRepository {
       .from(PUBLIC_PAGES_TABLE)
       .update({ ...patch, updated_by: userId })
       .eq('id', id)
-      .select(PUBLIC_PAGE_COLUMNS)
-      .maybeSingle()) as { data: PublicPageRow | null; error: DbError | null };
+      .eq('updated_at', expectedUpdatedAt)
+      .select(PUBLIC_PAGE_COLUMNS)) as {
+      data: PublicPageRow[] | null;
+      error: DbError | null;
+    };
     check(error, 'update public page');
-    return data ?? null;
+    return data?.[0] ?? null;
   }
 
-  async delete(id: string): Promise<void> {
-    const { error } = await this.supabase
+  async delete(id: string, expectedUpdatedAt: string): Promise<boolean> {
+    const { data, error } = (await this.supabase
       .from(PUBLIC_PAGES_TABLE)
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('updated_at', expectedUpdatedAt)
+      .select('id')) as {
+      data: { id: string }[] | null;
+      error: DbError | null;
+    };
     check(error, 'delete public page');
+    return (data?.length ?? 0) > 0;
   }
 }
 

@@ -2,6 +2,7 @@ import {
   type CanActivate,
   type ExecutionContext,
   type INestApplication,
+  Logger,
   UnauthorizedException,
   ValidationPipe,
 } from '@nestjs/common';
@@ -16,11 +17,18 @@ import {
 } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
-import { DocsStorageClient } from './docs-storage.client';
+import {
+  DOCS_STORAGE_UNAVAILABLE,
+  DocsStorageClient,
+} from './docs-storage.client';
 import { PublicPagesController } from './public-pages.controller';
 import { PublicPagesRepository } from './public-pages.repository';
-import { PublicPagesService } from './public-pages.service';
-import { PAGE_CONTENT_MAX_BYTES, type PublicPage } from './public-pages.types';
+import { PAGE_CONFLICT, PublicPagesService } from './public-pages.service';
+import {
+  PAGE_CONTENT_MAX_BYTES,
+  type PublicPage,
+  type PublicPageRow,
+} from './public-pages.types';
 
 const ADMIN_ID = '7d0f8a1e-5b2c-4e3d-9a8b-1c2d3e4f5a6b';
 const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
@@ -78,6 +86,7 @@ describe('/admin/pages', () => {
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await ctx.app.close();
   });
 
@@ -343,6 +352,20 @@ describe('/admin/pages', () => {
         .set('Authorization', admin)
         .expect(404);
     });
+
+    it('502s when the draft object is missing but the database has one', async () => {
+      const page = await createPage();
+      await upload(page.id).expect(200);
+      ctx.storage.objects.clear();
+      jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementationOnce(() => undefined);
+      const res = await http()
+        .get(`/admin/pages/${page.id}/content`)
+        .set('Authorization', admin)
+        .expect(502);
+      expect(res.body).toMatchObject({ message: DOCS_STORAGE_UNAVAILABLE });
+    });
   });
 
   describe('publish / unpublish / delete', () => {
@@ -396,6 +419,29 @@ describe('/admin/pages', () => {
         'page.unpublish',
         'page.delete',
       ]);
+    });
+
+    it('publish returns 409 and restores R2 when the page changed concurrently', async () => {
+      const page = await createPage();
+      await upload(page.id).expect(200);
+      jest
+        .spyOn(ctx.repo, 'findById')
+        .mockImplementationOnce(
+          async (id: string): Promise<PublicPageRow | null> => {
+            const stale = { ...ctx.repo.rows.get(id)! };
+            await upload(page.id, '<h1>v2</h1>').expect(200);
+            return stale;
+          },
+        );
+      const res = await http()
+        .post(`/admin/pages/${page.id}/publish`)
+        .set('Authorization', admin)
+        .expect(409);
+      expect(res.body).toMatchObject({ message: PAGE_CONFLICT });
+      expect(ctx.storage.objects.has('published/winter-rates.html')).toBe(
+        false,
+      );
+      expect(ctx.repo.rows.get(page.id)?.status).toBe('draft');
     });
 
     it('delete returns 502 and keeps the row when the Worker fails', async () => {

@@ -27,6 +27,12 @@ export const AUDIT_ACTIONS = {
   shopifySyncEnable: 'shopify_sync.enable',
   shopifySyncDisable: 'shopify_sync.disable',
   shopifySyncRun: 'shopify_sync.run',
+  pageCreate: 'page.create',
+  pageUpdate: 'page.update',
+  pageUpload: 'page.upload',
+  pagePublish: 'page.publish',
+  pageUnpublish: 'page.unpublish',
+  pageDelete: 'page.delete',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -48,7 +54,13 @@ export interface AuditActor {
 export interface AuditEntry {
   action: AuditAction;
   actor?: AuditActor | null;
-  targetType?: 'instructor' | 'user' | 'api_key' | 'reference' | null;
+  targetType?:
+    | 'instructor'
+    | 'user'
+    | 'api_key'
+    | 'reference'
+    | 'public_page'
+    | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;
 }

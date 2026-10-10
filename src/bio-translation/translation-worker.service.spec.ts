@@ -83,7 +83,7 @@ describe('TranslationWorkerService', () => {
     );
   });
 
-  it('completes and sets the MT flag when a real provider returns text', async () => {
+  it('completes and records the MT flag and model id when a real provider returns text', async () => {
     const { client, updates } = makeSupabase(jobRow());
     const realProvider: BioTranslator = {
       modelId: 'gemini-test',
@@ -96,6 +96,7 @@ describe('TranslationWorkerService', () => {
       expect.objectContaining({
         bio_zh: '我教滑雪。',
         bio_zh_machine_translated: true,
+        bio_zh_translated_by: 'gemini-test',
       }),
     );
   });

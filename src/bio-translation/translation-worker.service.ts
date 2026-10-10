@@ -105,15 +105,24 @@ export class TranslationWorkerService {
     return { ...job, status: 'processing', attempts: job.attempts + 1 };
   }
 
-  /** Writes the translated text into the missing bio + sets its MT flag. */
+  /** Writes the translated text into the target bio + sets its MT flag and model. */
   private async applyTranslation(
     job: BioTranslationJobRow,
     translated: string,
   ): Promise<void> {
+    const modelId = this.translator.modelId;
     const patch =
       job.target_lang === 'en'
-        ? { bio_en: translated, bio_en_machine_translated: true }
-        : { bio_zh: translated, bio_zh_machine_translated: true };
+        ? {
+            bio_en: translated,
+            bio_en_machine_translated: true,
+            bio_en_translated_by: modelId,
+          }
+        : {
+            bio_zh: translated,
+            bio_zh_machine_translated: true,
+            bio_zh_translated_by: modelId,
+          };
 
     const { error } = await this.supabase
       .from('instructors')

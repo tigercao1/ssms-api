@@ -211,7 +211,7 @@ describe('PublicInstructorsService', () => {
             {
               ...row({ id: 'a', bio_zh: '你好' }),
               bio_zh_machine_translated: true,
-              bio_zh_translated_by: 'gemini-3.8-flash',
+              bio_zh_translated_by: 'gemini-2.5-flash',
             } as PublicInstructorRow,
           ],
         },

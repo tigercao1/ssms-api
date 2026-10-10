@@ -7,7 +7,7 @@ import type {
 } from './bio-translator.interface';
 import { PRESERVED_TERMS, TRANSLATION_GLOSSARY } from './translation-glossary';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 export const GEMINI_API_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta';
 export const GEMINI_API_KEY_HEADER = 'x-goog-api-key';

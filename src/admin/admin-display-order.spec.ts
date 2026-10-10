@@ -166,7 +166,7 @@ describe('PATCH /admin/instructors/:id/display-order', () => {
       .set('Authorization', admin)
       .send({ displayOrder: 0 })
       .expect(200);
-    expect(res.body.displayOrder).toBe(0);
+    expect((res.body as { displayOrder: number | null }).displayOrder).toBe(0);
   });
 
   it('clears the order with null', async () => {
@@ -176,7 +176,9 @@ describe('PATCH /admin/instructors/:id/display-order', () => {
       .set('Authorization', admin)
       .send({ displayOrder: null })
       .expect(200);
-    expect(res.body.displayOrder).toBeNull();
+    expect(
+      (res.body as { displayOrder: number | null }).displayOrder,
+    ).toBeNull();
     expect(ctx.rows.get(INSTRUCTOR_ID)?.display_order).toBeNull();
     expect(ctx.audits[0].metadata).toEqual({ from: 4, to: null });
   });

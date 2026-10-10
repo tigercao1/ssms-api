@@ -204,6 +204,29 @@ describe('PublicInstructorsService', () => {
       expect(dto).not.toHaveProperty('display_name_en');
     });
 
+    it('never exposes machine-translation info', async () => {
+      const repo = new FakeRepo(
+        {
+          instructors: [
+            {
+              ...row({ id: 'a', bio_zh: '你好' }),
+              bio_zh_machine_translated: true,
+              bio_zh_translated_by: 'gemini-3.8-flash',
+            } as PublicInstructorRow,
+          ],
+        },
+        { ids: ['a'], totalCount: 1 },
+      );
+      const dto = (
+        await new PublicInstructorsService(repo).list(
+          makeQuery({ locale: 'zh-CN' }),
+        )
+      ).data[0];
+
+      expect(dto.bio).toBe('你好');
+      expect(JSON.stringify(dto)).not.toMatch(/translated|gemini/);
+    });
+
     it('falls back to English display_name when zh missing', async () => {
       const repo = new FakeRepo(
         {

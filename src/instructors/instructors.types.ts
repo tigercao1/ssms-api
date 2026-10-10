@@ -18,6 +18,8 @@ export interface InstructorRow {
   bio_zh: string | null;
   bio_en_machine_translated: boolean;
   bio_zh_machine_translated: boolean;
+  bio_en_translated_by: string | null;
+  bio_zh_translated_by: string | null;
   date_of_birth: string | null;
   profile_photo_url: string | null;
   min_student_age: number;
@@ -61,6 +63,8 @@ export interface InstructorProfile {
   bioZh: string | null;
   bioEnMachineTranslated: boolean;
   bioZhMachineTranslated: boolean;
+  bioEnTranslatedBy: string | null;
+  bioZhTranslatedBy: string | null;
   dateOfBirth: string | null;
   preferredLanguage: PreferredLanguage;
   approvalStatus: ApprovalStatus;

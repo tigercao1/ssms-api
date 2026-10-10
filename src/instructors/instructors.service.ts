@@ -235,6 +235,8 @@ export class InstructorsService {
       bioZh: row.bio_zh,
       bioEnMachineTranslated: row.bio_en_machine_translated,
       bioZhMachineTranslated: row.bio_zh_machine_translated,
+      bioEnTranslatedBy: row.bio_en_translated_by,
+      bioZhTranslatedBy: row.bio_zh_translated_by,
       dateOfBirth: row.date_of_birth,
       preferredLanguage: row.preferred_language,
       approvalStatus: row.approval_status,

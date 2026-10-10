@@ -26,6 +26,8 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     bio_zh: null,
     bio_en_machine_translated: false,
     bio_zh_machine_translated: false,
+    bio_en_translated_by: null,
+    bio_zh_translated_by: null,
     date_of_birth: null,
     profile_photo_url: null,
     min_student_age: 5,
@@ -434,6 +436,31 @@ describe('InstructorsService', () => {
     it('bumps the photo version for the given instructor', async () => {
       await service.bumpProfilePhotoVersion('inst-1');
       expect(repo.photoVersionBumps).toEqual(['inst-1']);
+    });
+  });
+
+  describe('machine translation info', () => {
+    it('returns which model translated each bio', async () => {
+      repo.rows.push(
+        makeRow({
+          id: 'inst-1',
+          bio_en: 'I teach skiing.',
+          bio_zh: '我教滑雪。',
+          bio_zh_machine_translated: true,
+          bio_zh_translated_by: 'gemini-3.8-flash',
+        }),
+      );
+
+      const profile = await service.getProfileById('inst-1');
+
+      expect(profile).toEqual(
+        expect.objectContaining({
+          bioEnMachineTranslated: false,
+          bioZhMachineTranslated: true,
+          bioEnTranslatedBy: null,
+          bioZhTranslatedBy: 'gemini-3.8-flash',
+        }),
+      );
     });
   });
 

@@ -140,6 +140,7 @@ describe('SupabasePublicInstructorsRepository', () => {
             teaching_locations: {
               key: 'location.whistler',
               name: 'Whistler',
+              name_zh: '惠斯勒',
               sort_order: 1,
               is_active: true,
             },
@@ -162,6 +163,7 @@ describe('SupabasePublicInstructorsRepository', () => {
           instructor_id: 'a',
           key: 'location.whistler',
           name: 'Whistler',
+          name_zh: '惠斯勒',
           sort_order: 1,
         },
       ]);

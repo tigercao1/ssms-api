@@ -150,6 +150,9 @@ describe('SupabaseAdminRepository', () => {
     const result = await repo.insertReference('languages', {
       key: 'language.fr',
       name: 'French',
+      nameZh: '法语',
+      nameEnTranslatedBy: null,
+      nameZhTranslatedBy: 'gemini-test',
       sortOrder: 5,
       isActive: true,
     });
@@ -158,6 +161,9 @@ describe('SupabaseAdminRepository', () => {
     expect(stub.calls.insert).toEqual({
       key: 'language.fr',
       name: 'French',
+      name_zh: '法语',
+      name_en_translated_by: null,
+      name_zh_translated_by: 'gemini-test',
       sort_order: 5,
       is_active: true,
     });
@@ -171,6 +177,9 @@ describe('SupabaseAdminRepository', () => {
       repo.insertReference('languages', {
         key: 'k',
         name: 'n',
+        nameZh: null,
+        nameEnTranslatedBy: null,
+        nameZhTranslatedBy: null,
         sortOrder: 0,
         isActive: true,
       }),
@@ -239,6 +248,17 @@ describe('SupabaseAdminRepository', () => {
     await expect(
       repo.updateReference('languages', 'nope', { name: 'x' }),
     ).resolves.toBeNull();
+  });
+
+  it('reads the Chinese name and translation provenance of reference rows', async () => {
+    const stub = makeSupabaseStub({ data: [refRow] });
+    const repo = await build(stub);
+
+    await repo.listReferences('languages');
+
+    expect(String(stub.calls.select?.[0])).toContain(
+      'name_zh, name_en_translated_by, name_zh_translated_by',
+    );
   });
 
   it('countReferenceLinks counts junction rows for the reference id', async () => {

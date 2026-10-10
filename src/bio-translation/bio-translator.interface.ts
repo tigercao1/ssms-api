@@ -1,18 +1,21 @@
 /**
  * Bio AI Translation — contract (see BIO_TRANSLATION_PLAN.md).
  *
- * v1 ships a STUB implementation only. The real provider (OpenAI / Anthropic /
- * DeepL / self-hosted) is wired post-v1 by binding a different implementation
- * to {@link BIO_TRANSLATOR} in the NestJS DI container — no call sites change.
+ * BioTranslationModule binds {@link BIO_TRANSLATOR} to Gemini when translation
+ * is enabled and `GEMINI_API_KEY` is set, else the stub — no call sites change.
  */
 
 /** ISO-ish language codes used across the bio fields. */
 export type BioLang = 'en' | 'zh-CN';
 
+export type TranslationKind = 'bio' | 'reference-name';
+
 export interface BioTranslationInput {
   text: string;
   from: BioLang;
   to: BioLang;
+  kind?: TranslationKind;
+  timeoutMs?: number;
 }
 
 /**
@@ -24,10 +27,12 @@ export interface BioTranslationInput {
  * translator's.
  */
 export interface BioTranslator {
+  readonly modelId: string | null;
+
   /**
-   * Resolves to the translated text. A provider that cannot translate (e.g.
-   * the v1 stub, or a transient outage surfaced as empty) resolves to `''`;
-   * the queue treats an empty result as "leave the target field empty".
+   * Resolves to the translated text. The stub resolves to `''`, which the
+   * queue treats as "leave the target field empty"; a real provider rejects
+   * instead of resolving empty.
    */
   translate(input: BioTranslationInput): Promise<string>;
 }

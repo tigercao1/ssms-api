@@ -22,7 +22,8 @@ const INSTRUCTOR_COLUMNS =
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
   'is_active, min_student_age, inserted_at, updated_at';
 
-const REFERENCE_COLUMNS = 'id, key, name, sort_order, is_active';
+const REFERENCE_COLUMNS =
+  'id, key, name, name_zh, name_en_translated_by, name_zh_translated_by, sort_order, is_active';
 
 /**
  * Data-access boundary for the Admin module. Declared as an abstract class so
@@ -148,6 +149,9 @@ export class SupabaseAdminRepository extends AdminRepository {
       .insert({
         key: input.key,
         name: input.name,
+        name_zh: input.nameZh,
+        name_en_translated_by: input.nameEnTranslatedBy,
+        name_zh_translated_by: input.nameZhTranslatedBy,
         sort_order: input.sortOrder,
         is_active: input.isActive,
       })

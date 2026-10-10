@@ -153,14 +153,18 @@ export class PublicInstructorsService {
   }
 }
 
-/** Map junction ref rows to sorted `{ key, label }` items. */
+/** Map junction ref rows to sorted `{ key, label, label_zh }` items. */
 function toRefItems(rows: PublicRefRow[] | undefined): PublicRefItem[] {
   if (!rows || rows.length === 0) {
     return [];
   }
   return [...rows]
     .sort((a, b) => a.sort_order - b.sort_order || a.key.localeCompare(b.key))
-    .map((r) => ({ key: r.key, label: r.name }));
+    .map((r) => ({
+      key: r.key,
+      label: r.name,
+      label_zh: r.name_zh?.trim() ? r.name_zh : null,
+    }));
 }
 
 /**

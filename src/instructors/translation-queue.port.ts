@@ -12,21 +12,28 @@ import { Injectable } from '@nestjs/common';
  */
 export const TRANSLATION_QUEUE = Symbol('TRANSLATION_QUEUE');
 
-/** Bio fields handed to the queue after a profile save (mirrors BioSnapshot). */
-export interface BioSnapshotInput {
+export interface BioStateInput {
+  bioEn: string | null;
+  bioZh: string | null;
+  bioEnMachineTranslated: boolean;
+  bioZhMachineTranslated: boolean;
+}
+
+/** Bio state before and after a profile save (mirrors BioChange). */
+export interface BioChangeInput {
   instructorId: string;
-  bioEn?: string | null;
-  bioZh?: string | null;
+  before: BioStateInput;
+  after: BioStateInput;
 }
 
 export interface TranslationQueuePort {
   /**
    * Enqueue a translation job for the just-saved profile. The queue itself
-   * decides whether a job is warranted (exactly one bio language present) and
-   * never throws into the caller — a queue hiccup must not fail the profile
-   * save. Returns whether a job was enqueued.
+   * decides whether a job is warranted (see planTranslationJob) and never
+   * throws into the caller — a queue hiccup must not fail the profile save.
+   * Returns whether a job was enqueued.
    */
-  enqueueForProfile(snapshot: BioSnapshotInput): Promise<boolean>;
+  enqueueForProfile(change: BioChangeInput): Promise<boolean>;
 }
 
 /**

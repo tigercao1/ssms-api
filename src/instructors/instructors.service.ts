@@ -16,7 +16,10 @@ import {
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { TRANSLATION_QUEUE } from './translation-queue.port';
-import type { TranslationQueuePort } from './translation-queue.port';
+import type {
+  BioStateInput,
+  TranslationQueuePort,
+} from './translation-queue.port';
 
 /** Postgres SQLSTATE classes that map to a 400 (client data problem). */
 const CLIENT_ERROR_CODES = new Set([
@@ -33,6 +36,22 @@ interface PostgresError {
   message?: string;
   details?: string;
   hint?: string;
+}
+
+function sameBio(
+  next: string | null | undefined,
+  current: string | null,
+): boolean {
+  return next !== undefined && (next ?? '') === (current ?? '');
+}
+
+function bioStateOf(row: InstructorRow): BioStateInput {
+  return {
+    bioEn: row.bio_en,
+    bioZh: row.bio_zh,
+    bioEnMachineTranslated: row.bio_en_machine_translated,
+    bioZhMachineTranslated: row.bio_zh_machine_translated,
+  };
 }
 
 @Injectable()
@@ -99,7 +118,7 @@ export class InstructorsService {
    * Exported for reuse by the Admin module (A4 / T6.6 — admin edits any
    * instructor's profile). Applies the whole patch in one DB transaction
    * (update core row + replace relation rows) so partial writes are impossible,
-   * then enqueues bio translation when exactly one bio language is present.
+   * then hands the before/after bios to the translation queue.
    */
   async updateProfileById(
     instructorId: string,
@@ -111,7 +130,10 @@ export class InstructorsService {
     }
 
     const patch = this.buildPatch(dto);
+    if (sameBio(patch.bio_en, existing.bio_en)) delete patch.bio_en;
+    if (sameBio(patch.bio_zh, existing.bio_zh)) delete patch.bio_zh;
     const bioTouched = patch.bio_en !== undefined || patch.bio_zh !== undefined;
+    const before = bioStateOf(existing);
     try {
       await this.repo.applyProfilePatch(instructorId, patch);
     } catch (err) {
@@ -124,7 +146,11 @@ export class InstructorsService {
     // Only enqueue when a bio field was actually part of this update; the queue
     // then decides whether a translation is warranted.
     if (bioTouched) {
-      await this.enqueueBioTranslation(profile);
+      await this.translationQueue.enqueueForProfile({
+        instructorId,
+        before,
+        after: bioStateOf(updated ?? existing),
+      });
     }
     return profile;
   }
@@ -189,21 +215,6 @@ export class InstructorsService {
     return patch;
   }
 
-  /**
-   * Hand the just-saved bios to the translation queue (T3.2 deliverable / T5.2).
-   * The queue decides whether a job is needed (exactly one bio language present)
-   * and swallows its own errors, so the profile save is never affected.
-   */
-  private async enqueueBioTranslation(
-    profile: InstructorProfile,
-  ): Promise<void> {
-    await this.translationQueue.enqueueForProfile({
-      instructorId: profile.id,
-      bioEn: profile.bioEn,
-      bioZh: profile.bioZh,
-    });
-  }
-
   /** Build the camelCase self-view profile, fanning out relation reads. */
   private async buildProfile(row: InstructorRow): Promise<InstructorProfile> {
     const [teachingLocations, languages, courseLevelsOffered, certs, trainers] =
@@ -224,6 +235,8 @@ export class InstructorsService {
       bioZh: row.bio_zh,
       bioEnMachineTranslated: row.bio_en_machine_translated,
       bioZhMachineTranslated: row.bio_zh_machine_translated,
+      bioEnTranslatedBy: row.bio_en_translated_by,
+      bioZhTranslatedBy: row.bio_zh_translated_by,
       dateOfBirth: row.date_of_birth,
       preferredLanguage: row.preferred_language,
       approvalStatus: row.approval_status,

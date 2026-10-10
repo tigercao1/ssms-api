@@ -204,6 +204,29 @@ describe('PublicInstructorsService', () => {
       expect(dto).not.toHaveProperty('display_name_en');
     });
 
+    it('never exposes machine-translation info', async () => {
+      const repo = new FakeRepo(
+        {
+          instructors: [
+            {
+              ...row({ id: 'a', bio_zh: '你好' }),
+              bio_zh_machine_translated: true,
+              bio_zh_translated_by: 'gemini-3.8-flash',
+            } as PublicInstructorRow,
+          ],
+        },
+        { ids: ['a'], totalCount: 1 },
+      );
+      const dto = (
+        await new PublicInstructorsService(repo).list(
+          makeQuery({ locale: 'zh-CN' }),
+        )
+      ).data[0];
+
+      expect(dto.bio).toBe('你好');
+      expect(JSON.stringify(dto)).not.toMatch(/translated|gemini/);
+    });
+
     it('falls back to English display_name when zh missing', async () => {
       const repo = new FakeRepo(
         {
@@ -218,7 +241,7 @@ describe('PublicInstructorsService', () => {
       expect(result.data[0].display_name).toBe('Jane');
     });
 
-    it('builds sorted {key,label} relations', async () => {
+    it('builds sorted {key,label,label_zh} relations', async () => {
       const repo = new FakeRepo(
         {
           instructors: [row({ id: 'a' })],
@@ -227,12 +250,14 @@ describe('PublicInstructorsService', () => {
               instructor_id: 'a',
               key: 'glen-eden',
               name: 'Glen Eden',
+              name_zh: null,
               sort_order: 2,
             },
             {
               instructor_id: 'a',
               key: 'blue-mountain',
               name: 'Blue Mountain',
+              name_zh: '蓝山',
               sort_order: 1,
             },
           ],
@@ -241,6 +266,7 @@ describe('PublicInstructorsService', () => {
               instructor_id: 'a',
               key: 'english',
               name: 'English',
+              name_zh: '  ',
               sort_order: 1,
             },
           ],
@@ -250,10 +276,12 @@ describe('PublicInstructorsService', () => {
       const service = new PublicInstructorsService(repo);
       const dto = (await service.list(makeQuery())).data[0];
       expect(dto.teaching_locations).toEqual([
-        { key: 'blue-mountain', label: 'Blue Mountain' },
-        { key: 'glen-eden', label: 'Glen Eden' },
+        { key: 'blue-mountain', label: 'Blue Mountain', label_zh: '蓝山' },
+        { key: 'glen-eden', label: 'Glen Eden', label_zh: null },
       ]);
-      expect(dto.languages).toEqual([{ key: 'english', label: 'English' }]);
+      expect(dto.languages).toEqual([
+        { key: 'english', label: 'English', label_zh: null },
+      ]);
     });
 
     it('nests certifications by discipline with formatted display strings', async () => {

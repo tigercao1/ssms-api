@@ -86,6 +86,7 @@ describe('SupabaseInstructorSyncRepository', () => {
             {
               teaching_locations: {
                 name: 'Whistler',
+                name_zh: '惠斯勒',
                 sort_order: 2,
                 is_active: true,
               },
@@ -127,8 +128,14 @@ describe('SupabaseInstructorSyncRepository', () => {
 
       expect(snapshot).toEqual({
         instructor,
-        locations: ['Banff', 'Whistler'],
-        languages: ['English', 'Mandarin'],
+        locations: [
+          { name: 'Banff', name_zh: null },
+          { name: 'Whistler', name_zh: '惠斯勒' },
+        ],
+        languages: [
+          { name: 'English', name_zh: null },
+          { name: 'Mandarin', name_zh: null },
+        ],
         courseLevels: [],
         examPreparations: [],
         certifications: [
@@ -145,7 +152,7 @@ describe('SupabaseInstructorSyncRepository', () => {
       ]);
       expect(opsFor('instructors_exam_preparations')[0]).toContainEqual([
         'select',
-        'exam_preparations:exam_preparation_id ( name, sort_order, is_active )',
+        'exam_preparations:exam_preparation_id ( name, name_zh, sort_order, is_active )',
       ]);
     });
 

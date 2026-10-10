@@ -128,7 +128,7 @@ export class SupabasePublicInstructorsRepository extends PublicInstructorsReposi
     const { data, error } = await this.supabase
       .from(junction)
       .select(
-        `instructor_id, ${refTable}:${fkColumn} ( key, name, sort_order, is_active )`,
+        `instructor_id, ${refTable}:${fkColumn} ( key, name, name_zh, sort_order, is_active )`,
       )
       .in('instructor_id', ids);
     if (error) {
@@ -145,6 +145,7 @@ export class SupabasePublicInstructorsRepository extends PublicInstructorsReposi
         const ref = r[refTable] as {
           key: string;
           name: string;
+          name_zh?: string | null;
           sort_order: number;
           is_active: boolean;
         } | null;
@@ -155,6 +156,7 @@ export class SupabasePublicInstructorsRepository extends PublicInstructorsReposi
           instructor_id: r.instructor_id,
           key: ref.key,
           name: ref.name,
+          name_zh: ref.name_zh ?? null,
           sort_order: ref.sort_order,
         };
       })

@@ -7,7 +7,7 @@ import type {
   InstructorSnapshot,
   ShopifyFieldInput,
   SyncCertRow,
-  SyncInstructorRow,
+  SyncRefName,
   SyncTrainerRow,
 } from './instructor-sync.types';
 
@@ -19,6 +19,9 @@ export interface BuildFieldsOptions {
 export interface EnglishTranslations {
   name: string | null;
   introduction: string | null;
+  client_groups: string | null;
+  locations: string | null;
+  languages: string | null;
 }
 
 const DISCIPLINES: {
@@ -52,12 +55,9 @@ export function buildInstructorFields(
     ['introduction', baseText(instructor.bio_zh, instructor.bio_en)],
     ['type', disciplineType(snapshot)],
     ['certification', certificationLine(snapshot)],
-    [
-      'client_groups',
-      [...snapshot.courseLevels, ...snapshot.examPreparations].join('，'),
-    ],
-    ['locations', jsonList(snapshot.locations)],
-    ['languages', jsonList(snapshot.languages)],
+    ['client_groups', clientGroups(snapshot, zhName, '，')],
+    ['locations', jsonList(snapshot.locations.map(zhName))],
+    ['languages', jsonList(snapshot.languages.map(zhName))],
     [
       'min_age',
       instructor.min_student_age == null
@@ -79,15 +79,50 @@ export function buildInstructorFields(
 }
 
 export function englishTranslations(
-  instructor: SyncInstructorRow,
+  snapshot: InstructorSnapshot,
 ): EnglishTranslations {
+  const { instructor } = snapshot;
   return {
     name: englishOverChinese(
       instructor.display_name_en,
       instructor.display_name_zh,
     ),
     introduction: englishOverChinese(instructor.bio_en, instructor.bio_zh),
+    client_groups: englishWhereDifferent(
+      clientGroups(snapshot, enName, ', '),
+      clientGroups(snapshot, zhName, '，'),
+    ),
+    locations: englishWhereDifferent(
+      jsonList(snapshot.locations.map(enName)),
+      jsonList(snapshot.locations.map(zhName)),
+    ),
+    languages: englishWhereDifferent(
+      jsonList(snapshot.languages.map(enName)),
+      jsonList(snapshot.languages.map(zhName)),
+    ),
   };
+}
+
+function zhName(ref: SyncRefName): string {
+  return nonBlank(ref.name_zh) ?? ref.name;
+}
+
+function enName(ref: SyncRefName): string {
+  return ref.name;
+}
+
+function clientGroups(
+  snapshot: InstructorSnapshot,
+  label: (ref: SyncRefName) => string,
+  separator: string,
+): string {
+  return [...snapshot.courseLevels, ...snapshot.examPreparations]
+    .map(label)
+    .join(separator);
+}
+
+function englishWhereDifferent(en: string, zh: string): string | null {
+  return en === '' || en === zh ? null : en;
 }
 
 function englishOverChinese(

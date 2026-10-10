@@ -1,42 +1,137 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { BIO_TRANSLATOR } from './bio-translator.interface';
-import type { BioTranslator } from './bio-translator.interface';
+import type { BioLang, BioTranslator } from './bio-translator.interface';
 import type { BioTranslationJobRow } from './bio-translation-job.types';
+
+export const TRANSLATION_POLL_INTERVAL_MS = 10_000;
+export const TRANSLATION_BATCH_SIZE = 10;
+
+export function isTranslationEnabled(config: ConfigService): boolean {
+  return config.get<string>('TRANSLATION_ENABLED')?.trim() === 'true';
+}
 
 const BIO_JOBS_TABLE = 'bio_translation_jobs';
 const AUDIT_TABLE = 'audit_log';
 const BACKOFF_BASE_MS = 1_000;
+const BIO_MAX_LENGTH = 1_000;
+
+const HUMAN_TARGET = 'target bio was written by a human';
+const SOURCE_CHANGED = 'source bio changed since the job was queued';
+const BIO_CHANGED = 'bio changed while translating';
+
+interface TargetState {
+  text: string | null;
+  machineTranslated: boolean;
+}
+
+interface BioRowState {
+  source: string;
+  target: TargetState;
+}
+
+function bioColumns(lang: BioLang) {
+  return lang === 'en'
+    ? { text: 'bio_en', flag: 'bio_en_machine_translated' }
+    : { text: 'bio_zh', flag: 'bio_zh_machine_translated' };
+}
+
+function isWritable(target: TargetState): boolean {
+  return (
+    target.machineTranslated ||
+    target.text === null ||
+    target.text.trim() === ''
+  );
+}
 
 /** Outcome of draining a single job (for tests / observability). */
 export type WorkerOutcome =
   | 'idle' // nothing due
   | 'completed' // target field written + flag set
-  | 'skipped' // translator returned '' (stub / no provider) — left empty
+  | 'skipped' // stub returned '', human target, or stale source — left as is
   | 'retried' // transient failure, re-queued with backoff
   | 'failed'; // gave up after max_attempts
 
 /**
- * Background drainer for the bio-translation queue (T5.2 scaffold).
- *
- * This is intentionally a plain, manually-invoked `processNext()` rather than a
- * cron binding: v1 has no scheduler dependency and the stub translator makes
- * every job a no-op. Post-v1, a real provider drops in via the {@link
- * BIO_TRANSLATOR} binding and a scheduler (or Supabase cron) calls
- * `processNext()` on an interval — no changes here.
+ * Background drainer for the bio-translation queue. When
+ * `TRANSLATION_ENABLED=true` it polls `processNext()` every
+ * {@link TRANSLATION_POLL_INTERVAL_MS}; otherwise it stays idle.
  *
  * Failure policy (BIO_TRANSLATION_PLAN.md): exponential backoff, 3 attempts,
  * then give up and record `translation.failure` in `audit_log`.
  */
 @Injectable()
-export class TranslationWorkerService {
+export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TranslationWorkerService.name);
+  private timer?: NodeJS.Timeout;
+  private draining?: Promise<number>;
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
+    private readonly config: ConfigService,
   ) {}
+
+  isEnabled(): boolean {
+    return isTranslationEnabled(this.config);
+  }
+
+  onModuleInit(): void {
+    if (!this.isEnabled()) {
+      this.logger.log(
+        'Bio translation worker disabled: TRANSLATION_ENABLED is not "true"',
+      );
+      return;
+    }
+    this.logger.log(
+      `Bio translation worker enabled (${this.translator.modelId ?? 'stub'}); polling every ${TRANSLATION_POLL_INTERVAL_MS / 1000}s`,
+    );
+    this.timer = setInterval(
+      () => void this.tick(),
+      TRANSLATION_POLL_INTERVAL_MS,
+    );
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    clearInterval(this.timer);
+    this.timer = undefined;
+    await this.draining;
+  }
+
+  tick(): Promise<number> {
+    this.draining ??= this.drain().finally(() => {
+      this.draining = undefined;
+    });
+    return this.draining;
+  }
+
+  private async drain(): Promise<number> {
+    let processed = 0;
+    while (processed < TRANSLATION_BATCH_SIZE) {
+      let outcome: WorkerOutcome;
+      try {
+        outcome = await this.processNext();
+      } catch (err) {
+        this.logger.error(
+          `Translation tick failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        break;
+      }
+      if (outcome === 'idle') {
+        break;
+      }
+      processed++;
+    }
+    return processed;
+  }
 
   /**
    * Claims and processes the next due job, if any. Returns the outcome.
@@ -49,6 +144,20 @@ export class TranslationWorkerService {
     }
 
     try {
+      const state = await this.loadBioState(job);
+      if (!state || !isWritable(state.target)) {
+        await this.markStatus(job.id, 'skipped', {
+          last_error: state ? HUMAN_TARGET : 'instructor not found',
+        });
+        return 'skipped';
+      }
+      if (state.source.trim() !== job.source_text) {
+        await this.markStatus(job.id, 'skipped', {
+          last_error: SOURCE_CHANGED,
+        });
+        return 'skipped';
+      }
+
       const translated = await this.translator.translate({
         text: job.source_text,
         from: job.source_lang,
@@ -61,7 +170,10 @@ export class TranslationWorkerService {
         return 'skipped';
       }
 
-      await this.applyTranslation(job, translated);
+      if (!(await this.applyTranslation(job, translated.trim(), state))) {
+        await this.markStatus(job.id, 'skipped', { last_error: BIO_CHANGED });
+        return 'skipped';
+      }
       await this.markStatus(job.id, 'completed');
       return 'completed';
     } catch (err) {
@@ -91,13 +203,14 @@ export class TranslationWorkerService {
     }
 
     const job = result.data as BioTranslationJobRow;
-    const { error: claimError } = await this.supabase
+    const { data: claimed, error: claimError } = await this.supabase
       .from(BIO_JOBS_TABLE)
       .update({ status: 'processing', attempts: job.attempts + 1 })
       .eq('id', job.id)
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .select('id');
 
-    if (claimError) {
+    if (claimError || !claimed || claimed.length === 0) {
       // Another worker likely grabbed it; treat as nothing-to-do this tick.
       return null;
     }
@@ -105,24 +218,74 @@ export class TranslationWorkerService {
     return { ...job, status: 'processing', attempts: job.attempts + 1 };
   }
 
-  /** Writes the translated text into the missing bio + sets its MT flag. */
+  private async loadBioState(
+    job: BioTranslationJobRow,
+  ): Promise<BioRowState | null> {
+    const source = bioColumns(job.source_lang);
+    const columns = bioColumns(job.target_lang);
+    const { data, error } = await this.supabase
+      .from('instructors')
+      .select(`${source.text}, ${columns.text}, ${columns.flag}`)
+      .eq('id', job.instructor_id)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`instructor read failed: ${error.message}`);
+    }
+    if (!data) {
+      return null;
+    }
+    const row = data as unknown as Record<string, string | boolean | null>;
+    return {
+      source: (row[source.text] as string | null) ?? '',
+      target: {
+        text: (row[columns.text] as string | null) ?? null,
+        machineTranslated: row[columns.flag] === true,
+      },
+    };
+  }
+
+  /** Writes the translation + MT flag and model; false if the bios changed. */
   private async applyTranslation(
     job: BioTranslationJobRow,
     translated: string,
-  ): Promise<void> {
+    expected: BioRowState,
+  ): Promise<boolean> {
+    if (translated.length > BIO_MAX_LENGTH) {
+      throw new Error(
+        `translation is ${translated.length} characters, over the ${BIO_MAX_LENGTH} limit`,
+      );
+    }
+    const modelId = this.translator.modelId;
     const patch =
       job.target_lang === 'en'
-        ? { bio_en: translated, bio_en_machine_translated: true }
-        : { bio_zh: translated, bio_zh_machine_translated: true };
+        ? {
+            bio_en: translated,
+            bio_en_machine_translated: true,
+            bio_en_translated_by: modelId,
+          }
+        : {
+            bio_zh: translated,
+            bio_zh_machine_translated: true,
+            bio_zh_translated_by: modelId,
+          };
 
-    const { error } = await this.supabase
+    const columns = bioColumns(job.target_lang);
+    const guardedUpdate = this.supabase
       .from('instructors')
       .update(patch)
-      .eq('id', job.instructor_id);
+      .eq('id', job.instructor_id)
+      .eq(bioColumns(job.source_lang).text, expected.source)
+      .eq(columns.flag, expected.target.machineTranslated);
+    const { data, error } = await (
+      expected.target.text === null
+        ? guardedUpdate.is(columns.text, null)
+        : guardedUpdate.eq(columns.text, expected.target.text)
+    ).select('id');
 
     if (error) {
       throw new Error(`instructor update failed: ${error.message}`);
     }
+    return !!data && data.length > 0;
   }
 
   private async markStatus(

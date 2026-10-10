@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -32,10 +33,34 @@ const MISSING_HANDLE_COLUMN =
   'instructor_shopify_state.shopify_handle does not exist in this database. ' +
   'Apply migration 256 (feat/shopify-sync-worker) before running apply.';
 
+function realPathOfNearestExisting(target: string): string {
+  const missing: string[] = [];
+  let current = path.resolve(target);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(current), ...missing.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return path.join(current, ...missing.reverse());
+      }
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 function assertOutsideRepo(deps: PairingDeps, target: string): string {
-  const resolved = path.resolve(target);
-  const relative = path.relative(path.resolve(deps.repoRoot), resolved);
-  if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+  const resolved = realPathOfNearestExisting(target);
+  const relative = path.relative(
+    realPathOfNearestExisting(deps.repoRoot),
+    resolved,
+  );
+  if (
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  ) {
     throw new PairingCommandError(
       `Refusing to write ${resolved}: it is inside the repository and the output contains personal data.`,
     );

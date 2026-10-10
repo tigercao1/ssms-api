@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { GraphqlFn, LegacySnapshot } from './legacy-our-team';
 import {
@@ -262,6 +265,82 @@ describe('runSnapshot', () => {
     await expect(runSnapshot(deps, '/missing')).rejects.toThrow(
       /not an existing directory/,
     );
+  });
+});
+
+describe('output path guard on a real filesystem', () => {
+  let tmp: string;
+  let repo: string;
+  let outside: string;
+  let linkIntoRepo: string;
+
+  beforeEach(() => {
+    tmp = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-pairing-')),
+    );
+    repo = path.join(tmp, 'repo');
+    outside = path.join(tmp, 'outside');
+    linkIntoRepo = path.join(outside, 'link');
+    fs.mkdirSync(path.join(repo, 'backups'), { recursive: true });
+    fs.mkdirSync(outside);
+    fs.symlinkSync(repo, linkIntoRepo, 'dir');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function realDeps() {
+    const made = makeDeps(seedDb());
+    made.deps.repoRoot = repo;
+    made.deps.isDirectory = (dir) =>
+      Promise.resolve(fs.existsSync(dir) && fs.statSync(dir).isDirectory());
+    return made;
+  }
+
+  it('refuses a directory outside the repo that is a symlink into it', async () => {
+    const { deps, written } = realDeps();
+    await expect(runSnapshot(deps, linkIntoRepo)).rejects.toThrow(
+      /inside the repository/,
+    );
+    await expect(
+      runSnapshot(deps, path.join(linkIntoRepo, 'backups')),
+    ).rejects.toThrow(/inside the repository/);
+    await expect(
+      runPropose(deps, path.join(linkIntoRepo, 'p.csv')),
+    ).rejects.toThrow(/inside the repository/);
+    await expect(
+      runPropose(deps, path.join(linkIntoRepo, 'new', 'p.csv')),
+    ).rejects.toThrow(/inside the repository/);
+    expect(written).toEqual({});
+  });
+
+  it('refuses a relative path that resolves into the repo', async () => {
+    const { deps } = realDeps();
+    const cwd = process.cwd();
+    process.chdir(outside);
+    try {
+      await expect(runPropose(deps, 'link/p.csv')).rejects.toThrow(
+        /inside the repository/,
+      );
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it('allows a normal directory outside the repo', async () => {
+    const { deps, written } = realDeps();
+    const file = await runSnapshot(deps, outside);
+    expect(file).toBe(path.join(outside, snapshotFileName(NOW)));
+    expect(Object.keys(written)).toEqual([file]);
+  });
+
+  it('allows a not-yet-existing nested output path under an external directory', async () => {
+    const { deps, written } = realDeps();
+    const target = path.join(outside, 'new', 'deeper', 'p.csv');
+    const file = await runPropose(deps, target);
+    expect(file).toBe(target);
+    expect(Object.keys(written)).toEqual([target]);
   });
 });
 

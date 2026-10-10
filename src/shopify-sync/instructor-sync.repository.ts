@@ -15,7 +15,7 @@ import type {
 
 const INSTRUCTOR_COLUMNS =
   'id, display_name_en, display_name_zh, bio_en, bio_zh, profile_photo_url, profile_photo_version, ' +
-  'photo_2_url, photo_2_version, photo_3_url, photo_3_version, min_student_age, approval_status, is_active';
+  'photo_2_url, photo_2_version, photo_3_url, photo_3_version, min_student_age, display_order, approval_status, is_active';
 
 const STATE_TABLE = 'instructor_shopify_state';
 const QUEUE_TABLE = 'instructor_sync_queue';

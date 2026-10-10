@@ -26,6 +26,7 @@ export interface InstructorRow {
   photo_2_url: string | null;
   photo_3_url: string | null;
   min_student_age: number;
+  display_order: number | null;
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
   is_active: boolean;
@@ -76,6 +77,7 @@ export interface InstructorProfile {
   photo2Url: string | null;
   photo3Url: string | null;
   minStudentAge: number;
+  displayOrder: number | null;
   teachingLocations: Array<{ id: string; key: string; name: string }>;
   languages: Array<{ id: string; key: string; name: string }>;
   courseLevelsOffered: Array<{ id: string; key: string; name: string }>;

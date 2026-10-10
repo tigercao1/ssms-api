@@ -21,6 +21,7 @@ export interface SyncInstructorRow {
   photo_3_url: string | null;
   photo_3_version: string | null;
   min_student_age: number | null;
+  display_order: number | null;
   approval_status: string;
   is_active: boolean;
 }

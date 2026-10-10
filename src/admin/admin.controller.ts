@@ -34,6 +34,7 @@ import { UpdateReferenceDto } from './dto/update-reference.dto';
 import { ListInstructorsQueryDto } from './dto/list-instructors-query.dto';
 import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateApprovalStatusDto } from './dto/update-approval-status.dto';
+import { UpdateDisplayOrderDto } from './dto/update-display-order.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { Roles, RolesGuard } from './roles.guard';
 
@@ -114,6 +115,20 @@ export class AdminController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<AdminInstructorRecord> {
     return this.admin.setActive(id, dto.isActive, toActor(user, userAgent));
+  }
+
+  @Patch('instructors/:id/display-order')
+  setDisplayOrder(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateDisplayOrderDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminInstructorRecord> {
+    return this.admin.setDisplayOrder(
+      id,
+      dto.displayOrder,
+      toActor(user, userAgent),
+    );
   }
 
   @Get('users/:id/role')

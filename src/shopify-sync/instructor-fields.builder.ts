@@ -66,6 +66,10 @@ export function buildInstructorFields(
         ? ''
         : String(instructor.min_student_age),
     ],
+    [
+      'sort_order',
+      instructor.display_order == null ? '' : String(instructor.display_order),
+    ],
     ['ssms_id', instructor.id],
     ['picture', fileReference(options.picture)],
     ['image_1', fileReference(options.image_1)],

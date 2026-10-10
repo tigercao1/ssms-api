@@ -34,6 +34,7 @@ export function instructorRow(
     photo_3_url: null,
     photo_3_version: null,
     min_student_age: 6,
+    display_order: null,
     approval_status: 'approved',
     is_active: true,
     ...overrides,

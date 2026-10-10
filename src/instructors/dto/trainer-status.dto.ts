@@ -3,8 +3,8 @@ import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 /**
  * One trainer-status row (CERTIFICATION_STRUCTURE.md § Trainers). Sparse — only
  * include disciplines the instructor actually trains. The DB enforces
- * UNIQUE(instructor_id, discipline) and the CHECK that a non-null trainer_level
- * requires rookie_session_completed = true.
+ * UNIQUE(instructor_id, discipline). trainer_level is independent of
+ * rookie_session_completed.
  */
 export class TrainerStatusDto {
   @IsIn(['ski', 'snowboard'])

@@ -259,6 +259,7 @@ export class InstructorsService {
       photo2Url: row.photo_2_url,
       photo3Url: row.photo_3_url,
       minStudentAge: row.min_student_age,
+      displayOrder: row.display_order,
       teachingLocations,
       languages,
       courseLevelsOffered,

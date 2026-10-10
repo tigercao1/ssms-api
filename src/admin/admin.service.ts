@@ -231,6 +231,34 @@ export class AdminService {
     return this.toRecord(updated);
   }
 
+  async setDisplayOrder(
+    id: string,
+    displayOrder: number | null,
+    actor?: AuditActor,
+  ): Promise<AdminInstructorRecord> {
+    const current = await this.repo.findInstructorById(id);
+    if (!current) {
+      throw new NotFoundException('Instructor not found');
+    }
+
+    const updated = await this.repo.updateInstructor(id, {
+      display_order: displayOrder,
+    });
+    if (!updated) {
+      throw new NotFoundException('Instructor not found');
+    }
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.instructorDisplayOrderUpdate,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'instructor',
+      targetId: id,
+      metadata: { from: current.display_order, to: displayOrder },
+    });
+
+    return this.toRecord(updated);
+  }
+
   /**
    * T6.6 — full edit of any instructor's profile. Delegates to the reusable
    * transactional updater exported by InstructorsService, returning the same
@@ -537,6 +565,7 @@ export class AdminService {
       dateOfBirth: row.date_of_birth,
       profilePhotoUrl: row.profile_photo_url,
       minStudentAge: row.min_student_age,
+      displayOrder: row.display_order,
       preferredLanguage: row.preferred_language,
       approvalStatus: row.approval_status,
       isActive: row.is_active,

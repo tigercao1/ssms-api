@@ -54,7 +54,7 @@ const INSTRUCTOR_COLUMNS =
   'bio_en_translated_by, bio_zh_translated_by, date_of_birth, ' +
   'profile_photo_url, photo_2_url, photo_3_url, preferred_language, ' +
   'approval_status, is_active, ' +
-  'min_student_age, inserted_at, updated_at';
+  'min_student_age, display_order, inserted_at, updated_at';
 
 @Injectable()
 export class SupabaseInstructorsRepository extends InstructorsRepository {

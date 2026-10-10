@@ -99,9 +99,33 @@ describe('buildInstructorFields', () => {
       existingEntry: true,
       picture: 'gid://shopify/MediaImage/1',
     }).map((f) => f.key);
-    for (const key of ['collection_url', 'sort_order']) {
+    for (const key of ['collection_url']) {
       expect(keys).not.toContain(key);
     }
+  });
+
+  describe('sort_order', () => {
+    it('writes the display order on a new and an existing entry', () => {
+      const snapshot = snapshotOf({ instructor: { display_order: 12 } });
+      expect(fieldsOf(snapshot).sort_order).toBe('12');
+      expect(fieldsOf(snapshot, { existingEntry: true }).sort_order).toBe('12');
+    });
+
+    it('writes 0 as a real order', () => {
+      expect(
+        fieldsOf(snapshotOf({ instructor: { display_order: 0 } })).sort_order,
+      ).toBe('0');
+    });
+
+    it('omits an unset order on a new entry', () => {
+      expect(fieldsOf(snapshotOf())).not.toHaveProperty('sort_order');
+    });
+
+    it('clears an unset order on an existing entry', () => {
+      expect(fieldsOf(snapshotOf(), { existingEntry: true }).sort_order).toBe(
+        '',
+      );
+    });
   });
 
   it('writes the picture only when told, and clears it with an empty value', () => {

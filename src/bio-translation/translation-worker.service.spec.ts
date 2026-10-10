@@ -1,4 +1,9 @@
-import { TranslationWorkerService } from './translation-worker.service';
+import { ConfigService } from '@nestjs/config';
+import {
+  TRANSLATION_BATCH_SIZE,
+  TRANSLATION_POLL_INTERVAL_MS,
+  TranslationWorkerService,
+} from './translation-worker.service';
 import { StubBioTranslator } from './stub-bio-translator';
 import type { BioTranslator } from './bio-translator.interface';
 import type { BioTranslationJobRow } from './bio-translation-job.types';
@@ -43,12 +48,14 @@ function instructor(over: Partial<Instructor> = {}): Instructor {
 
 interface Options {
   job: BioTranslationJobRow | null;
+  claimWon?: boolean;
   instructor?: Instructor | null;
   beforeInstructorUpdate?: (row: Instructor) => void;
 }
 
 function makeSupabase({
   job,
+  claimWon = true,
   instructor: row = instructor(),
   beforeInstructorUpdate,
 }: Options) {
@@ -65,9 +72,19 @@ function makeSupabase({
       maybeSingle: () => Promise.resolve({ data: job, error: null }),
       update: (patch: Record<string, unknown>) => {
         jobUpdates.push(patch);
+        let selected = false;
         const chain = {
           eq: () => chain,
-          then: (resolve: (v: unknown) => void) => resolve({ error: null }),
+          select: () => {
+            selected = true;
+            return chain;
+          },
+          then: (resolve: (v: unknown) => void) =>
+            resolve(
+              selected
+                ? { data: claimWon ? [{ id: 'job-1' }] : [], error: null }
+                : { error: null },
+            ),
         };
         return chain;
       },
@@ -126,6 +143,18 @@ function makeSupabase({
   };
 }
 
+function makeWorker(
+  client: never,
+  translator: BioTranslator,
+  env: Record<string, string> = {},
+) {
+  return new TranslationWorkerService(
+    client,
+    translator,
+    new ConfigService(env),
+  );
+}
+
 function provider(result: string | Error = '我教滑雪。') {
   const translate = jest.fn(() =>
     result instanceof Error ? Promise.reject(result) : Promise.resolve(result),
@@ -137,19 +166,13 @@ function provider(result: string | Error = '我教滑雪。') {
 describe('TranslationWorkerService', () => {
   it('returns idle when no job is due', async () => {
     const { client } = makeSupabase({ job: null });
-    const worker = new TranslationWorkerService(
-      client,
-      new StubBioTranslator(),
-    );
+    const worker = makeWorker(client, new StubBioTranslator());
     expect(await worker.processNext()).toBe('idle');
   });
 
   it('skips (leaves field empty, no MT flag) when the stub returns ""', async () => {
     const { client, jobUpdates, row } = makeSupabase({ job: jobRow() });
-    const worker = new TranslationWorkerService(
-      client,
-      new StubBioTranslator(),
-    );
+    const worker = makeWorker(client, new StubBioTranslator());
 
     expect(await worker.processNext()).toBe('skipped');
     expect(row.bio_zh).toBeNull();
@@ -162,7 +185,7 @@ describe('TranslationWorkerService', () => {
   it('writes the translation with the MT flag and model id into an empty target', async () => {
     const { client, jobUpdates, row } = makeSupabase({ job: jobRow() });
     const { translator, translate } = provider();
-    const worker = new TranslationWorkerService(client, translator);
+    const worker = makeWorker(client, translator);
 
     expect(await worker.processNext()).toBe('completed');
     expect(translate).toHaveBeenCalledWith({
@@ -189,10 +212,7 @@ describe('TranslationWorkerService', () => {
         bio_zh: '我教滑雪。',
       }),
     });
-    const worker = new TranslationWorkerService(
-      client,
-      provider('I teach skiing.').translator,
-    );
+    const worker = makeWorker(client, provider('I teach skiing.').translator);
 
     expect(await worker.processNext()).toBe('completed');
     expect(row).toEqual(
@@ -210,7 +230,7 @@ describe('TranslationWorkerService', () => {
       instructor: instructor({ bio_zh: '人写的简介' }),
     });
     const { translator, translate } = provider();
-    const worker = new TranslationWorkerService(client, translator);
+    const worker = makeWorker(client, translator);
 
     expect(await worker.processNext()).toBe('skipped');
     expect(translate).not.toHaveBeenCalled();
@@ -225,7 +245,7 @@ describe('TranslationWorkerService', () => {
 
   it('skips a job whose instructor no longer exists', async () => {
     const { client } = makeSupabase({ job: jobRow(), instructor: null });
-    const worker = new TranslationWorkerService(client, provider().translator);
+    const worker = makeWorker(client, provider().translator);
 
     expect(await worker.processNext()).toBe('skipped');
   });
@@ -237,7 +257,7 @@ describe('TranslationWorkerService', () => {
         r.bio_zh = '刚刚人写的';
       },
     });
-    const worker = new TranslationWorkerService(client, provider().translator);
+    const worker = makeWorker(client, provider().translator);
 
     expect(await worker.processNext()).toBe('retried');
     expect(row.bio_zh).toBe('刚刚人写的');
@@ -252,10 +272,7 @@ describe('TranslationWorkerService', () => {
 
   it('does not write a translation longer than the bio limit', async () => {
     const { client, row, jobUpdates } = makeSupabase({ job: jobRow() });
-    const worker = new TranslationWorkerService(
-      client,
-      provider('长'.repeat(1001)).translator,
-    );
+    const worker = makeWorker(client, provider('长'.repeat(1001)).translator);
 
     expect(await worker.processNext()).toBe('retried');
     expect(row.bio_zh).toBeNull();
@@ -268,7 +285,7 @@ describe('TranslationWorkerService', () => {
 
   it('retries a provider failure with backoff', async () => {
     const { client, jobUpdates } = makeSupabase({ job: jobRow() });
-    const worker = new TranslationWorkerService(
+    const worker = makeWorker(
       client,
       provider(new Error('Gemini HTTP 503')).translator,
     );
@@ -287,7 +304,7 @@ describe('TranslationWorkerService', () => {
     const { client, jobUpdates, inserts } = makeSupabase({
       job: jobRow({ attempts: 2, max_attempts: 3 }),
     });
-    const worker = new TranslationWorkerService(
+    const worker = makeWorker(
       client,
       provider(new Error('Gemini returned no text')).translator,
     );
@@ -306,5 +323,105 @@ describe('TranslationWorkerService', () => {
         target_id: 'instr-1',
       }) as Record<string, unknown>,
     });
+  });
+
+  it('skips a job another worker claimed first', async () => {
+    const { client } = makeSupabase({ job: jobRow(), claimWon: false });
+    const { translator, translate } = provider();
+
+    expect(await makeWorker(client, translator).processNext()).toBe('idle');
+    expect(translate).not.toHaveBeenCalled();
+  });
+});
+
+describe('TranslationWorkerService polling', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  function stubbedWorker(env: Record<string, string>) {
+    const worker = makeWorker(
+      makeSupabase({ job: null }).client,
+      provider().translator,
+      env,
+    );
+    const processNext = jest.spyOn(worker, 'processNext');
+    return { worker, processNext };
+  }
+
+  it.each([
+    [{}],
+    [{ TRANSLATION_ENABLED: 'false' }],
+    [{ TRANSLATION_ENABLED: 'TRUE' }],
+  ])('does not poll unless TRANSLATION_ENABLED is "true" (%j)', async (env) => {
+    const { worker, processNext } = stubbedWorker(env);
+    processNext.mockResolvedValue('idle');
+
+    worker.onModuleInit();
+    await jest.advanceTimersByTimeAsync(TRANSLATION_POLL_INTERVAL_MS * 3);
+
+    expect(worker.isEnabled()).toBe(false);
+    expect(processNext).not.toHaveBeenCalled();
+    await worker.onModuleDestroy();
+  });
+
+  it('polls every interval when enabled and stops on destroy', async () => {
+    const { worker, processNext } = stubbedWorker({
+      TRANSLATION_ENABLED: 'true',
+    });
+    processNext.mockResolvedValue('idle');
+
+    worker.onModuleInit();
+    expect(processNext).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(TRANSLATION_POLL_INTERVAL_MS);
+    expect(processNext).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(TRANSLATION_POLL_INTERVAL_MS);
+    expect(processNext).toHaveBeenCalledTimes(2);
+
+    await worker.onModuleDestroy();
+    await jest.advanceTimersByTimeAsync(TRANSLATION_POLL_INTERVAL_MS * 3);
+    expect(processNext).toHaveBeenCalledTimes(2);
+  });
+
+  it('drains due jobs each tick until idle', async () => {
+    const { worker, processNext } = stubbedWorker({});
+    processNext
+      .mockResolvedValueOnce('completed')
+      .mockResolvedValueOnce('retried')
+      .mockResolvedValueOnce('idle');
+
+    await expect(worker.tick()).resolves.toBe(2);
+    expect(processNext).toHaveBeenCalledTimes(3);
+  });
+
+  it('bounds one tick to a batch', async () => {
+    const { worker, processNext } = stubbedWorker({});
+    processNext.mockResolvedValue('completed');
+
+    await expect(worker.tick()).resolves.toBe(TRANSLATION_BATCH_SIZE);
+  });
+
+  it('does not overlap ticks', async () => {
+    const { worker, processNext } = stubbedWorker({});
+    let release!: () => void;
+    processNext.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve('idle');
+        }),
+    );
+
+    const first = worker.tick();
+    const second = worker.tick();
+    expect(second).toBe(first);
+    release();
+    await expect(first).resolves.toBe(0);
+    expect(processNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the tick when polling throws', async () => {
+    const { worker, processNext } = stubbedWorker({});
+    processNext.mockRejectedValue(new Error('db down'));
+
+    await expect(worker.tick()).resolves.toBe(0);
   });
 });

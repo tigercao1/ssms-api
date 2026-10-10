@@ -1,9 +1,19 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { BIO_TRANSLATOR } from './bio-translator.interface';
 import type { BioLang, BioTranslator } from './bio-translator.interface';
 import type { BioTranslationJobRow } from './bio-translation-job.types';
+
+export const TRANSLATION_POLL_INTERVAL_MS = 10_000;
+export const TRANSLATION_BATCH_SIZE = 10;
 
 const BIO_JOBS_TABLE = 'bio_translation_jobs';
 const AUDIT_TABLE = 'audit_log';
@@ -40,25 +50,77 @@ export type WorkerOutcome =
   | 'failed'; // gave up after max_attempts
 
 /**
- * Background drainer for the bio-translation queue (T5.2 scaffold).
- *
- * This is intentionally a plain, manually-invoked `processNext()` rather than a
- * cron binding: v1 has no scheduler dependency and the stub translator makes
- * every job a no-op. Post-v1, a real provider drops in via the {@link
- * BIO_TRANSLATOR} binding and a scheduler (or Supabase cron) calls
- * `processNext()` on an interval — no changes here.
+ * Background drainer for the bio-translation queue. When
+ * `TRANSLATION_ENABLED=true` it polls `processNext()` every
+ * {@link TRANSLATION_POLL_INTERVAL_MS}; otherwise it stays idle.
  *
  * Failure policy (BIO_TRANSLATION_PLAN.md): exponential backoff, 3 attempts,
  * then give up and record `translation.failure` in `audit_log`.
  */
 @Injectable()
-export class TranslationWorkerService {
+export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TranslationWorkerService.name);
+  private timer?: NodeJS.Timeout;
+  private draining?: Promise<number>;
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
+    private readonly config: ConfigService,
   ) {}
+
+  isEnabled(): boolean {
+    return this.config.get<string>('TRANSLATION_ENABLED')?.trim() === 'true';
+  }
+
+  onModuleInit(): void {
+    if (!this.isEnabled()) {
+      this.logger.log(
+        'Bio translation worker disabled: TRANSLATION_ENABLED is not "true"',
+      );
+      return;
+    }
+    this.logger.log(
+      `Bio translation worker enabled (${this.translator.modelId ?? 'stub'}); polling every ${TRANSLATION_POLL_INTERVAL_MS / 1000}s`,
+    );
+    this.timer = setInterval(
+      () => void this.tick(),
+      TRANSLATION_POLL_INTERVAL_MS,
+    );
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    clearInterval(this.timer);
+    this.timer = undefined;
+    await this.draining;
+  }
+
+  tick(): Promise<number> {
+    this.draining ??= this.drain().finally(() => {
+      this.draining = undefined;
+    });
+    return this.draining;
+  }
+
+  private async drain(): Promise<number> {
+    let processed = 0;
+    while (processed < TRANSLATION_BATCH_SIZE) {
+      let outcome: WorkerOutcome;
+      try {
+        outcome = await this.processNext();
+      } catch (err) {
+        this.logger.error(
+          `Translation tick failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        break;
+      }
+      if (outcome === 'idle') {
+        break;
+      }
+      processed++;
+    }
+    return processed;
+  }
 
   /**
    * Claims and processes the next due job, if any. Returns the outcome.
@@ -99,7 +161,7 @@ export class TranslationWorkerService {
     }
   }
 
-  /** Picks the oldest due job and flips it to `processing` (best-effort claim). */
+  /** Picks the oldest due job and flips it to `processing` (skips it if another worker won). */
   private async claimNextDueJob(): Promise<BioTranslationJobRow | null> {
     const result = await this.supabase
       .from(BIO_JOBS_TABLE)
@@ -121,13 +183,14 @@ export class TranslationWorkerService {
     }
 
     const job = result.data as BioTranslationJobRow;
-    const { error: claimError } = await this.supabase
+    const { data: claimed, error: claimError } = await this.supabase
       .from(BIO_JOBS_TABLE)
       .update({ status: 'processing', attempts: job.attempts + 1 })
       .eq('id', job.id)
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .select('id');
 
-    if (claimError) {
+    if (claimError || !claimed || claimed.length === 0) {
       // Another worker likely grabbed it; treat as nothing-to-do this tick.
       return null;
     }

@@ -447,7 +447,7 @@ describe('InstructorsService', () => {
           bio_en: 'I teach skiing.',
           bio_zh: '我教滑雪。',
           bio_zh_machine_translated: true,
-          bio_zh_translated_by: 'gemini-2.5-flash',
+          bio_zh_translated_by: 'gemini-3.8-flash',
         }),
       );
 
@@ -458,7 +458,7 @@ describe('InstructorsService', () => {
           bioEnMachineTranslated: false,
           bioZhMachineTranslated: true,
           bioEnTranslatedBy: null,
-          bioZhTranslatedBy: 'gemini-2.5-flash',
+          bioZhTranslatedBy: 'gemini-3.8-flash',
         }),
       );
     });

@@ -20,7 +20,7 @@ import {
 const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
-  'is_active, min_student_age, inserted_at, updated_at';
+  'is_active, min_student_age, display_order, inserted_at, updated_at';
 
 const REFERENCE_COLUMNS =
   'id, key, name, name_zh, name_en_translated_by, name_zh_translated_by, sort_order, is_active';

@@ -12,6 +12,7 @@ export const AUDIT_ACTIONS = {
   instructorReject: 'instructor.reject',
   instructorActivate: 'instructor.activate',
   instructorDeactivate: 'instructor.deactivate',
+  instructorDisplayOrderUpdate: 'instructor.display_order_update',
   // Emitted by PATCH /admin/users/:id/role (AdminService.setUserRole).
   userRoleChange: 'user.role_change',
   userInvite: 'user.invite',

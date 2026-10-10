@@ -31,6 +31,7 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     date_of_birth: null,
     profile_photo_url: null,
     min_student_age: 5,
+    display_order: null,
     preferred_language: 'en',
     approval_status: 'pending',
     is_active: true,
@@ -261,6 +262,14 @@ describe('InstructorsService', () => {
       );
       const profile = await service.getOrCreateForUser('auth-2', 'a@b.com');
       expect(profile.minStudentAge).toBe(7);
+    });
+
+    it('returns displayOrder on the profile', async () => {
+      repo.rows.push(
+        makeRow({ id: 'inst-3', auth_user_id: 'auth-3', display_order: 4 }),
+      );
+      const profile = await service.getOrCreateForUser('auth-3', 'a@b.com');
+      expect(profile.displayOrder).toBe(4);
     });
 
     it('persists minStudentAge from a self-edit and returns it', async () => {

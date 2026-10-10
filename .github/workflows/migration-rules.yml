@@ -1,7 +1,7 @@
 name: Migration rules
 
-# Separate from CI so that adding or removing the `migration:destructive` label
-# re-runs only this check.
+# Separate from CI so that adding or removing the `migration:destructive` or
+# `migration:edit-unapplied` label re-runs only this check.
 
 on:
   pull_request:
@@ -20,4 +20,5 @@ jobs:
       - name: Check new and changed migrations
         env:
           ALLOW_DESTRUCTIVE: ${{ contains(github.event.pull_request.labels.*.name, 'migration:destructive') }}
+          ALLOW_EDIT: ${{ contains(github.event.pull_request.labels.*.name, 'migration:edit-unapplied') }}
         run: scripts/check-migrations.sh "origin/${{ github.base_ref }}"

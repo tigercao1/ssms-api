@@ -1,0 +1,119 @@
+# Post-merge release: migrate dev, back up and migrate prod, then deploy.
+#
+# Runs after CI passes on a push to main, against the exact commit CI tested.
+# Each stage needs the previous one: a migration that fails on dev never reaches
+# prod, and a migration that fails on prod blocks the deploy. All pending files
+# apply in one transaction per database (scripts/migrate.sh), so a failure leaves
+# that database unchanged. Recovery steps: supabase/README.md § Release pipeline.
+#
+# Secrets live in the `dev` and `production` environments, which only main can
+# use, so pull request workflows never see database or Fly credentials.
+
+name: Release
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  # Manual re-run of the whole pipeline on main's head, e.g. after fixing prod
+  # data so a failed migration can apply.
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  migrate-dev:
+    name: Migrate dev
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    environment: dev
+    env:
+      DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+      EXPECT_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      MIGRATE_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - uses: ./.github/actions/setup-db-tools
+
+      - run: scripts/check-db-target.sh
+
+      - run: scripts/migrate.sh status
+
+      - run: scripts/migrate.sh apply
+
+  migrate-prod:
+    name: Back up and migrate prod
+    needs: migrate-dev
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+      EXPECT_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      MIGRATE_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - uses: ./.github/actions/setup-db-tools
+
+      - run: scripts/check-db-target.sh
+
+      - name: Pending migrations
+        id: pending
+        run: |
+          set -euo pipefail
+          scripts/migrate.sh status
+          pending="$(scripts/migrate.sh pending)"
+          count=0
+          if [ -n "$pending" ]; then
+            count="$(printf '%s\n' "$pending" | grep -c .)"
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Encrypted pre-migration backup
+        if: steps.pending.outputs.count != '0'
+        env:
+          BACKUP_AGE_RECIPIENT: ${{ vars.BACKUP_AGE_RECIPIENT }}
+        run: scripts/backup-db.sh "ssms-prod-pre-${RELEASE_SHA:0:7}-$(date -u +%Y%m%dT%H%M%SZ)"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.pending.outputs.count != '0'
+        with:
+          name: pre-migration-backup-${{ github.run_id }}
+          path: ssms-prod-pre-*.sql.age
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Apply
+        if: steps.pending.outputs.count != '0'
+        run: scripts/migrate.sh apply
+
+  deploy:
+    name: Deploy app
+    needs: migrate-prod
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

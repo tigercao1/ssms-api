@@ -157,6 +157,11 @@ export interface FakeEntry {
   status: string | undefined;
 }
 
+interface RegisteredTranslation {
+  value: string;
+  digest: string;
+}
+
 export interface GraphqlCall {
   operation: string;
   variables: Record<string, unknown>;
@@ -173,6 +178,16 @@ export interface FakeVariables {
   fileIds: string[];
   id: string;
   query: string;
+  resourceId: string;
+  locale: string;
+  locales: string[];
+  translationKeys: string[];
+  translations: {
+    key: string;
+    value: string;
+    locale: string;
+    translatableContentDigest: string;
+  }[];
   metaobject: {
     fields?: { key: string; value: string }[];
     capabilities?: { publishable?: { status?: string } };
@@ -185,6 +200,7 @@ type Handler = (variables: FakeVariables) => unknown;
 export class FakeShopify {
   entries = new Map<string, FakeEntry>();
   files = new Map<string, FakeFile>();
+  translations = new Map<string, Map<string, RegisteredTranslation>>();
   fileStatuses = ['UPLOADED', 'PROCESSING', 'READY'];
   calls: GraphqlCall[] = [];
   userErrors = new Map<string, ShopifyUserError[]>();
@@ -302,6 +318,66 @@ export class FakeShopify {
     },
   };
 
+  private readonly translationHandlers: Record<string, Handler> = {
+    SsmsInstructorTranslations: (v) => {
+      const entry = this.entryById(v.resourceId);
+      if (!entry) {
+        return { translatableResource: null };
+      }
+      const registered =
+        this.translations.get(entry.id) ??
+        new Map<string, RegisteredTranslation>();
+      return {
+        translatableResource: {
+          translatableContent: Object.entries(entry.fields)
+            .filter(([, value]) => value !== '')
+            .map(([key, value]) => ({ key, digest: digestOf(value) })),
+          translations: [...registered.entries()].map(([key, t]) => ({
+            key,
+            value: t.value,
+            outdated: t.digest !== digestOf(entry.fields[key] ?? ''),
+          })),
+        },
+      };
+    },
+    SsmsTranslationsRegister: (v) => {
+      const errors = this.takeErrors('SsmsTranslationsRegister');
+      if (errors) {
+        return { translationsRegister: { userErrors: errors } };
+      }
+      const registered =
+        this.translations.get(v.resourceId) ??
+        new Map<string, RegisteredTranslation>();
+      for (const t of v.translations) {
+        registered.set(t.key, {
+          value: t.value,
+          digest: t.translatableContentDigest,
+        });
+      }
+      this.translations.set(v.resourceId, registered);
+      return { translationsRegister: { userErrors: [] } };
+    },
+    SsmsTranslationsRemove: (v) => {
+      const registered = this.translations.get(v.resourceId);
+      for (const key of v.translationKeys) {
+        registered?.delete(key);
+      }
+      return { translationsRemove: { userErrors: [] } };
+    },
+  };
+
+  translationsFor(handle: string): Record<string, string> {
+    const entry = this.entry(handle);
+    const registered = entry ? this.translations.get(entry.id) : undefined;
+    return Object.fromEntries(
+      [...(registered?.entries() ?? [])].map(([key, t]) => [key, t.value]),
+    );
+  }
+
+  private entryById(id: string): FakeEntry | undefined {
+    return [...this.entries.values()].find((e) => e.id === id);
+  }
+
   addFile(filename: string, statuses: string[] = ['READY']): FakeFile {
     const file: FakeFile = {
       id: `gid://shopify/MediaImage/${this.nextId++}`,
@@ -365,10 +441,17 @@ export class FakeShopify {
   private dispatch(query: string, variables: Record<string, unknown>): unknown {
     const operation = /(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? '';
     this.calls.push({ operation, variables });
-    const handler = this.handlers[operation] ?? this.fileHandlers[operation];
+    const handler =
+      this.handlers[operation] ??
+      this.fileHandlers[operation] ??
+      this.translationHandlers[operation];
     if (!handler) {
       throw new Error(`Unexpected Shopify operation ${operation}`);
     }
     return handler(variables as FakeVariables);
   }
+}
+
+function digestOf(value: string): string {
+  return `digest:${value}`;
 }

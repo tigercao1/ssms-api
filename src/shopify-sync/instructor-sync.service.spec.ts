@@ -6,6 +6,7 @@ import {
 } from '../../test/helpers/shopify-sync-fakes';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
+import { InstructorTranslationsSync } from './instructor-translations.sync';
 import type { InstructorSnapshot } from './instructor-sync.types';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 import { ShopifyUserErrorsError } from '../shopify/shopify.errors';
@@ -23,6 +24,7 @@ function setup(snapshot: InstructorSnapshot | null = snapshotOf()) {
     repo,
     gateway,
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
+    new InstructorTranslationsSync(gateway),
   );
   return { repo, shopify, service };
 }
@@ -131,10 +133,14 @@ describe('InstructorSyncService', () => {
       expect(shopify.entry('eddie')?.status).toBe('ACTIVE');
       expect(shopify.entry('edward')).toBeUndefined();
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('eddie');
-      expect(shopify.operations()).toEqual([
+      expect(
+        shopify.operations().filter((op) => op.startsWith('SsmsInstructor')),
+      ).toEqual([
         'SsmsInstructorByHandle',
         'SsmsInstructorUpsert',
+        'SsmsInstructorTranslations',
         'SsmsInstructorUpsert',
+        'SsmsInstructorTranslations',
       ]);
     });
 

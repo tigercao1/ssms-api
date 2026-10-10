@@ -21,6 +21,18 @@ export interface UpsertedEntry {
   handle: string;
 }
 
+export interface TranslatableResource {
+  content: { key: string; digest: string }[];
+  translations: { key: string; value: string; outdated: boolean }[];
+}
+
+export interface TranslationInput {
+  key: string;
+  value: string;
+  locale: string;
+  translatableContentDigest: string;
+}
+
 export interface ShopifyFileRef {
   id: string;
   fileStatus: string;
@@ -88,6 +100,44 @@ const DELETE_FILES = `
   mutation SsmsPhotoDelete($fileIds: [ID!]!) {
     fileDelete(fileIds: $fileIds) {
       deletedFileIds
+      userErrors { field message code }
+    }
+  }
+`;
+
+const TRANSLATABLE_RESOURCE = `
+  query SsmsInstructorTranslations($resourceId: ID!, $locale: String!) {
+    translatableResource(resourceId: $resourceId) {
+      translatableContent { key digest }
+      translations(locale: $locale) { key value outdated }
+    }
+  }
+`;
+
+const REGISTER_TRANSLATIONS = `
+  mutation SsmsTranslationsRegister(
+    $resourceId: ID!
+    $translations: [TranslationInput!]!
+  ) {
+    translationsRegister(resourceId: $resourceId, translations: $translations) {
+      translations { key locale }
+      userErrors { field message code }
+    }
+  }
+`;
+
+const REMOVE_TRANSLATIONS = `
+  mutation SsmsTranslationsRemove(
+    $resourceId: ID!
+    $translationKeys: [String!]!
+    $locales: [String!]!
+  ) {
+    translationsRemove(
+      resourceId: $resourceId
+      translationKeys: $translationKeys
+      locales: $locales
+    ) {
+      translations { key locale }
       userErrors { field message code }
     }
   }
@@ -227,5 +277,45 @@ export class ShopifyInstructorGateway {
       } | null;
     }>(DELETE_FILES, { fileIds });
     assertNoUserErrors('fileDelete', data.fileDelete);
+  }
+
+  async translatableResource(
+    resourceId: string,
+    locale: string,
+  ): Promise<TranslatableResource | null> {
+    const data = await this.shopify.graphql<{
+      translatableResource: {
+        translatableContent: { key: string; digest: string }[];
+        translations: { key: string; value: string; outdated: boolean }[];
+      } | null;
+    }>(TRANSLATABLE_RESOURCE, { resourceId, locale });
+    const resource = data.translatableResource;
+    return resource
+      ? {
+          content: resource.translatableContent,
+          translations: resource.translations,
+        }
+      : null;
+  }
+
+  async registerTranslations(
+    resourceId: string,
+    translations: TranslationInput[],
+  ): Promise<void> {
+    const data = await this.shopify.graphql<{
+      translationsRegister: { userErrors: ShopifyUserError[] } | null;
+    }>(REGISTER_TRANSLATIONS, { resourceId, translations });
+    assertNoUserErrors('translationsRegister', data.translationsRegister);
+  }
+
+  async removeTranslations(
+    resourceId: string,
+    translationKeys: string[],
+    locales: string[],
+  ): Promise<void> {
+    const data = await this.shopify.graphql<{
+      translationsRemove: { userErrors: ShopifyUserError[] } | null;
+    }>(REMOVE_TRANSLATIONS, { resourceId, translationKeys, locales });
+    assertNoUserErrors('translationsRemove', data.translationsRemove);
   }
 }

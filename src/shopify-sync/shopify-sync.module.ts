@@ -6,6 +6,7 @@ import {
 } from './instructor-sync.repository';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
+import { InstructorTranslationsSync } from './instructor-translations.sync';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 
 @Module({
@@ -17,6 +18,7 @@ import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
     },
     ShopifyInstructorGateway,
     InstructorPhotoSync,
+    InstructorTranslationsSync,
     InstructorSyncService,
   ],
   exports: [InstructorSyncService],

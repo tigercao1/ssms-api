@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { buildInstructorFields } from './instructor-fields.builder';
+import {
+  buildInstructorFields,
+  englishTranslations,
+} from './instructor-fields.builder';
 import { baseHandle, handleCandidate } from './instructor-handle';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncRepository } from './instructor-sync.repository';
+import { InstructorTranslationsSync } from './instructor-translations.sync';
 import {
   type InstructorShopifyState,
   type InstructorSnapshot,
@@ -20,6 +24,7 @@ export class InstructorSyncService {
     private readonly repo: InstructorSyncRepository,
     private readonly gateway: ShopifyInstructorGateway,
     private readonly photos: InstructorPhotoSync,
+    private readonly translations: InstructorTranslationsSync,
   ) {}
 
   async sync(instructorId: string): Promise<SyncOutcome> {
@@ -74,6 +79,7 @@ export class InstructorSyncService {
       last_status: 'active',
     });
     await this.photos.discard(photo.replacedFileId);
+    await this.translations.apply(entry.id, englishTranslations(instructor));
     return 'active';
   }
 

@@ -7,12 +7,18 @@ import type {
   InstructorSnapshot,
   ShopifyFieldInput,
   SyncCertRow,
+  SyncInstructorRow,
   SyncTrainerRow,
 } from './instructor-sync.types';
 
 export interface BuildFieldsOptions {
   existingEntry: boolean;
   picture?: string | null;
+}
+
+export interface EnglishTranslations {
+  name: string | null;
+  introduction: string | null;
 }
 
 const DISCIPLINES: {
@@ -70,6 +76,25 @@ export function buildInstructorFields(
         entry[1] !== undefined && (entry[1] !== '' || options.existingEntry),
     )
     .map(([key, value]) => ({ key, value }));
+}
+
+export function englishTranslations(
+  instructor: SyncInstructorRow,
+): EnglishTranslations {
+  return {
+    name: englishOverChinese(
+      instructor.display_name_en,
+      instructor.display_name_zh,
+    ),
+    introduction: englishOverChinese(instructor.bio_en, instructor.bio_zh),
+  };
+}
+
+function englishOverChinese(
+  en: string | null,
+  zh: string | null,
+): string | null {
+  return nonBlank(zh) === null ? null : nonBlank(en);
 }
 
 function baseText(zh: string | null, en: string | null): string {

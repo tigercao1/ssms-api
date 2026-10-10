@@ -11,6 +11,7 @@ import {
   storageObject,
 } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
+import { InstructorTranslationsSync } from './instructor-translations.sync';
 import type { SyncInstructorRow } from './instructor-sync.types';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 
@@ -34,6 +35,7 @@ function setup(instructor: Partial<SyncInstructorRow> = {}) {
         return Promise.resolve();
       },
     }),
+    new InstructorTranslationsSync(gateway),
   );
   const setInstructor = (overrides: Partial<SyncInstructorRow>) =>
     repo.snapshots.set(

@@ -72,7 +72,7 @@ export class AdminService {
     private readonly instructors: InstructorsService,
     private readonly audit: AuditService,
     /**
-     * T8.1 — transactional email on approve / reject / deactivate / reactivate.
+     * Transactional email on approve / reject / deactivate / reactivate.
      * Sent in background mode: it resolves (never rejects) to a `SendOutcome`
      * and a failure never rolls back the admin transition or bubbles to the client.
      */
@@ -232,7 +232,7 @@ export class AdminService {
       metadata: { from: current.is_active, to: isActive },
     });
 
-    // T8.1 — notify only when the flag actually flips.
+    // Notify only when the flag actually flips.
     if (!isActive && current.is_active) {
       this.notifyInstructor(updated, 'deactivated', {});
     } else if (isActive && !current.is_active) {

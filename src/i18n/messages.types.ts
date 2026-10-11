@@ -26,11 +26,12 @@ export interface MessageCatalog {
   /** Empty-state copy for lists/sections. */
   emptyState: EmptyStateMessages;
   /**
-   * Transactional email copy, one block per admin action. Consumed by the
-   * Notifications module's template renderer (T8.2). Keep field names in sync
-   * with `src/mailer` `NotificationType` ('approved' | 'rejected' | 'deactivated').
+   * Transactional email copy (`email.*`), one block per `EmailTemplate` plus
+   * the shared layout strings. Consumed by the mailer's template registry
+   * (`src/mailer/templates`). `{token}` placeholders are filled from the
+   * template's vars.
    */
-  notification: NotificationMessages;
+  email: EmailMessages;
 }
 
 export interface CommonMessages {
@@ -131,26 +132,59 @@ export interface EmptyStateMessages {
   noResults: string;
 }
 
-export interface NotificationMessages {
-  approved: NotificationCopy;
-  rejected: NotificationCopy;
-  deactivated: NotificationCopy;
+export interface EmailMessages {
+  layout: EmailLayoutCopy;
+  approved: EmailButtonCopy;
+  rejected: EmailRejectedCopy;
+  deactivated: EmailCopy;
+  reactivated: EmailButtonCopy;
+  auth: {
+    confirmSignup: EmailButtonCopy;
+    recovery: EmailButtonCopy;
+    magicLink: EmailButtonCopy;
+    invite: EmailButtonCopy;
+    emailChange: EmailButtonCopy;
+    reauthentication: EmailCopy;
+    passwordChanged: EmailCopy;
+  };
+  invite: {
+    season: EmailButtonCopy;
+    reminder: EmailButtonCopy;
+  };
+  admin: {
+    instructorPending: EmailButtonCopy;
+  };
 }
 
-/**
- * Copy for a single transactional email. Field names mirror the existing
- * built-in renderer in `src/mailer/default-notification-renderer.ts` so the
- * Notifications module (T8.2) can read these catalogs without reshaping copy.
- */
-export interface NotificationCopy {
-  subject: string;
+/** Strings shared by every email: greeting, sign-off, footer, link fallbacks. */
+export interface EmailLayoutCopy {
+  /** Uses `{name}`. */
   greeting: string;
-  body: string;
-  /** Label preceding a rejection reason (rejected only). */
+  greetingNoName: string;
+  signoffLead: string;
+  signoffTeam: string;
+  buttonFallback: string;
+  codeLabel: string;
+  footerClub: string;
+  footerQuestions: string;
+}
+
+/** Copy for one email: subject, inbox preview line, heading, body, fine print. */
+export interface EmailCopy {
+  subject: string;
+  preheader: string;
+  heading: string;
+  paragraphs: string[];
+  finePrint: string;
+}
+
+export interface EmailButtonCopy extends EmailCopy {
+  button: string;
+}
+
+export interface EmailRejectedCopy extends EmailCopy {
   reasonLabel: string;
-  /** Label preceding the portal URL (approved only). */
-  linkLabel: string;
-  signoff: string;
+  closing: string;
 }
 
 /** Languages shipped in v1. Mirrors the instructor profile `preferred_language`. */

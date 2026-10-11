@@ -17,11 +17,9 @@ import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instr
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
-import type {
-  InstructorNotificationContext,
-  NotificationType,
-} from '../mailer/mailer.types';
+import type { EmailTemplateVars } from '../mailer/mailer.types';
 import { AdminRepository } from './admin.repository';
 import {
   AdminInstructorRecord,
@@ -74,36 +72,42 @@ export class AdminService {
     private readonly instructors: InstructorsService,
     private readonly audit: AuditService,
     /**
-     * T8.1 — transactional email on approve / reject / deactivate. The mailer
-     * is fire-and-forget: it resolves (never rejects) to a `SendOutcome` and a
-     * failure never rolls back the admin transition or bubbles to the client.
+     * T8.1 — transactional email on approve / reject / deactivate / reactivate.
+     * Sent in background mode: it resolves (never rejects) to a `SendOutcome`
+     * and a failure never rolls back the admin transition or bubbles to the client.
      */
     private readonly mailer: MailerService,
     @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
   ) {}
 
   /**
-   * Fires an instructor notification without letting a mailer failure surface
-   * to the caller. The mailer already retries + audits `notification.failure`;
-   * this wrapper adds the fire-and-forget guarantee at the call site.
+   * Fires an instructor status email in background mode without letting a
+   * mailer failure surface to the caller. The mailer already retries, logs to
+   * `email_log` and audits `notification.failure`.
    */
-  private notifyInstructor(
+  private notifyInstructor<
+    T extends 'approved' | 'rejected' | 'deactivated' | 'reactivated',
+  >(
     row: AdminInstructorRow,
-    type: NotificationType,
-    extra: Partial<InstructorNotificationContext> = {},
+    template: T,
+    vars: Omit<EmailTemplateVars[T], 'displayName'>,
   ): void {
     void this.mailer
-      .sendInstructorNotification({
+      .send({
+        template,
         to: row.email,
-        type,
-        language: row.preferred_language,
-        displayName: row.display_name_en,
+        language: resolveEmailLanguage(row.preferred_language),
+        vars: {
+          ...vars,
+          displayName: row.display_name_en,
+        } as EmailTemplateVars[T],
+        mode: 'background',
         instructorId: row.id,
-        ...extra,
+        authUserId: row.auth_user_id,
       })
       .catch(() => {
-        // MailerService is contracted never to reject, but be defensive so a
-        // regression there can never break an admin action.
+        // MailerService is contracted never to reject in background mode, but
+        // be defensive so a regression there can never break an admin action.
       });
   }
 
@@ -185,7 +189,13 @@ export class AdminService {
 
     // T8.1 — fire-and-forget notification (approved / rejected). Failures are
     // audited by the mailer and MUST NOT roll back the transition.
-    this.notifyInstructor(updated, status, { reason: reason ?? null });
+    if (status === 'approved') {
+      this.notifyInstructor(updated, 'approved', {
+        loginUrl: this.mailer.portalLink('/login'),
+      });
+    } else {
+      this.notifyInstructor(updated, 'rejected', { reason: reason ?? null });
+    }
 
     return this.toRecord(updated);
   }
@@ -222,10 +232,13 @@ export class AdminService {
       metadata: { from: current.is_active, to: isActive },
     });
 
-    // T8.1 — notify only on deactivation. Reactivation is a silent admin
-    // correction (the instructor may not know they were ever deactivated).
+    // T8.1 — notify only when the flag actually flips.
     if (!isActive && current.is_active) {
-      this.notifyInstructor(updated, 'deactivated');
+      this.notifyInstructor(updated, 'deactivated', {});
+    } else if (isActive && !current.is_active) {
+      this.notifyInstructor(updated, 'reactivated', {
+        loginUrl: this.mailer.portalLink('/login'),
+      });
     }
 
     return this.toRecord(updated);

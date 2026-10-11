@@ -24,10 +24,10 @@ warning and no-ops (no crash, useful in dev/CI). They are NOT in
 `config/env.validation.ts` for that reason. **Add these to `.env` / deployment
 secrets (and `.env.example`) when wiring Resend for real:**
 
-| Var | Required for sending | Example | Notes |
-|---|---|---|---|
-| `RESEND_API_KEY` | yes | `re_xxxxxxxx` | Resend API secret. Server-only. |
-| `MAIL_FROM` | yes | `Snow School <noreply@yourdomain.com>` | Verified sending domain (SPF/DKIM/DMARC). |
+| Var              | Required for sending | Example                                | Notes                                     |
+| ---------------- | -------------------- | -------------------------------------- | ----------------------------------------- |
+| `RESEND_API_KEY` | yes                  | `re_xxxxxxxx`                          | Resend API secret. Server-only.           |
+| `MAIL_FROM`      | yes                  | `Snow School <noreply@yourdomain.com>` | Verified sending domain (SPF/DKIM/DMARC). |
 
 Until both are set, `ResendEmailSender.isConfigured()` returns `false` and
 `MailerService` returns the `skipped` outcome instead of sending.

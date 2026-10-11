@@ -126,6 +126,28 @@ describe('MailerService', () => {
     });
   });
 
+  it('sends the same idempotency key on every attempt, and none when unset', async () => {
+    const { client } = makeSupabase();
+    const send = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValue({ id: 'msg-3' });
+    const mailer = service({ isConfigured: () => true, send }, client);
+
+    await mailer.send(request({ idempotencyKey: 'invite-1-sent-x' }));
+    await mailer.send(request());
+
+    const messages = (send.mock.calls as [Record<string, unknown>][]).map(
+      ([m]) => m,
+    );
+    expect(messages.map((m) => m.idempotencyKey)).toEqual([
+      'invite-1-sent-x',
+      'invite-1-sent-x',
+      undefined,
+    ]);
+    expect(messages[2]).not.toHaveProperty('idempotencyKey');
+  });
+
   it('background: after exhausting retries resolves failed, audits and logs', async () => {
     const { client, inserts } = makeSupabase();
     const send = jest.fn().mockRejectedValue(new Error('hard down'));

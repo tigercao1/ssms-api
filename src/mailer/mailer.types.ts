@@ -81,6 +81,8 @@ export interface SendEmailRequest<T extends EmailTemplate = EmailTemplate> {
   authUserId?: string | null;
   /** Extra non-secret context stored on the `email_log` row. */
   metadata?: Record<string, unknown>;
+  /** Provider idempotency key: repeats of the same key within 24 h send once. */
+  idempotencyKey?: string;
 }
 
 /** Result of a send (for callers / tests / observability). */
@@ -105,7 +107,9 @@ export interface EmailMessage {
   html: string;
   /** Plain-text alternative body. */
   text: string;
+  /** Sent as the provider's `Idempotency-Key` header when set. */
+  idempotencyKey?: string;
 }
 
 /** A rendered email before it is addressed. */
-export type RenderedEmail = Omit<EmailMessage, 'to'>;
+export type RenderedEmail = Omit<EmailMessage, 'to' | 'idempotencyKey'>;

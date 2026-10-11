@@ -16,6 +16,7 @@ import { PublicApiModule } from './public-api/public-api.module';
 import { MailerModule } from './mailer/mailer.module';
 import { ShopifySyncModule } from './shopify-sync/shopify-sync.module';
 import { PublicPagesModule } from './public-pages/public-pages.module';
+import { GoogleModule } from './google/google.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { PublicPagesModule } from './public-pages/public-pages.module';
     MailerModule,
     ShopifySyncModule,
     PublicPagesModule,
+    GoogleModule,
   ],
   controllers: [AppController],
   providers: [AppService],

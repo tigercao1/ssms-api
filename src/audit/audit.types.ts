@@ -34,6 +34,10 @@ export const AUDIT_ACTIONS = {
   pageUnpublish: 'page.unpublish',
   pageDelete: 'page.delete',
   pageStorageInconsistent: 'page.storage_inconsistent',
+  googleConnect: 'google.connect',
+  googleConnectRejected: 'google.connect_rejected',
+  googleDisconnect: 'google.disconnect',
+  googleTokenInvalid: 'google.token_invalid',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -61,6 +65,7 @@ export interface AuditEntry {
     | 'api_key'
     | 'reference'
     | 'public_page'
+    | 'google_connection'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

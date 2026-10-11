@@ -152,6 +152,14 @@ describe('Activation HTTP', () => {
       expect(res.body).toEqual({ email: 'jane@example.test' });
     });
 
+    it('404 without a token when the account email changed after the invite', async () => {
+      auth.findEmail.mockResolvedValueOnce('new-address@example.test');
+      const res = await redeem(TOKEN).expect(404);
+      expect(res.body).not.toHaveProperty('email');
+      expect(res.body).not.toHaveProperty('tokenHash');
+      expect(auth.magicLinkTokenHash).not.toHaveBeenCalled();
+    });
+
     it('404 for an unknown token', async () => {
       const res = await redeem('d'.repeat(43)).expect(404);
       expect(res.body).not.toHaveProperty('email');

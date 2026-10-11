@@ -34,9 +34,10 @@ export class ActivationService {
   ) {}
 
   /**
-   * Unknown token → 404. Expired → 410 with `{ email }`. Otherwise returns a
-   * one-time magic-link token hash for the invited user and stamps
-   * `redeemed_at` the first time.
+   * Unknown token → 404. Expired → 410 with `{ email }`. An invite whose auth
+   * user's email has changed since it was issued is treated as unknown.
+   * Otherwise returns a one-time magic-link token hash for the invite email
+   * and stamps `redeemed_at` the first time.
    */
   async redeem(token: string): Promise<RedeemedInvite> {
     const invite = TOKEN_SHAPE.test(token)
@@ -49,15 +50,21 @@ export class ActivationService {
     if (isInviteExpired(invite.expires_at, now)) {
       throw new HttpException({ email: invite.email }, HttpStatus.GONE);
     }
-    const email = await this.auth.findEmail(invite.auth_user_id);
-    if (!email) {
+    const currentEmail = await this.auth.findEmail(invite.auth_user_id);
+    if (!currentEmail) {
       throw new NotFoundException('Invite not found');
     }
-    const tokenHash = await this.auth.magicLinkTokenHash(email);
+    if (normalizeEmail(currentEmail) !== invite.email) {
+      this.logger.warn(
+        `Invite ${invite.id} not redeemed: the auth user's email no longer matches the invite`,
+      );
+      throw new NotFoundException('Invite not found');
+    }
+    const tokenHash = await this.auth.magicLinkTokenHash(invite.email);
     if (invite.redeemed_at === null) {
       await this.invites.markRedeemed(invite.id, now);
     }
-    return { email, tokenHash };
+    return { email: invite.email, tokenHash };
   }
 
   /**

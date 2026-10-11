@@ -1,6 +1,7 @@
 import {
   HttpException,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import type { InviteRecipient, InviteRow } from './activation.types';
@@ -69,19 +70,38 @@ describe('normalizeEmail', () => {
 });
 
 describe('ActivationService.redeem', () => {
-  it('returns the current email and a magic-link token hash, stamping redeemed_at once', async () => {
+  it('returns the invite email and a magic-link token hash, stamping redeemed_at once', async () => {
     const { service, invites, auth } = setup();
     invites.findByTokenHash.mockResolvedValue(row());
     await expect(service.redeem(TOKEN)).resolves.toEqual({
-      email: 'Jane@Example.test',
+      email: 'jane@example.test',
       tokenHash: 'hashed-otp',
     });
     expect(invites.findByTokenHash).toHaveBeenCalledWith(
       hashInviteToken(TOKEN),
     );
     expect(auth.findEmail).toHaveBeenCalledWith('auth-1');
-    expect(auth.magicLinkTokenHash).toHaveBeenCalledWith('Jane@Example.test');
+    expect(auth.magicLinkTokenHash).toHaveBeenCalledWith('jane@example.test');
     expect(invites.markRedeemed).toHaveBeenCalledWith('inv-1', NOW);
+  });
+
+  it('404s without issuing a token when the auth email no longer matches the invite', async () => {
+    const { service, invites, auth } = setup();
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    invites.findByTokenHash.mockResolvedValue(row());
+    auth.findEmail.mockResolvedValue(' Someone.Else@Example.test ');
+    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(auth.magicLinkTokenHash).not.toHaveBeenCalled();
+    expect(invites.markRedeemed).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [message] = warn.mock.calls[0] as [string];
+    expect(message).toContain('inv-1');
+    expect(message).not.toMatch(/example\.test/i);
+    warn.mockRestore();
   });
 
   it('does not touch redeemed_at on later uses', async () => {

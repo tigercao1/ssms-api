@@ -1,4 +1,10 @@
-import { clientIp, emailTracker } from './activation-throttler.guard';
+import { Reflector } from '@nestjs/core';
+import { ThrottlerStorageService } from '@nestjs/throttler';
+import {
+  ActivationThrottlerGuard,
+  clientIp,
+  emailTracker,
+} from './activation-throttler.guard';
 
 describe('activation throttler trackers', () => {
   it('prefers the Fly-Client-IP header', () => {
@@ -23,5 +29,16 @@ describe('activation throttler trackers', () => {
       'ip:10.0.0.1',
     );
     expect(emailTracker({ ip: '10.0.0.1' })).toBe('ip:10.0.0.1');
+  });
+});
+
+describe('ActivationThrottlerGuard', () => {
+  it('clears its own storage timers on shutdown', () => {
+    const spy = jest.spyOn(
+      ThrottlerStorageService.prototype,
+      'onApplicationShutdown',
+    );
+    new ActivationThrottlerGuard(new Reflector()).onApplicationShutdown();
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { ThrottlerModule } from '@nestjs/throttler';
 import type { Request } from 'express';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -90,6 +91,7 @@ describe('Activation HTTP', () => {
       imports: [
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
         FakeDatabaseModule,
+        ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
         ActivationModule,
       ],
     })

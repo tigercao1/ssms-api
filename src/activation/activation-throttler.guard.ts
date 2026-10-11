@@ -1,5 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import {
+  type CanActivate,
+  type ExecutionContext,
+  Injectable,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import {
+  ThrottlerGuard,
+  type ThrottlerModuleOptions,
+  ThrottlerStorageService,
+} from '@nestjs/throttler';
 
 export const IP_THROTTLER = 'ip';
 export const EMAIL_THROTTLER = 'email';
@@ -27,10 +37,48 @@ export function emailTracker(req: TrackedRequest): string {
     : `ip:${clientIp(req)}`;
 }
 
-/** Throttler guard keyed on the real client IP behind the Fly proxy. */
-@Injectable()
-export class ActivationThrottlerGuard extends ThrottlerGuard {
+/** 10/min per IP by default (resend narrows it to 3/hour) and 3/hour per email. */
+export const ACTIVATION_THROTTLE_OPTIONS: ThrottlerModuleOptions = {
+  throttlers: [
+    { name: IP_THROTTLER, ttl: MINUTE_MS, limit: 10 },
+    { name: EMAIL_THROTTLER, ttl: HOUR_MS, limit: 3, getTracker: emailTracker },
+  ],
+};
+
+class FlyClientIpThrottlerGuard extends ThrottlerGuard {
   protected getTracker(req: Record<string, any>): Promise<string> {
     return Promise.resolve(clientIp(req as TrackedRequest));
+  }
+}
+
+/**
+ * Throttler guard keyed on the real client IP behind the Fly proxy. It owns
+ * its options and storage, so it does not depend on (or clash with) any
+ * app-wide `ThrottlerModule.forRoot`.
+ */
+@Injectable()
+export class ActivationThrottlerGuard
+  implements CanActivate, OnApplicationShutdown
+{
+  private readonly storage = new ThrottlerStorageService();
+  private readonly inner: FlyClientIpThrottlerGuard;
+  private readonly ready: Promise<void>;
+
+  constructor(reflector: Reflector) {
+    this.inner = new FlyClientIpThrottlerGuard(
+      ACTIVATION_THROTTLE_OPTIONS,
+      this.storage,
+      reflector,
+    );
+    this.ready = this.inner.onModuleInit();
+  }
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    await this.ready;
+    return this.inner.canActivate(context);
+  }
+
+  onApplicationShutdown(): void {
+    this.storage.onApplicationShutdown();
   }
 }

@@ -52,15 +52,15 @@ export class HookSignatureVerifier {
       throw new ServiceUnavailableException(HOOK_NOT_CONFIGURED);
     }
     const signatureHeaders = pickSignatureHeaders(headers);
+    let reason = '';
     for (const webhook of this.webhooks) {
       try {
         return webhook.verify(rawBody, signatureHeaders);
       } catch (err) {
-        this.logger.debug(
-          `Hook signature rejected: ${(err as Error).message ?? err}`,
-        );
+        reason = (err as Error).message;
       }
     }
+    this.logger.warn(`Hook signature rejected: ${reason}`);
     throw new UnauthorizedException(HOOK_SIGNATURE_INVALID);
   }
 }

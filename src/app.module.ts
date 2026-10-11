@@ -17,6 +17,7 @@ import { MailerModule } from './mailer/mailer.module';
 import { ShopifySyncModule } from './shopify-sync/shopify-sync.module';
 import { PublicPagesModule } from './public-pages/public-pages.module';
 import { GoogleModule } from './google/google.module';
+import { ActivationModule } from './activation/activation.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { GoogleModule } from './google/google.module';
     ShopifySyncModule,
     PublicPagesModule,
     GoogleModule,
+    ActivationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

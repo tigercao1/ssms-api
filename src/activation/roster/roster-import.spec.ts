@@ -70,6 +70,7 @@ function invite(overrides: Partial<InviteRecipient> = {}): InviteRecipient {
 interface Harness {
   deps: RosterDeps;
   reader: jest.Mocked<RosterReader>;
+  readUsers: jest.Mock;
   writer: jest.Mocked<RosterWriter>;
   invites: jest.Mocked<
     Pick<
@@ -88,8 +89,9 @@ function harness(
   users: Map<string, ExistingAuthUser> = new Map(),
   env: Record<string, string | undefined> = { SSMS_ENV: 'dev' },
 ): Harness {
+  const readUsers = jest.fn().mockResolvedValue(users);
   const reader: jest.Mocked<RosterReader> = {
-    authUsersByEmail: jest.fn().mockResolvedValue(users),
+    authUsersByEmail: readUsers,
     teachingLocationIds: jest.fn((keys: string[]) =>
       Promise.resolve(
         new Map([...LOCATION_IDS].filter(([k]) => keys.includes(k))),
@@ -140,6 +142,7 @@ function harness(
   return {
     deps,
     reader,
+    readUsers,
     writer,
     invites,
     dispatch,
@@ -302,7 +305,7 @@ describe('runRosterCli --dry-run', () => {
     await expect(
       runRosterCli(h.deps, ['--csv', 'roster.csv', '--report', 'report.json']),
     ).rejects.toThrow(/inside the repository/);
-    expect(h.reader.authUsersByEmail).not.toHaveBeenCalled();
+    expect(h.readUsers).not.toHaveBeenCalled();
   });
 
   it('works without a report file', async () => {
@@ -416,11 +419,11 @@ describe('runRosterCli --apply', () => {
     expect(
       report.rows.find((r) => r.email === 'casey@example.test')?.status,
     ).toBe('resumed');
-    expect(h.writer.setProfileRelations).toHaveBeenCalledWith(
+    expect(h.writer.setProfileRelations.mock.calls).toContainEqual([
       'ins-for-auth-casey',
       [{ org: 'casi', track: 'park', level: 1 }],
       [],
-    );
+    ]);
   });
 
   it('records a failing row and carries on', async () => {
@@ -461,7 +464,7 @@ describe('runRosterCli --apply', () => {
     await expect(
       runRosterCli(h.deps, ['--apply', '--csv', 'r.csv']),
     ).rejects.toThrow(/SSMS_CONFIRM_PROD/);
-    expect(h.reader.authUsersByEmail).not.toHaveBeenCalled();
+    expect(h.readUsers).not.toHaveBeenCalled();
   });
 });
 

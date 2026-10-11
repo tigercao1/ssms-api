@@ -111,11 +111,11 @@ export class SupabaseRosterWriter implements RosterWriter {
       .from('instructors')
       .select('id')
       .eq('auth_user_id', authUserId)
-      .maybeSingle();
+      .maybeSingle<{ id: string }>();
     if (error) {
       throw fail('load instructor', error.message);
     }
-    return (data as { id: string } | null)?.id ?? null;
+    return data?.id ?? null;
   }
 
   async insertInstructor(instructor: NewRosterInstructor): Promise<string> {
@@ -131,7 +131,7 @@ export class SupabaseRosterWriter implements RosterWriter {
         is_active: true,
       })
       .select('id')
-      .single();
+      .single<{ id: string }>();
     if (error?.code === PG_UNIQUE_VIOLATION) {
       const existing = await this.findInstructorId(instructor.authUserId);
       if (existing) {
@@ -141,7 +141,7 @@ export class SupabaseRosterWriter implements RosterWriter {
     if (error || !data) {
       throw fail('create instructor', error?.message);
     }
-    return (data as { id: string }).id;
+    return data.id;
   }
 
   async setProfileRelations(

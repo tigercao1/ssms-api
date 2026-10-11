@@ -1,6 +1,9 @@
-import { HttpException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  HttpException,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import type { InviteRecipient, InviteRow } from './activation.types';
-import type { ActivationAuth } from './activation-auth';
 import { ActivationService, normalizeEmail } from './activation.service';
 import type { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
@@ -43,7 +46,7 @@ function setup() {
   const dispatcher = { dispatch: jest.fn().mockResolvedValue('sent') };
   const service = new ActivationService(
     invites as unknown as InvitesRepository,
-    auth as unknown as ActivationAuth,
+    auth,
     dispatcher as unknown as InviteDispatcher,
   );
   return { service, invites, auth, dispatcher };
@@ -71,7 +74,9 @@ describe('ActivationService.redeem', () => {
       email: 'Jane@Example.test',
       tokenHash: 'hashed-otp',
     });
-    expect(invites.findByTokenHash).toHaveBeenCalledWith(hashInviteToken(TOKEN));
+    expect(invites.findByTokenHash).toHaveBeenCalledWith(
+      hashInviteToken(TOKEN),
+    );
     expect(auth.findEmail).toHaveBeenCalledWith('auth-1');
     expect(auth.magicLinkTokenHash).toHaveBeenCalledWith('Jane@Example.test');
     expect(invites.markRedeemed).toHaveBeenCalledWith('inv-1', NOW);
@@ -79,27 +84,39 @@ describe('ActivationService.redeem', () => {
 
   it('does not touch redeemed_at on later uses', async () => {
     const { service, invites } = setup();
-    invites.findByTokenHash.mockResolvedValue(row({ redeemed_at: '2026-10-05T00:00:00Z' }));
-    await expect(service.redeem(TOKEN)).resolves.toMatchObject({ tokenHash: 'hashed-otp' });
+    invites.findByTokenHash.mockResolvedValue(
+      row({ redeemed_at: '2026-10-05T00:00:00Z' }),
+    );
+    await expect(service.redeem(TOKEN)).resolves.toMatchObject({
+      tokenHash: 'hashed-otp',
+    });
     expect(invites.markRedeemed).not.toHaveBeenCalled();
   });
 
   it('404s an unknown token', async () => {
     const { service, invites } = setup();
     invites.findByTokenHash.mockResolvedValue(null);
-    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it('404s a malformed token without a lookup', async () => {
     const { service, invites } = setup();
-    await expect(service.redeem('short')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.redeem('short')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect(invites.findByTokenHash).not.toHaveBeenCalled();
   });
 
   it('410s an expired invite with its email', async () => {
     const { service, invites, auth } = setup();
-    invites.findByTokenHash.mockResolvedValue(row({ expires_at: '2026-10-11T03:59:59Z' }));
-    const err = (await service.redeem(TOKEN).catch((e: unknown) => e)) as HttpException;
+    invites.findByTokenHash.mockResolvedValue(
+      row({ expires_at: '2026-10-11T03:59:59Z' }),
+    );
+    const err = (await service
+      .redeem(TOKEN)
+      .catch((e: unknown) => e)) as HttpException;
     expect(err).toBeInstanceOf(HttpException);
     expect(err.getStatus()).toBe(410);
     expect(err.getResponse()).toEqual({ email: 'jane@example.test' });
@@ -111,15 +128,21 @@ describe('ActivationService.redeem', () => {
     const { service, invites, auth } = setup();
     invites.findByTokenHash.mockResolvedValue(row());
     auth.findEmail.mockResolvedValue(null);
-    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect(auth.magicLinkTokenHash).not.toHaveBeenCalled();
   });
 
   it('does not stamp redeemed_at when link generation fails', async () => {
     const { service, invites, auth } = setup();
     invites.findByTokenHash.mockResolvedValue(row());
-    auth.magicLinkTokenHash.mockRejectedValue(new InternalServerErrorException('x'));
-    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(InternalServerErrorException);
+    auth.magicLinkTokenHash.mockRejectedValue(
+      new InternalServerErrorException('x'),
+    );
+    await expect(service.redeem(TOKEN)).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
     expect(invites.markRedeemed).not.toHaveBeenCalled();
   });
 });
@@ -127,11 +150,19 @@ describe('ActivationService.redeem', () => {
 describe('ActivationService.resend', () => {
   it('re-issues an expired invite', async () => {
     const { service, invites, dispatcher } = setup();
-    const invite = row({ expires_at: '2026-10-01T00:00:00Z', activated_at: '2026-10-03T00:00:00Z' });
+    const invite = row({
+      expires_at: '2026-10-01T00:00:00Z',
+      activated_at: '2026-10-03T00:00:00Z',
+    });
     invites.findLatestByEmail.mockResolvedValue(invite);
     await service.resend(' Jane@Example.TEST ');
     expect(invites.findLatestByEmail).toHaveBeenCalledWith('jane@example.test');
-    expect(dispatcher.dispatch).toHaveBeenCalledWith(invite, 'invite.season', 'background', NOW);
+    expect(dispatcher.dispatch).toHaveBeenCalledWith(
+      invite,
+      'invite.season',
+      'background',
+      NOW,
+    );
   });
 
   it('re-issues a valid invite whose account is not activated yet', async () => {
@@ -144,7 +175,10 @@ describe('ActivationService.resend', () => {
   it.each([
     ['no invite', null],
     ['never sent', row({ sent_at: null, token_hash: null, expires_at: null })],
-    ['activated and still valid', row({ activated_at: '2026-10-03T00:00:00Z' })],
+    [
+      'activated and still valid',
+      row({ activated_at: '2026-10-03T00:00:00Z' }),
+    ],
   ])('does nothing when %s', async (_label, invite) => {
     const { service, invites, dispatcher } = setup();
     invites.findLatestByEmail.mockResolvedValue(invite);

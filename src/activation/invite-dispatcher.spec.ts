@@ -1,4 +1,5 @@
-import { InviteDispatcher, type InviteMailer } from './invite-dispatcher';
+import type { SendEmailRequest, SendOutcome } from '../mailer/mailer.types';
+import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
 import type { InviteRecipient } from './activation.types';
 import type { InvitesRepository } from './invites.repository';
@@ -29,25 +30,35 @@ describe('InviteDispatcher', () => {
   function setup() {
     const invites = { setToken: jest.fn().mockResolvedValue(undefined) };
     const mailer = {
-      send: jest.fn().mockResolvedValue('sent'),
+      send: jest
+        .fn<Promise<SendOutcome>, [SendEmailRequest<'invite.season'>]>()
+        .mockResolvedValue('sent'),
       portalLink: jest.fn((p: string) => `https://portal.test${p}`),
     };
     const dispatcher = new InviteDispatcher(
       invites as unknown as InvitesRepository,
-      mailer as unknown as InviteMailer,
+      mailer,
     );
     return { invites, mailer, dispatcher };
   }
 
   it('stores only the hash of a fresh token and emails the link to it', async () => {
     const { invites, mailer, dispatcher } = setup();
-    await expect(dispatcher.dispatch(invite(), 'invite.season', 'sync', NOW)).resolves.toBe('sent');
+    await expect(
+      dispatcher.dispatch(invite(), 'invite.season', 'sync', NOW),
+    ).resolves.toBe('sent');
 
-    const [id, tokenHash, expiresAt] = invites.setToken.mock.calls[0] as [string, string, Date];
+    const [id, tokenHash, expiresAt] = invites.setToken.mock.calls[0] as [
+      string,
+      string,
+      Date,
+    ];
     expect(id).toBe('inv-1');
     expect(expiresAt.toISOString()).toBe('2026-11-10T04:00:00.000Z');
     const request = mailer.send.mock.calls[0][0];
-    const token = new URL(request.vars.activateUrl).searchParams.get('t') as string;
+    const token = new URL(request.vars.activateUrl).searchParams.get(
+      't',
+    ) as string;
     expect(hashInviteToken(token)).toBe(tokenHash);
     expect(request).toEqual({
       template: 'invite.season',
@@ -85,7 +96,9 @@ describe('InviteDispatcher', () => {
   it('does not email when the token cannot be stored', async () => {
     const { invites, mailer, dispatcher } = setup();
     invites.setToken.mockRejectedValue(new Error('db'));
-    await expect(dispatcher.dispatch(invite(), 'invite.season', 'sync')).rejects.toThrow('db');
+    await expect(
+      dispatcher.dispatch(invite(), 'invite.season', 'sync'),
+    ).rejects.toThrow('db');
     expect(mailer.send).not.toHaveBeenCalled();
   });
 });

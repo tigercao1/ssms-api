@@ -95,6 +95,7 @@ export const en: MessageCatalog = {
       signoffTeam: 'The Serendipity Snow Club team',
       buttonFallback:
         "If the button doesn't work, copy and paste this link into your browser:",
+      buttonLine: '{label}: {url}',
       codeLabel: 'Or enter this code:',
       footerClub: 'Serendipity Snow Club',
       footerQuestions:

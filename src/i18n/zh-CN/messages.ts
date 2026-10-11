@@ -97,13 +97,14 @@ export const zhCN: MessageCatalog = {
       signoffLead: '祝好，',
       signoffTeam: 'Serendipity Snow Club 团队',
       buttonFallback: '如果按钮无法点击，请将下面的链接复制到浏览器中打开：',
+      buttonLine: '{label}：{url}',
       codeLabel: '或输入以下验证码：',
       footerClub: 'Serendipity Snow Club',
       footerQuestions:
         '有任何问题，直接回复这封邮件，或发送邮件至 info@ssnow.club',
     },
     approved: {
-      subject: '您的教练资料已通过审核，欢迎加入 Serendipity Snow Club',
+      subject: '您的教练资料已通过审核',
       preheader: '您的教练资料已通过审核。',
       heading: '资料审核已通过',
       paragraphs: [

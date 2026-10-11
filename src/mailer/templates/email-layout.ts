@@ -1,4 +1,8 @@
-import type { EmailLayoutCopy, SupportedLanguage } from '../../i18n';
+import {
+  interpolate,
+  type EmailLayoutCopy,
+  type SupportedLanguage,
+} from '../../i18n';
 import type { EmailBlocks } from './email-templates';
 
 /** One language block of an email, with that language's layout strings. */
@@ -208,7 +212,12 @@ function sectionText({ blocks, layout }: EmailSection): string {
   }
   parts.push(...blocks.paragraphs);
   if (blocks.button) {
-    parts.push(`${blocks.button.label}: ${blocks.button.url}`);
+    parts.push(
+      interpolate(layout.buttonLine, {
+        label: blocks.button.label,
+        url: blocks.button.url,
+      }),
+    );
   }
   if (blocks.code) {
     parts.push(

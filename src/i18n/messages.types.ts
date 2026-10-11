@@ -164,6 +164,8 @@ export interface EmailLayoutCopy {
   signoffLead: string;
   signoffTeam: string;
   buttonFallback: string;
+  /** Plain-text form of the button; uses `{label}` and `{url}`. */
+  buttonLine: string;
   codeLabel: string;
   footerClub: string;
   footerQuestions: string;

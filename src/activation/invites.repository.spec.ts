@@ -12,7 +12,9 @@ const RECORD = {
   token_hash: null,
   season: '2026/27',
   expires_at: null,
+  send_claimed_at: null,
   sent_at: null,
+  remind_claimed_at: null,
   reminded_at: null,
   redeemed_at: null,
   activated_at: null,
@@ -88,6 +90,7 @@ describe('SupabaseInvitesRepository', () => {
     expect(db.ops(0).slice(1)).toEqual([
       ['eq', ['season', '2026/27']],
       ['is', ['sent_at', null]],
+      ['is', ['send_claimed_at', null]],
       ['order', ['created_at', { ascending: true }]],
     ]);
     expect(db.ops(1)).toContainEqual(['eq', ['email', 'jane@example.test']]);
@@ -105,8 +108,99 @@ describe('SupabaseInvitesRepository', () => {
       ['lte', ['sent_at', '2026-10-04T04:00:00.000Z']],
       ['is', ['redeemed_at', null]],
       ['is', ['reminded_at', null]],
+      ['is', ['remind_claimed_at', null]],
       ['gt', ['expires_at', '2026-10-11T04:00:00.000Z']],
       ['order', ['created_at', { ascending: true }]],
+    ]);
+  });
+
+  it('claims only an unclaimed, undelivered invite and reports whether it won', async () => {
+    const { db, repo } = setup(
+      { data: [{ id: 'inv-1' }], error: null },
+      { data: [], error: null },
+      { data: null, error: null },
+    );
+    expect(await repo.claim('inv-1', 'send', NOW)).toBe(true);
+    expect(await repo.claim('inv-1', 'remind', NOW)).toBe(false);
+    expect(await repo.claim('inv-1', 'send', NOW)).toBe(false);
+    const at = NOW.toISOString();
+    expect(db.ops(0)).toEqual([
+      ['update', [{ send_claimed_at: at }]],
+      ['eq', ['id', 'inv-1']],
+      ['is', ['send_claimed_at', null]],
+      ['is', ['sent_at', null]],
+      ['select', ['id']],
+    ]);
+    expect(db.ops(1)).toEqual([
+      ['update', [{ remind_claimed_at: at }]],
+      ['eq', ['id', 'inv-1']],
+      ['is', ['remind_claimed_at', null]],
+      ['is', ['reminded_at', null]],
+      ['select', ['id']],
+    ]);
+  });
+
+  it('releases only its own claim on an undelivered invite', async () => {
+    const { db, repo } = setup();
+    await repo.releaseClaim('inv-1', 'send', NOW);
+    await repo.releaseClaim('inv-1', 'remind', NOW);
+    const at = NOW.toISOString();
+    expect(db.ops(0)).toEqual([
+      ['update', [{ send_claimed_at: null }]],
+      ['eq', ['id', 'inv-1']],
+      ['eq', ['send_claimed_at', at]],
+      ['is', ['sent_at', null]],
+    ]);
+    expect(db.ops(1)).toEqual([
+      ['update', [{ remind_claimed_at: null }]],
+      ['eq', ['id', 'inv-1']],
+      ['eq', ['remind_claimed_at', at]],
+      ['is', ['reminded_at', null]],
+    ]);
+  });
+
+  it('lists claimed but undelivered invite ids', async () => {
+    const { db, repo } = setup(
+      { data: [{ id: 'inv-1' }, { id: 'inv-2' }], error: null },
+      { data: null, error: null },
+    );
+    expect(await repo.listUnfinishedClaims('2026/27', 'send')).toEqual([
+      'inv-1',
+      'inv-2',
+    ]);
+    expect(await repo.listUnfinishedClaims('2026/27', 'remind')).toEqual([]);
+    expect(db.ops(0)).toEqual([
+      ['select', ['id']],
+      ['eq', ['season', '2026/27']],
+      ['not', ['send_claimed_at', 'is', null]],
+      ['is', ['sent_at', null]],
+      ['order', ['send_claimed_at', { ascending: true }]],
+    ]);
+    expect(db.ops(1)).toContainEqual([
+      'not',
+      ['remind_claimed_at', 'is', null],
+    ]);
+  });
+
+  it('releases undelivered claims older than the cutoff', async () => {
+    const { db, repo } = setup(
+      { data: [{ id: 'inv-3' }], error: null },
+      { data: null, error: null },
+    );
+    expect(await repo.releaseStaleClaims('2026/27', 'send', NOW)).toEqual([
+      'inv-3',
+    ]);
+    expect(await repo.releaseStaleClaims('2026/27', 'remind', NOW)).toEqual([]);
+    expect(db.ops(0)).toEqual([
+      ['update', [{ send_claimed_at: null }]],
+      ['eq', ['season', '2026/27']],
+      ['lt', ['send_claimed_at', NOW.toISOString()]],
+      ['is', ['sent_at', null]],
+      ['select', ['id']],
+    ]);
+    expect(db.ops(1)).toContainEqual([
+      'lt',
+      ['remind_claimed_at', NOW.toISOString()],
     ]);
   });
 
@@ -159,6 +253,20 @@ describe('SupabaseInvitesRepository', () => {
       (r: SupabaseInvitesRepository) => r.listDueForReminder('s', NOW),
     ],
     ['markSent', (r: SupabaseInvitesRepository) => r.markSent('i', NOW)],
+    ['claim', (r: SupabaseInvitesRepository) => r.claim('i', 'send', NOW)],
+    [
+      'releaseClaim',
+      (r: SupabaseInvitesRepository) => r.releaseClaim('i', 'send', NOW),
+    ],
+    [
+      'listUnfinishedClaims',
+      (r: SupabaseInvitesRepository) => r.listUnfinishedClaims('s', 'send'),
+    ],
+    [
+      'releaseStaleClaims',
+      (r: SupabaseInvitesRepository) =>
+        r.releaseStaleClaims('s', 'remind', NOW),
+    ],
     [
       'markRedeemed',
       (r: SupabaseInvitesRepository) => r.markRedeemed('i', NOW),

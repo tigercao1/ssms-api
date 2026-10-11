@@ -4,7 +4,7 @@ import { EmailDeliveryError } from '../../mailer/mailer.types';
 import type { InviteRecipient } from '../activation.types';
 import { normalizeEmail } from '../activation.service';
 import type { InviteDispatcher, InviteTemplate } from '../invite-dispatcher';
-import type { InvitesRepository } from '../invites.repository';
+import type { DeliveryKind, InvitesRepository } from '../invites.repository';
 import { parseRosterCsv, type RosterEntry } from './roster-csv';
 import type {
   ExistingAuthUser,
@@ -15,7 +15,12 @@ import type {
 export const DEFAULT_SEASON = '2026/27';
 export const SEND_INTERVAL_MS = 500;
 
-export type RosterMode = 'dry-run' | 'apply' | 'send' | 'remind';
+export type RosterMode =
+  | 'dry-run'
+  | 'apply'
+  | 'send'
+  | 'remind'
+  | 'release-stale-claims';
 
 export interface RosterOptions {
   mode: RosterMode;
@@ -23,12 +28,14 @@ export interface RosterOptions {
   season: string;
   only?: string;
   report?: string;
+  staleClaimMinutes?: number;
 }
 
 export type RowStatus =
   | 'create'
   | 'created'
   | 'resumed'
+  | 'repaired'
   | 'already_imported'
   | 'existing_user'
   | 'failed';
@@ -67,8 +74,25 @@ export interface DeliveryReport {
   env: string;
   season: string;
   generatedAt: string;
-  counts: { candidates: number; sent: number; failed: number };
+  counts: {
+    candidates: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    needsReview: number;
+  };
   failed: { email: string; error: string }[];
+  /** Invite ids claimed but never marked delivered; check Resend before releasing. */
+  needsReview: string[];
+}
+
+export interface ReleaseReport {
+  mode: 'release-stale-claims';
+  env: string;
+  season: string;
+  generatedAt: string;
+  claimedBefore: string;
+  released: Record<DeliveryKind, string[]>;
 }
 
 export interface RosterDeps {
@@ -95,7 +119,11 @@ export class RosterCommandError extends Error {
 export const USAGE =
   'Usage: import-season-roster --csv <path> [--dry-run | --apply] [--report <path>] [--season <label>]\n' +
   '       import-season-roster --send [--only <email>] [--report <path>] [--season <label>]\n' +
-  '       import-season-roster --remind [--report <path>] [--season <label>]';
+  '       import-season-roster --remind [--report <path>] [--season <label>]\n' +
+  '       import-season-roster --release-stale-claims <minutes> [--report <path>] [--season <label>]';
+
+const RELEASE_HINT =
+  'After checking Resend that these were not delivered, release claims older than N minutes with: import-season-roster --release-stale-claims <N> [--season <label>]';
 
 const MODE_FLAGS: Record<string, RosterMode> = {
   '--dry-run': 'dry-run',
@@ -103,7 +131,13 @@ const MODE_FLAGS: Record<string, RosterMode> = {
   '--send': 'send',
   '--remind': 'remind',
 };
-const VALUE_FLAGS = ['--csv', '--only', '--report', '--season'] as const;
+const VALUE_FLAGS = [
+  '--csv',
+  '--only',
+  '--report',
+  '--season',
+  '--release-stale-claims',
+] as const;
 
 /** Parses CLI flags; dry-run is the default mode. */
 export function parseRosterArgs(argv: string[]): RosterOptions {
@@ -123,6 +157,10 @@ export function parseRosterArgs(argv: string[]): RosterOptions {
     values[flag] = value;
     i++;
   }
+  const staleClaims = values['--release-stale-claims'];
+  if (staleClaims !== undefined) {
+    modes.add('release-stale-claims');
+  }
   if (modes.size > 1) {
     throw new RosterCommandError(`Pick one mode\n${USAGE}`);
   }
@@ -133,6 +171,11 @@ export function parseRosterArgs(argv: string[]): RosterOptions {
   if (values['--only'] !== undefined && mode !== 'send') {
     throw new RosterCommandError(`--only works with --send only\n${USAGE}`);
   }
+  if (staleClaims !== undefined && !/^[1-9][0-9]*$/.test(staleClaims)) {
+    throw new RosterCommandError(
+      `--release-stale-claims needs a whole number of minutes\n${USAGE}`,
+    );
+  }
   return {
     mode,
     csv: values['--csv'],
@@ -142,6 +185,8 @@ export function parseRosterArgs(argv: string[]): RosterOptions {
         ? undefined
         : normalizeEmail(values['--only']),
     report: values['--report'],
+    staleClaimMinutes:
+      staleClaims === undefined ? undefined : Number(staleClaims),
   };
 }
 
@@ -255,24 +300,29 @@ async function applyEntry(
   season: string,
 ): Promise<RowStatus> {
   const authUserId = user?.id ?? (await writer.createUser(entry.email, season));
-  let instructorId = await writer.findInstructorId(authUserId);
-  const createsInstructor = instructorId === null;
-  if (instructorId === null) {
-    instructorId = await writer.insertInstructor({
+  const existingInstructorId = await writer.findInstructorId(authUserId);
+  const instructorId =
+    existingInstructorId ??
+    (await writer.insertInstructor({
       authUserId,
       email: entry.email,
       displayNameEn: entry.displayNameEn,
       dateOfBirth: entry.dateOfBirth,
-    });
-    if (entry.certifications.length > 0 || entry.locationKeys.length > 0) {
-      await writer.setProfileRelations(
-        instructorId,
-        entry.certifications,
-        entry.locationKeys.map((k) => locationIds.get(k) as string),
-      );
-    }
+    }));
+  const hasRelations =
+    entry.certifications.length > 0 || entry.locationKeys.length > 0;
+  const writesRelations =
+    hasRelations &&
+    (existingInstructorId === null ||
+      !(await writer.hasProfileRelations(instructorId)));
+  if (writesRelations) {
+    await writer.setProfileRelations(
+      instructorId,
+      entry.certifications,
+      entry.locationKeys.map((k) => locationIds.get(k) as string),
+    );
   }
-  await writer.insertInvite({
+  const createdInvite = await writer.insertInvite({
     instructor_id: instructorId,
     auth_user_id: authUserId,
     email: entry.email,
@@ -281,7 +331,10 @@ async function applyEntry(
   if (!user) {
     return 'created';
   }
-  return createsInstructor ? 'resumed' : 'already_imported';
+  if (existingInstructorId === null) {
+    return 'resumed';
+  }
+  return writesRelations || createdInvite ? 'repaired' : 'already_imported';
 }
 
 function buildImportReport(
@@ -308,6 +361,7 @@ function buildImportReport(
       toCreate: count('create'),
       created: count('created'),
       resumed: count('resumed'),
+      repaired: count('repaired'),
       alreadyImported: count('already_imported'),
       existingUsers: count('existing_user'),
       failed: count('failed'),
@@ -383,7 +437,7 @@ function printImportReport(deps: RosterDeps, report: ImportReport): void {
 async function writeReport(
   deps: RosterDeps,
   options: RosterOptions,
-  report: ImportReport | DeliveryReport,
+  report: ImportReport | DeliveryReport | ReleaseReport,
 ): Promise<void> {
   if (!options.report) {
     return;
@@ -414,7 +468,9 @@ export async function runDryRun(
 /**
  * Creates the auth user, pending instructor, certifications, locations and an
  * unsent invite per new email. Users that exist and were not created by this
- * season's import are skipped untouched.
+ * season's import are skipped untouched. Users it did create are completed:
+ * a missing instructor or invite is added, and certifications and locations
+ * are written only when the instructor has none yet.
  */
 export async function runApply(
   deps: RosterDeps,
@@ -449,33 +505,119 @@ export async function runApply(
   return report;
 }
 
+const DELIVERED_LABEL: Record<DeliveryKind, string> = {
+  send: 'sent',
+  remind: 'reminded',
+};
+
+/** Resend `Idempotency-Key` for one claimed dispatch. */
+export function inviteIdempotencyKey(
+  inviteId: string,
+  kind: DeliveryKind,
+  claimedAt: Date,
+): string {
+  return `invite-${inviteId}-${kind === 'send' ? 'sent' : 'remind'}-${claimedAt.toISOString()}`;
+}
+
+function deliveryError(err: unknown): string {
+  return err instanceof EmailDeliveryError
+    ? `${err.outcome}: ${err.message}`
+    : errorMessage(err);
+}
+
+type DeliveryOutcome = 'sent' | 'failed' | 'skipped' | 'needs_review';
+
+async function deliverOne(
+  deps: RosterDeps,
+  invites: InvitesRepository,
+  dispatcher: InviteDispatcher,
+  invite: InviteRecipient,
+  kind: DeliveryKind,
+  template: InviteTemplate,
+  failed: DeliveryReport['failed'],
+): Promise<DeliveryOutcome> {
+  const claimedAt = deps.now();
+  try {
+    if (!(await invites.claim(invite.id, kind, claimedAt))) {
+      deps.log(`  skipped invite ${invite.id}: claimed by another run`);
+      return 'skipped';
+    }
+  } catch (err) {
+    const error = deliveryError(err);
+    failed.push({ email: invite.email, error });
+    deps.log(`  FAILED ${template} to ${invite.email}: ${error}`);
+    return 'failed';
+  }
+  try {
+    await dispatcher.dispatch(
+      invite,
+      template,
+      'sync',
+      claimedAt,
+      inviteIdempotencyKey(invite.id, kind, claimedAt),
+    );
+  } catch (err) {
+    const error = deliveryError(err);
+    failed.push({ email: invite.email, error });
+    deps.log(`  FAILED ${template} to ${invite.email}: ${error}`);
+    try {
+      await invites.releaseClaim(invite.id, kind, claimedAt);
+      return 'failed';
+    } catch (releaseErr) {
+      deps.log(
+        `  could not release the claim on invite ${invite.id}: ${errorMessage(releaseErr)}`,
+      );
+      return 'needs_review';
+    }
+  }
+  try {
+    if (kind === 'send') {
+      await invites.markSent(invite.id, claimedAt);
+    } else {
+      await invites.markReminded(invite.id, claimedAt);
+    }
+  } catch (err) {
+    deps.log(
+      `  sent ${template} to ${invite.email} but could not mark invite ${invite.id} ${DELIVERED_LABEL[kind]}: ${errorMessage(err)}`,
+    );
+    return 'needs_review';
+  }
+  deps.log(`  sent ${template} to ${invite.email}`);
+  return 'sent';
+}
+
 async function deliver(
   deps: RosterDeps,
   options: RosterOptions,
+  invites: InvitesRepository,
   candidates: InviteRecipient[],
+  kind: DeliveryKind,
   template: InviteTemplate,
-  mark: (id: string, at: Date) => Promise<void>,
 ): Promise<DeliveryReport> {
+  const needsReview = await invites.listUnfinishedClaims(options.season, kind);
   const dispatcher = deps.dispatcher();
   const failed: DeliveryReport['failed'] = [];
   let sent = 0;
+  let skipped = 0;
   for (const [i, invite] of candidates.entries()) {
     if (i > 0) {
       await deps.sleep(SEND_INTERVAL_MS);
     }
-    try {
-      const now = deps.now();
-      await dispatcher.dispatch(invite, template, 'sync', now);
-      await mark(invite.id, now);
+    const outcome = await deliverOne(
+      deps,
+      invites,
+      dispatcher,
+      invite,
+      kind,
+      template,
+      failed,
+    );
+    if (outcome === 'sent') {
       sent++;
-      deps.log(`  sent ${template} to ${invite.email}`);
-    } catch (err) {
-      const error =
-        err instanceof EmailDeliveryError
-          ? `${err.outcome}: ${err.message}`
-          : errorMessage(err);
-      failed.push({ email: invite.email, error });
-      deps.log(`  FAILED ${template} to ${invite.email}: ${error}`);
+    } else if (outcome === 'skipped') {
+      skipped++;
+    } else if (outcome === 'needs_review') {
+      needsReview.push(invite.id);
     }
   }
   const report: DeliveryReport = {
@@ -483,17 +625,30 @@ async function deliver(
     env: deps.env.SSMS_ENV ?? 'unknown',
     season: options.season,
     generatedAt: deps.now().toISOString(),
-    counts: { candidates: candidates.length, sent, failed: failed.length },
+    counts: {
+      candidates: candidates.length,
+      sent,
+      failed: failed.length,
+      skipped,
+      needsReview: needsReview.length,
+    },
     failed,
+    needsReview,
   };
   deps.log(
-    `Mode: ${report.mode} · candidates ${candidates.length} · sent ${sent} · failed ${failed.length}`,
+    `Mode: ${report.mode} · candidates ${candidates.length} · sent ${sent} · failed ${failed.length} · skipped ${skipped} · needs review ${needsReview.length}`,
   );
+  if (needsReview.length > 0) {
+    deps.log(
+      `Needs review: claimed but never marked ${DELIVERED_LABEL[kind]}, so not sent again: ${needsReview.join(', ')}`,
+    );
+    deps.log(RELEASE_HINT);
+  }
   await writeReport(deps, options, report);
   return report;
 }
 
-/** Emails `invite.season` to every unsent invite (or just `--only`), ≤ 2 per second. */
+/** Emails `invite.season` to every unsent, unclaimed invite (or just `--only`), ≤ 2 per second. */
 export async function runSend(
   deps: RosterDeps,
   options: RosterOptions,
@@ -503,12 +658,10 @@ export async function runSend(
   }
   const invites = deps.invites();
   const candidates = await invites.listUnsent(options.season, options.only);
-  return deliver(deps, options, candidates, 'invite.season', (id, at) =>
-    invites.markSent(id, at),
-  );
+  return deliver(deps, options, invites, candidates, 'send', 'invite.season');
 }
 
-/** Emails `invite.reminder` to invites sent ≥ 7 days ago, unredeemed, unreminded and unexpired. */
+/** Emails `invite.reminder` to unclaimed invites sent ≥ 7 days ago, unredeemed, unreminded and unexpired. */
 export async function runRemind(
   deps: RosterDeps,
   options: RosterOptions,
@@ -521,9 +674,52 @@ export async function runRemind(
     options.season,
     deps.now(),
   );
-  return deliver(deps, options, candidates, 'invite.reminder', (id, at) =>
-    invites.markReminded(id, at),
+  return deliver(
+    deps,
+    options,
+    invites,
+    candidates,
+    'remind',
+    'invite.reminder',
   );
+}
+
+/**
+ * Clears send and reminder claims older than `--release-stale-claims` minutes
+ * that were never marked delivered, so the next run emails them again.
+ */
+export async function runReleaseStaleClaims(
+  deps: RosterDeps,
+  options: RosterOptions,
+): Promise<ReleaseReport> {
+  if (options.report) {
+    assertOutsideRepo(deps.repoRoot, options.report);
+  }
+  const invites = deps.invites();
+  const claimedBefore = new Date(
+    deps.now().getTime() - (options.staleClaimMinutes as number) * 60_000,
+  );
+  const released: ReleaseReport['released'] = { send: [], remind: [] };
+  for (const kind of ['send', 'remind'] as const) {
+    released[kind] = await invites.releaseStaleClaims(
+      options.season,
+      kind,
+      claimedBefore,
+    );
+    deps.log(
+      `Released ${released[kind].length} ${kind} claim(s) taken before ${claimedBefore.toISOString()}${released[kind].length > 0 ? `: ${released[kind].join(', ')}` : ''}`,
+    );
+  }
+  const report: ReleaseReport = {
+    mode: 'release-stale-claims',
+    env: deps.env.SSMS_ENV ?? 'unknown',
+    season: options.season,
+    generatedAt: deps.now().toISOString(),
+    claimedBefore: claimedBefore.toISOString(),
+    released,
+  };
+  await writeReport(deps, options, report);
+  return report;
 }
 
 /** Writing modes against prod need `SSMS_CONFIRM_PROD=yes` (the wrapper asks first). */
@@ -546,7 +742,7 @@ export function assertProdConfirmed(
 export async function runRosterCli(
   deps: RosterDeps,
   argv: string[],
-): Promise<ImportReport | DeliveryReport> {
+): Promise<ImportReport | DeliveryReport | ReleaseReport> {
   const options = parseRosterArgs(argv);
   assertProdConfirmed(deps.env, options.mode);
   switch (options.mode) {
@@ -556,6 +752,8 @@ export async function runRosterCli(
       return runSend(deps, options);
     case 'remind':
       return runRemind(deps, options);
+    case 'release-stale-claims':
+      return runReleaseStaleClaims(deps, options);
     default:
       return runDryRun(deps, options);
   }

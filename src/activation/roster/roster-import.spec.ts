@@ -12,10 +12,12 @@ import {
   SEND_INTERVAL_MS,
   assertOutsideRepo,
   assertProdConfirmed,
+  inviteIdempotencyKey,
   parseRosterArgs,
   runRosterCli,
   type DeliveryReport,
   type ImportReport,
+  type ReleaseReport,
   type RosterDeps,
 } from './roster-import';
 import type {
@@ -56,7 +58,9 @@ function invite(overrides: Partial<InviteRecipient> = {}): InviteRecipient {
     token_hash: null,
     season: SEASON,
     expires_at: null,
+    send_claimed_at: null,
     sent_at: null,
+    remind_claimed_at: null,
     reminded_at: null,
     redeemed_at: null,
     activated_at: null,
@@ -75,7 +79,14 @@ interface Harness {
   invites: jest.Mocked<
     Pick<
       InvitesRepository,
-      'listUnsent' | 'listDueForReminder' | 'markSent' | 'markReminded'
+      | 'listUnsent'
+      | 'listDueForReminder'
+      | 'markSent'
+      | 'markReminded'
+      | 'claim'
+      | 'releaseClaim'
+      | 'listUnfinishedClaims'
+      | 'releaseStaleClaims'
     >
   >;
   dispatch: jest.Mock;
@@ -105,14 +116,19 @@ function harness(
     insertInstructor: jest.fn((i: { authUserId: string }) =>
       Promise.resolve(`ins-for-${i.authUserId}`),
     ),
+    hasProfileRelations: jest.fn().mockResolvedValue(true),
     setProfileRelations: jest.fn().mockResolvedValue(undefined),
-    insertInvite: jest.fn().mockResolvedValue(undefined),
+    insertInvite: jest.fn().mockResolvedValue(true),
   };
   const invites = {
     listUnsent: jest.fn().mockResolvedValue([]),
     listDueForReminder: jest.fn().mockResolvedValue([]),
     markSent: jest.fn().mockResolvedValue(undefined),
     markReminded: jest.fn().mockResolvedValue(undefined),
+    claim: jest.fn().mockResolvedValue(true),
+    releaseClaim: jest.fn().mockResolvedValue(undefined),
+    listUnfinishedClaims: jest.fn().mockResolvedValue([]),
+    releaseStaleClaims: jest.fn().mockResolvedValue([]),
   };
   const dispatch = jest.fn().mockResolvedValue('sent');
   const factories = {
@@ -154,6 +170,10 @@ function harness(
 }
 
 const OUTSIDE = path.join(os.tmpdir(), 'roster-report.json');
+const OUTSIDE_RESOLVED = path.join(
+  fs.realpathSync(os.tmpdir()),
+  'roster-report.json',
+);
 
 describe('parseRosterArgs', () => {
   it('defaults to dry-run and season 2026/27', () => {
@@ -185,6 +205,16 @@ describe('parseRosterArgs', () => {
       report: 'r.json',
     });
     expect(parseRosterArgs(['--remind']).mode).toBe('remind');
+    expect(
+      parseRosterArgs(['--release-stale-claims', '45', '--season', '2027/28']),
+    ).toEqual({
+      mode: 'release-stale-claims',
+      csv: undefined,
+      season: '2027/28',
+      only: undefined,
+      report: undefined,
+      staleClaimMinutes: 45,
+    });
     expect(parseRosterArgs(['--apply', '--csv', 'a.csv']).mode).toBe('apply');
     expect(parseRosterArgs(['--dry-run', '--csv', 'a.csv']).mode).toBe(
       'dry-run',
@@ -199,6 +229,10 @@ describe('parseRosterArgs', () => {
     [['--csv'], /Unexpected argument --csv/],
     [['--csv', '--apply'], /Unexpected argument --csv/],
     [['--bogus'], /Unexpected argument --bogus/],
+    [['--release-stale-claims', '0'], /whole number of minutes/],
+    [['--release-stale-claims', '1.5'], /whole number of minutes/],
+    [['--release-stale-claims', 'ten'], /whole number of minutes/],
+    [['--send', '--release-stale-claims', '5'], /Pick one mode/],
   ])('rejects %j', (argv, message) => {
     expect(() => parseRosterArgs(argv)).toThrow(message);
   });
@@ -283,8 +317,7 @@ describe('runRosterCli --dry-run', () => {
     expect(report.existingUsers).toEqual(['dana@example.test']);
     expect(report.rows[0]).toMatchObject({ certifications: 1, locations: 1 });
 
-    const file = path.join(fs.realpathSync(os.tmpdir()), 'roster-report.json');
-    const json = h.written.get(file) as string;
+    const json = h.written.get(OUTSIDE_RESOLVED) as string;
     expect(JSON.parse(json)).toMatchObject({ mode: 'dry-run', env: 'dev' });
     const output = `${json}\n${h.logs.join('\n')}`;
     for (const secret of [
@@ -325,6 +358,9 @@ describe('runRosterCli --apply', () => {
     );
     h.writer.findInstructorId.mockImplementation((id: string) =>
       Promise.resolve(id === 'auth-casey' ? 'ins-casey' : null),
+    );
+    h.writer.insertInvite.mockImplementation((i) =>
+      Promise.resolve(i.auth_user_id !== 'auth-casey'),
     );
 
     const report = (await runRosterCli(h.deps, [
@@ -426,6 +462,93 @@ describe('runRosterCli --apply', () => {
     ]);
   });
 
+  describe('rerun for a user this import created whose instructor exists', () => {
+    const casey = new Map([
+      ['casey@example.test', { id: 'auth-casey', importedSeason: SEASON }],
+    ]);
+    const caseyInvite = {
+      instructor_id: 'ins-casey',
+      auth_user_id: 'auth-casey',
+      email: 'casey@example.test',
+      season: SEASON,
+    };
+
+    async function rerun(hasRelations: boolean, inviteCreated: boolean) {
+      const h = harness(casey);
+      h.writer.findInstructorId.mockImplementation((id: string) =>
+        Promise.resolve(id === 'auth-casey' ? 'ins-casey' : null),
+      );
+      h.writer.hasProfileRelations.mockResolvedValue(hasRelations);
+      h.writer.insertInvite.mockImplementation((i) =>
+        Promise.resolve(i.auth_user_id === 'auth-casey' ? inviteCreated : true),
+      );
+      const report = (await runRosterCli(h.deps, [
+        '--apply',
+        '--csv',
+        'roster.csv',
+      ])) as ImportReport;
+      const row = report.rows.find((r) => r.email === 'casey@example.test');
+      return { h, report, status: row?.status };
+    }
+
+    it('writes certifications and locations the crashed run never wrote', async () => {
+      const { h, report, status } = await rerun(false, false);
+      expect(h.writer.hasProfileRelations.mock.calls).toContainEqual([
+        'ins-casey',
+      ]);
+      expect(
+        h.writer.insertInstructor.mock.calls.map(([i]) => i.authUserId),
+      ).not.toContain('auth-casey');
+      expect(h.writer.setProfileRelations.mock.calls).toContainEqual([
+        'ins-casey',
+        [{ org: 'casi', track: 'park', level: 1 }],
+        [],
+      ]);
+      expect(status).toBe('repaired');
+      expect(report.counts).toMatchObject({ repaired: 1, alreadyImported: 0 });
+    });
+
+    it('leaves existing certifications and locations untouched', async () => {
+      const { h, status } = await rerun(true, false);
+      expect(
+        h.writer.setProfileRelations.mock.calls.map(([id]) => id),
+      ).not.toContain('ins-casey');
+      expect(status).toBe('already_imported');
+    });
+
+    it('creates a missing invite row', async () => {
+      const { h, status } = await rerun(true, true);
+      expect(h.writer.insertInvite.mock.calls).toContainEqual([caseyInvite]);
+      expect(
+        h.writer.setProfileRelations.mock.calls.map(([id]) => id),
+      ).not.toContain('ins-casey');
+      expect(status).toBe('repaired');
+    });
+
+    it('does not look for relations when the row has none to write', async () => {
+      const h = harness(
+        new Map([
+          ['blake@example.test', { id: 'auth-blake', importedSeason: SEASON }],
+        ]),
+      );
+      h.writer.findInstructorId.mockImplementation((id: string) =>
+        Promise.resolve(id === 'auth-blake' ? 'ins-blake' : null),
+      );
+      h.writer.insertInvite.mockResolvedValue(false);
+      const report = (await runRosterCli(h.deps, [
+        '--apply',
+        '--csv',
+        'roster.csv',
+      ])) as ImportReport;
+      expect(h.writer.hasProfileRelations.mock.calls).not.toContainEqual([
+        'ins-blake',
+      ]);
+      expect(
+        report.rows.find((r) => r.email === 'blake@example.test')?.status,
+      ).toBe('already_imported');
+    });
+  });
+
   it('records a failing row and carries on', async () => {
     const h = harness();
     h.writer.createUser.mockRejectedValueOnce(new Error('boom'));
@@ -469,7 +592,10 @@ describe('runRosterCli --apply', () => {
 });
 
 describe('runRosterCli --send', () => {
-  it('sends invite.season to each unsent invite, spaced ≥ 500 ms, and marks it sent', async () => {
+  const KEY_1 = inviteIdempotencyKey('inv-1', 'send', NOW);
+  const KEY_2 = inviteIdempotencyKey('inv-2', 'send', NOW);
+
+  it('claims, sends invite.season to each unsent invite, spaced ≥ 500 ms, and marks it sent', async () => {
     const h = harness();
     const a = invite();
     const b = invite({ id: 'inv-2', email: 'blake@example.test' });
@@ -482,21 +608,39 @@ describe('runRosterCli --send', () => {
     ])) as DeliveryReport;
 
     expect(h.invites.listUnsent).toHaveBeenCalledWith(SEASON, undefined);
-    expect(h.dispatch.mock.calls).toEqual([
-      [a, 'invite.season', 'sync', NOW],
-      [b, 'invite.season', 'sync', NOW],
+    expect(h.invites.claim.mock.calls).toEqual([
+      ['inv-1', 'send', NOW],
+      ['inv-2', 'send', NOW],
     ]);
+    expect(h.dispatch.mock.calls).toEqual([
+      [a, 'invite.season', 'sync', NOW, KEY_1],
+      [b, 'invite.season', 'sync', NOW, KEY_2],
+    ]);
+    expect(KEY_1).toBe('invite-inv-1-sent-2026-10-11T04:00:00.000Z');
     expect(h.sleep.mock.calls).toEqual([[SEND_INTERVAL_MS]]);
     expect(SEND_INTERVAL_MS).toBeGreaterThanOrEqual(500);
     expect(h.invites.markSent.mock.calls).toEqual([
       ['inv-1', NOW],
       ['inv-2', NOW],
     ]);
-    expect(report.counts).toEqual({ candidates: 2, sent: 2, failed: 0 });
+    const [claimOrder] = h.invites.claim.mock.invocationCallOrder;
+    const [dispatchOrder] = h.dispatch.mock.invocationCallOrder;
+    const [markOrder] = h.invites.markSent.mock.invocationCallOrder;
+    expect(claimOrder).toBeLessThan(dispatchOrder);
+    expect(dispatchOrder).toBeLessThan(markOrder);
+    expect(h.invites.releaseClaim).not.toHaveBeenCalled();
+    expect(report.counts).toEqual({
+      candidates: 2,
+      sent: 2,
+      failed: 0,
+      skipped: 0,
+      needsReview: 0,
+    });
+    expect(report.needsReview).toEqual([]);
     expect(h.factories.writer).not.toHaveBeenCalled();
   });
 
-  it('restricts to --only and leaves failed sends unmarked', async () => {
+  it('restricts to --only and releases the claim when the send fails', async () => {
     const h = harness();
     h.invites.listUnsent.mockResolvedValue([invite()]);
     h.dispatch.mockRejectedValueOnce(
@@ -512,9 +656,11 @@ describe('runRosterCli --send', () => {
       'avery@example.test',
     );
     expect(h.invites.markSent).not.toHaveBeenCalled();
+    expect(h.invites.releaseClaim).toHaveBeenCalledWith('inv-1', 'send', NOW);
     expect(report.failed).toEqual([
       { email: 'avery@example.test', error: 'failed: resend down' },
     ]);
+    expect(report.needsReview).toEqual([]);
   });
 
   it('reports non-delivery errors too', async () => {
@@ -523,6 +669,77 @@ describe('runRosterCli --send', () => {
     h.dispatch.mockRejectedValueOnce(new Error('db down'));
     const report = (await runRosterCli(h.deps, ['--send'])) as DeliveryReport;
     expect(report.failed[0].error).toBe('db down');
+    expect(h.invites.releaseClaim).toHaveBeenCalledWith('inv-1', 'send', NOW);
+  });
+
+  it('does not send an invite another run claimed first', async () => {
+    const h = harness();
+    h.invites.listUnsent.mockResolvedValue([invite()]);
+    h.invites.claim.mockResolvedValueOnce(false);
+    const report = (await runRosterCli(h.deps, ['--send'])) as DeliveryReport;
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(report.counts).toMatchObject({ sent: 0, skipped: 1, failed: 0 });
+    expect(h.logs).toContain('  skipped invite inv-1: claimed by another run');
+  });
+
+  it('does not send when the claim itself fails', async () => {
+    const h = harness();
+    h.invites.listUnsent.mockResolvedValue([invite()]);
+    h.invites.claim.mockRejectedValueOnce(new Error('db down'));
+    const report = (await runRosterCli(h.deps, ['--send'])) as DeliveryReport;
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(h.invites.releaseClaim).not.toHaveBeenCalled();
+    expect(report.failed).toEqual([
+      { email: 'avery@example.test', error: 'db down' },
+    ]);
+  });
+
+  it('lists invites left claimed by a crashed run by id only, without resending them', async () => {
+    const h = harness();
+    h.invites.listUnfinishedClaims.mockResolvedValue(['inv-stale']);
+    h.invites.listUnsent.mockResolvedValue([]);
+    const report = (await runRosterCli(h.deps, [
+      '--send',
+      '--report',
+      OUTSIDE,
+    ])) as DeliveryReport;
+    expect(h.invites.listUnfinishedClaims).toHaveBeenCalledWith(SEASON, 'send');
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(report.needsReview).toEqual(['inv-stale']);
+    expect(report.counts.needsReview).toBe(1);
+    expect(h.logs).toContain(
+      'Needs review: claimed but never marked sent, so not sent again: inv-stale',
+    );
+    expect(h.logs.some((l) => l.includes('--release-stale-claims <N>'))).toBe(
+      true,
+    );
+    const written = JSON.parse(h.written.get(OUTSIDE_RESOLVED) as string) as {
+      needsReview: unknown;
+    };
+    expect(written.needsReview).toEqual(['inv-stale']);
+  });
+
+  it('keeps the claim and flags the invite when it was sent but not marked', async () => {
+    const h = harness();
+    h.invites.listUnsent.mockResolvedValue([invite()]);
+    h.invites.markSent.mockRejectedValueOnce(new Error('db down'));
+    const report = (await runRosterCli(h.deps, ['--send'])) as DeliveryReport;
+    expect(h.invites.releaseClaim).not.toHaveBeenCalled();
+    expect(report.counts).toMatchObject({ sent: 0, needsReview: 1 });
+    expect(report.needsReview).toEqual(['inv-1']);
+  });
+
+  it('flags the invite when a failed send cannot release its claim', async () => {
+    const h = harness();
+    h.invites.listUnsent.mockResolvedValue([invite()]);
+    h.dispatch.mockRejectedValueOnce(new Error('resend down'));
+    h.invites.releaseClaim.mockRejectedValueOnce(new Error('db down'));
+    const report = (await runRosterCli(h.deps, ['--send'])) as DeliveryReport;
+    expect(report.failed).toHaveLength(1);
+    expect(report.needsReview).toEqual(['inv-1']);
+    expect(h.logs).toContain(
+      '  could not release the claim on invite inv-1: db down',
+    );
   });
 
   it('refuses an in-repo report path', async () => {
@@ -541,17 +758,38 @@ describe('runRosterCli --remind', () => {
     h.invites.listDueForReminder.mockResolvedValue([due]);
     const report = (await runRosterCli(h.deps, ['--remind'])) as DeliveryReport;
     expect(h.invites.listDueForReminder).toHaveBeenCalledWith(SEASON, NOW);
+    expect(h.invites.claim).toHaveBeenCalledWith('inv-1', 'remind', NOW);
+    expect(h.invites.listUnfinishedClaims).toHaveBeenCalledWith(
+      SEASON,
+      'remind',
+    );
     expect(h.dispatch).toHaveBeenCalledWith(
       due,
       'invite.reminder',
       'sync',
       NOW,
+      'invite-inv-1-remind-2026-10-11T04:00:00.000Z',
     );
     expect(h.invites.markReminded).toHaveBeenCalledWith('inv-1', NOW);
+    expect(h.invites.markSent).not.toHaveBeenCalled();
     expect(report).toMatchObject({
       mode: 'remind',
       counts: { candidates: 1, sent: 1, failed: 0 },
     });
+  });
+
+  it('releases a failed reminder claim and reports stale reminder claims', async () => {
+    const h = harness();
+    h.invites.listUnfinishedClaims.mockResolvedValue(['inv-9']);
+    h.invites.listDueForReminder.mockResolvedValue([invite()]);
+    h.dispatch.mockRejectedValueOnce(new Error('resend down'));
+    const report = (await runRosterCli(h.deps, ['--remind'])) as DeliveryReport;
+    expect(h.invites.releaseClaim).toHaveBeenCalledWith('inv-1', 'remind', NOW);
+    expect(h.invites.markReminded).not.toHaveBeenCalled();
+    expect(report.needsReview).toEqual(['inv-9']);
+    expect(h.logs).toContain(
+      'Needs review: claimed but never marked reminded, so not sent again: inv-9',
+    );
   });
 
   it('refuses an in-repo report path', async () => {
@@ -565,5 +803,56 @@ describe('runRosterCli --remind', () => {
     const h = harness(new Map(), {});
     const report = (await runRosterCli(h.deps, ['--remind'])) as DeliveryReport;
     expect(report.env).toBe('unknown');
+  });
+});
+
+describe('runRosterCli --release-stale-claims', () => {
+  it('releases send and reminder claims older than N minutes', async () => {
+    const h = harness();
+    h.invites.releaseStaleClaims.mockImplementation((_s, kind) =>
+      Promise.resolve(kind === 'send' ? ['inv-1', 'inv-2'] : []),
+    );
+    const report = (await runRosterCli(h.deps, [
+      '--release-stale-claims',
+      '30',
+      '--report',
+      OUTSIDE,
+    ])) as ReleaseReport;
+    const cutoff = new Date('2026-10-11T03:30:00Z');
+    expect(h.invites.releaseStaleClaims.mock.calls).toEqual([
+      [SEASON, 'send', cutoff],
+      [SEASON, 'remind', cutoff],
+    ]);
+    expect(report).toMatchObject({
+      mode: 'release-stale-claims',
+      claimedBefore: '2026-10-11T03:30:00.000Z',
+      released: { send: ['inv-1', 'inv-2'], remind: [] },
+    });
+    expect(h.logs).toContain(
+      'Released 2 send claim(s) taken before 2026-10-11T03:30:00.000Z: inv-1, inv-2',
+    );
+    expect(h.logs).toContain(
+      'Released 0 remind claim(s) taken before 2026-10-11T03:30:00.000Z',
+    );
+    expect(h.written.has(OUTSIDE_RESOLVED)).toBe(true);
+    expect(h.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('refuses an in-repo report path and unconfirmed prod', async () => {
+    const h = harness();
+    await expect(
+      runRosterCli(h.deps, [
+        '--release-stale-claims',
+        '5',
+        '--report',
+        'x.json',
+      ]),
+    ).rejects.toThrow(RosterCommandError);
+    const prod = harness(new Map(), { SSMS_ENV: 'prod' });
+    await expect(
+      runRosterCli(prod.deps, ['--release-stale-claims', '5']),
+    ).rejects.toThrow(/SSMS_CONFIRM_PROD/);
+    expect(h.invites.releaseStaleClaims).not.toHaveBeenCalled();
+    expect(prod.invites.releaseStaleClaims).not.toHaveBeenCalled();
   });
 });

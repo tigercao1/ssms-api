@@ -29,12 +29,14 @@ export interface RosterWriter {
   createUser(email: string, season: string): Promise<string>;
   findInstructorId(authUserId: string): Promise<string | null>;
   insertInstructor(instructor: NewRosterInstructor): Promise<string>;
+  hasProfileRelations(instructorId: string): Promise<boolean>;
   setProfileRelations(
     instructorId: string,
     certifications: RosterCertification[],
     teachingLocationIds: string[],
   ): Promise<void>;
-  insertInvite(invite: NewInvite): Promise<void>;
+  /** Creates the invite unless one exists for (instructor, season); true when created. */
+  insertInvite(invite: NewInvite): Promise<boolean>;
 }
 
 function fail(action: string, message: string | undefined): Error {
@@ -144,6 +146,25 @@ export class SupabaseRosterWriter implements RosterWriter {
     return data.id;
   }
 
+  async hasProfileRelations(instructorId: string): Promise<boolean> {
+    for (const table of [
+      'instructor_certifications',
+      'instructors_teaching_locations',
+    ]) {
+      const { count, error } = await this.supabase
+        .from(table)
+        .select('instructor_id', { count: 'exact', head: true })
+        .eq('instructor_id', instructorId);
+      if (error) {
+        throw fail('load certifications and locations', error.message);
+      }
+      if ((count ?? 0) > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async setProfileRelations(
     instructorId: string,
     certifications: RosterCertification[],
@@ -167,15 +188,17 @@ export class SupabaseRosterWriter implements RosterWriter {
     }
   }
 
-  async insertInvite(invite: NewInvite): Promise<void> {
-    const { error } = await this.supabase
+  async insertInvite(invite: NewInvite): Promise<boolean> {
+    const { data, error } = await this.supabase
       .from('instructor_invites')
       .upsert(invite, {
         onConflict: 'instructor_id,season',
         ignoreDuplicates: true,
-      });
+      })
+      .select('id');
     if (error) {
       throw fail('create invite', error.message);
     }
+    return ((data ?? []) as unknown[]).length > 0;
   }
 }

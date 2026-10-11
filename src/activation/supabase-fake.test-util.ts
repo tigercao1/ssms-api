@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface DbResult {
   data: unknown;
+  count?: number | null;
   error: { code?: string; message?: string; status?: number } | null;
 }
 

@@ -238,9 +238,41 @@ describe('SupabaseRosterWriter', () => {
     );
   });
 
+  it('reports whether an instructor has any certification or teaching location', async () => {
+    const db = new FakeSupabase();
+    db.queue.push(
+      { data: null, count: 1, error: null },
+      { data: null, count: 0, error: null },
+      { data: null, count: 2, error: null },
+      { data: null, count: null, error: null },
+      { data: null, count: null, error: null },
+      { data: null, error: { message: 'down' } },
+    );
+    const writer = new SupabaseRosterWriter(db.asClient());
+    expect(await writer.hasProfileRelations('ins')).toBe(true);
+    expect(await writer.hasProfileRelations('ins')).toBe(true);
+    expect(await writer.hasProfileRelations('ins')).toBe(false);
+    expect(db.queries.map((q) => q.table)).toEqual([
+      'instructor_certifications',
+      'instructor_certifications',
+      'instructors_teaching_locations',
+      'instructor_certifications',
+      'instructors_teaching_locations',
+    ]);
+    expect(db.ops(0)).toEqual([
+      ['select', ['instructor_id', { count: 'exact', head: true }]],
+      ['eq', ['instructor_id', 'ins']],
+    ]);
+    await expect(writer.hasProfileRelations('ins')).rejects.toThrow(
+      'Failed to load certifications and locations: down',
+    );
+  });
+
   it('inserts the invite idempotently on (instructor, season)', async () => {
     const db = new FakeSupabase();
     db.queue.push(
+      { data: [{ id: 'inv-1' }], error: null },
+      { data: [], error: null },
       { data: null, error: null },
       { data: null, error: { message: 'fk' } },
     );
@@ -251,7 +283,9 @@ describe('SupabaseRosterWriter', () => {
       email: 'a@example.test',
       season: 's',
     };
-    await writer.insertInvite(row);
+    expect(await writer.insertInvite(row)).toBe(true);
+    expect(await writer.insertInvite(row)).toBe(false);
+    expect(await writer.insertInvite(row)).toBe(false);
     expect(db.queries[0]).toEqual({
       table: 'instructor_invites',
       ops: [
@@ -259,6 +293,7 @@ describe('SupabaseRosterWriter', () => {
           'upsert',
           [row, { onConflict: 'instructor_id,season', ignoreDuplicates: true }],
         ],
+        ['select', ['id']],
       ],
     });
     await expect(writer.insertInvite(row)).rejects.toThrow(

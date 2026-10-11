@@ -10,9 +10,24 @@ import type { InviteRecipient, InviteRow } from './activation.types';
 const TABLE = 'instructor_invites';
 const INVITE_COLUMNS =
   'id, instructor_id, auth_user_id, email, token_hash, season, expires_at, ' +
-  'sent_at, reminded_at, redeemed_at, activated_at, created_at';
+  'send_claimed_at, sent_at, remind_claimed_at, reminded_at, redeemed_at, ' +
+  'activated_at, created_at';
 const RECIPIENT_COLUMNS = `${INVITE_COLUMNS}, instructors(display_name_en, preferred_language)`;
 const REMINDER_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Which roster email a claim guards: the first invite or the reminder. */
+export type DeliveryKind = 'send' | 'remind';
+
+const DELIVERY_COLUMNS: Record<
+  DeliveryKind,
+  {
+    claimed: 'send_claimed_at' | 'remind_claimed_at';
+    done: 'sent_at' | 'reminded_at';
+  }
+> = {
+  send: { claimed: 'send_claimed_at', done: 'sent_at' },
+  remind: { claimed: 'remind_claimed_at', done: 'reminded_at' },
+};
 
 interface RecipientRecord extends InviteRow {
   instructors: {
@@ -47,6 +62,25 @@ export abstract class InvitesRepository {
     tokenHash: string,
     expiresAt: Date,
   ): Promise<void>;
+  /** Atomically claims an undelivered, unclaimed invite; false when another run holds it. */
+  abstract claim(id: string, kind: DeliveryKind, at: Date): Promise<boolean>;
+  /** Drops the claim taken at `claimedAt` if the email was never marked delivered. */
+  abstract releaseClaim(
+    id: string,
+    kind: DeliveryKind,
+    claimedAt: Date,
+  ): Promise<void>;
+  /** Ids of invites claimed but never marked delivered: possibly sent by a run that died. */
+  abstract listUnfinishedClaims(
+    season: string,
+    kind: DeliveryKind,
+  ): Promise<string[]>;
+  /** Clears unfinished claims taken before `claimedBefore`; returns the released ids. */
+  abstract releaseStaleClaims(
+    season: string,
+    kind: DeliveryKind,
+    claimedBefore: Date,
+  ): Promise<string[]>;
   abstract markSent(id: string, at: Date): Promise<void>;
   abstract markReminded(id: string, at: Date): Promise<void>;
   abstract markRedeemed(id: string, at: Date): Promise<void>;
@@ -93,7 +127,8 @@ export class SupabaseInvitesRepository extends InvitesRepository {
       .from(TABLE)
       .select(RECIPIENT_COLUMNS)
       .eq('season', season)
-      .is('sent_at', null);
+      .is('sent_at', null)
+      .is('send_claimed_at', null);
     if (email !== undefined) {
       query = query.eq('email', email);
     }
@@ -117,6 +152,7 @@ export class SupabaseInvitesRepository extends InvitesRepository {
       .lte('sent_at', new Date(now.getTime() - REMINDER_DELAY_MS).toISOString())
       .is('redeemed_at', null)
       .is('reminded_at', null)
+      .is('remind_claimed_at', null)
       .gt('expires_at', now.toISOString())
       .order('created_at', { ascending: true });
     if (error) {
@@ -130,6 +166,75 @@ export class SupabaseInvitesRepository extends InvitesRepository {
       token_hash: tokenHash,
       expires_at: expiresAt.toISOString(),
     });
+  }
+
+  async claim(id: string, kind: DeliveryKind, at: Date): Promise<boolean> {
+    const { claimed, done } = DELIVERY_COLUMNS[kind];
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .update({ [claimed]: at.toISOString() })
+      .eq('id', id)
+      .is(claimed, null)
+      .is(done, null)
+      .select('id');
+    if (error) {
+      throw failure('claim invite', error.message);
+    }
+    return ((data ?? []) as unknown[]).length > 0;
+  }
+
+  async releaseClaim(
+    id: string,
+    kind: DeliveryKind,
+    claimedAt: Date,
+  ): Promise<void> {
+    const { claimed, done } = DELIVERY_COLUMNS[kind];
+    const { error } = await this.supabase
+      .from(TABLE)
+      .update({ [claimed]: null })
+      .eq('id', id)
+      .eq(claimed, claimedAt.toISOString())
+      .is(done, null);
+    if (error) {
+      throw failure('release invite claim', error.message);
+    }
+  }
+
+  async listUnfinishedClaims(
+    season: string,
+    kind: DeliveryKind,
+  ): Promise<string[]> {
+    const { claimed, done } = DELIVERY_COLUMNS[kind];
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .select('id')
+      .eq('season', season)
+      .not(claimed, 'is', null)
+      .is(done, null)
+      .order(claimed, { ascending: true });
+    if (error) {
+      throw failure('list claimed invites', error.message);
+    }
+    return ((data ?? []) as { id: string }[]).map((r) => r.id);
+  }
+
+  async releaseStaleClaims(
+    season: string,
+    kind: DeliveryKind,
+    claimedBefore: Date,
+  ): Promise<string[]> {
+    const { claimed, done } = DELIVERY_COLUMNS[kind];
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .update({ [claimed]: null })
+      .eq('season', season)
+      .lt(claimed, claimedBefore.toISOString())
+      .is(done, null)
+      .select('id');
+    if (error) {
+      throw failure('release stale invite claims', error.message);
+    }
+    return ((data ?? []) as { id: string }[]).map((r) => r.id);
   }
 
   async markSent(id: string, at: Date): Promise<void> {

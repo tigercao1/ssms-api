@@ -9,9 +9,14 @@
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --send --only <email>
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --send
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --remind
+#   SSMS_ENV=dev ./scripts/import-season-roster.sh --release-stale-claims <minutes>
 #
-# --apply, --send and --remind against prod ask for the project ref first
-# (or need SSMS_CONFIRM_PROD=yes when not interactive).
+# A run that dies mid-send leaves invites claimed but not marked sent; later
+# runs skip them and list their ids as needs review. Check Resend for each one,
+# then --release-stale-claims makes the undelivered ones eligible again.
+#
+# --apply, --send, --remind and --release-stale-claims against prod ask for the
+# project ref first (or need SSMS_CONFIRM_PROD=yes when not interactive).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +37,7 @@ done
 
 for arg in "$@"; do
   case "$arg" in
-    --apply | --send | --remind)
+    --apply | --send | --remind | --release-stale-claims)
       ssms_require_prod_confirmation "import-season-roster $arg"
       export SSMS_CONFIRM_PROD=yes
       ;;

@@ -15,7 +15,9 @@ function invite(overrides: Partial<InviteRecipient> = {}): InviteRecipient {
     token_hash: null,
     season: '2026/27',
     expires_at: null,
+    send_claimed_at: null,
     sent_at: null,
+    remind_claimed_at: null,
     reminded_at: null,
     redeemed_at: null,
     activated_at: null,
@@ -91,6 +93,20 @@ describe('InviteDispatcher', () => {
       vars: { displayName: undefined },
       mode: 'background',
     });
+  });
+
+  it('passes an idempotency key through to the mailer', async () => {
+    const { mailer, dispatcher } = setup();
+    await dispatcher.dispatch(
+      invite(),
+      'invite.season',
+      'sync',
+      NOW,
+      'invite-inv-1-sent-2026-10-11T04:00:00.000Z',
+    );
+    expect(mailer.send.mock.calls[0][0].idempotencyKey).toBe(
+      'invite-inv-1-sent-2026-10-11T04:00:00.000Z',
+    );
   });
 
   it('does not email when the token cannot be stored', async () => {

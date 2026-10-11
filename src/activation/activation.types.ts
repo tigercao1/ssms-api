@@ -7,7 +7,9 @@ export interface InviteRow {
   token_hash: string | null;
   season: string;
   expires_at: string | null;
+  send_claimed_at: string | null;
   sent_at: string | null;
+  remind_claimed_at: string | null;
   reminded_at: string | null;
   redeemed_at: string | null;
   activated_at: string | null;

@@ -27,6 +27,7 @@ export class InviteDispatcher {
     template: InviteTemplate,
     mode: SendMode,
     now: Date = new Date(),
+    idempotencyKey?: string,
   ): Promise<SendOutcome> {
     const issued = issueInviteToken(now);
     await this.invites.setToken(invite.id, issued.tokenHash, issued.expiresAt);
@@ -44,6 +45,7 @@ export class InviteDispatcher {
       instructorId: invite.instructor_id,
       authUserId: invite.auth_user_id,
       metadata: { inviteId: invite.id, season: invite.season },
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
   }
 }

@@ -1,20 +1,22 @@
 create table instructor_invites (
-  id             uuid primary key default gen_random_uuid(),
-  instructor_id  uuid not null references instructors (id) on delete cascade,
-  auth_user_id   uuid not null references auth.users (id) on delete cascade,
-  email          text not null
-                   constraint instructor_invites_email_lowercase
-                   check (email = lower(email)),
-  token_hash     text unique
-                   constraint instructor_invites_token_hash_sha256
-                   check (token_hash ~ '^[0-9a-f]{64}$'),
-  season         text not null,
-  expires_at     timestamptz,
-  sent_at        timestamptz,
-  reminded_at    timestamptz,
-  redeemed_at    timestamptz,
-  activated_at   timestamptz,
-  created_at     timestamptz not null default now(),
+  id                uuid primary key default gen_random_uuid(),
+  instructor_id     uuid not null references instructors (id) on delete cascade,
+  auth_user_id      uuid not null references auth.users (id) on delete cascade,
+  email             text not null
+                      constraint instructor_invites_email_lowercase
+                      check (email = lower(email)),
+  token_hash        text unique
+                      constraint instructor_invites_token_hash_sha256
+                      check (token_hash ~ '^[0-9a-f]{64}$'),
+  season            text not null,
+  expires_at        timestamptz,
+  send_claimed_at   timestamptz,
+  sent_at           timestamptz,
+  remind_claimed_at timestamptz,
+  reminded_at       timestamptz,
+  redeemed_at       timestamptz,
+  activated_at      timestamptz,
+  created_at        timestamptz not null default now(),
   constraint instructor_invites_token_has_expiry
     check (token_hash is null or expires_at is not null),
   constraint instructor_invites_instructor_season_key

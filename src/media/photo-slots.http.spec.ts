@@ -18,6 +18,7 @@ import { EmailVerifiedGuard } from '../auth/email-verified.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { InstructorsRepository } from '../instructors/instructors.repository';
 import { InstructorsService } from '../instructors/instructors.service';
+import { MailerService } from '../mailer/mailer.service';
 import type {
   InstructorProfile,
   InstructorProfilePatch,
@@ -121,6 +122,9 @@ class InMemoryInstructors extends InstructorsRepository {
     this.versions[slot] += 1;
     return Promise.resolve();
   }
+  listAdminRecipients() {
+    return Promise.resolve([]);
+  }
 }
 
 class FakeStorage implements StorageClient {
@@ -152,6 +156,7 @@ async function build() {
         useValue: { enqueueForProfile: () => Promise.resolve(false) },
       },
       { provide: STORAGE_CLIENT, useValue: storage },
+      { provide: MailerService, useValue: {} },
       { provide: ConfigService, useValue: { get: () => undefined } },
       {
         provide: AdminService,

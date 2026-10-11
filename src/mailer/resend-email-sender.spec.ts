@@ -70,6 +70,34 @@ describe('ResendEmailSender', () => {
       from: 'Snow <a@b.com>',
       to: ['jane@example.com'],
       subject: 'Hi',
+      html: '<p>Hi</p>',
+      text: 'Hi',
+      reply_to: 'info@ssnow.club',
+    });
+  });
+
+  it('sets reply_to from MAIL_REPLY_TO', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.reject(new Error('no body')),
+    });
+    global.fetch = fetchMock;
+
+    const sender = new ResendEmailSender(
+      configWith({
+        RESEND_API_KEY: 're_secret',
+        MAIL_FROM: 'a@b.com',
+        MAIL_REPLY_TO: ' help@example.com ',
+      }),
+    );
+    const result = await sender.send(message);
+
+    expect(result.id).toBeUndefined();
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({
+      reply_to: 'help@example.com',
     });
   });
 

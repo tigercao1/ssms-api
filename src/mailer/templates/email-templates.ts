@@ -279,5 +279,5 @@ export const EMAIL_TEMPLATE_NAMES = Object.keys(
 ) as EmailTemplate[];
 
 export function isEmailTemplate(value: string): value is EmailTemplate {
-  return Object.prototype.hasOwnProperty.call(EMAIL_TEMPLATES, value);
+  return Object.hasOwn(EMAIL_TEMPLATES, value);
 }

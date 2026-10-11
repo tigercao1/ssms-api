@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { InstructorsModule } from './instructors.module';
 import { InstructorsService } from './instructors.service';
@@ -17,7 +18,11 @@ class FakeDatabaseModule {}
 describe('InstructorsModule wiring', () => {
   it('binds TRANSLATION_QUEUE to the real TranslationQueueService', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [FakeDatabaseModule, InstructorsModule],
+      imports: [
+        FakeDatabaseModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        InstructorsModule,
+      ],
     }).compile();
 
     const service = moduleRef.get(InstructorsService);

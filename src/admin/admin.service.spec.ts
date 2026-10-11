@@ -66,7 +66,8 @@ describe('AdminService', () => {
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const mailer = {
-    sendInstructorNotification: jest.fn().mockResolvedValue('sent'),
+    send: jest.fn().mockResolvedValue('sent'),
+    portalLink: jest.fn((path: string) => `https://portal.example.com${path}`),
   };
   const translator = {
     modelId: 'gemini-test',
@@ -151,13 +152,18 @@ describe('AdminService', () => {
         }),
       );
       // T8.1 — approval notification fires with instructor's language + name.
-      expect(mailer.sendInstructorNotification).toHaveBeenCalledTimes(1);
-      expect(mailer.sendInstructorNotification).toHaveBeenCalledWith(
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: 'approved',
+          template: 'approved',
           to: 'jane@example.com',
           language: 'en',
-          reason: null,
+          mode: 'background',
+          instructorId: '11111111-1111-4111-8111-111111111111',
+          vars: expect.objectContaining({
+            displayName: 'Jane',
+            loginUrl: 'https://portal.example.com/login',
+          }) as unknown,
         }),
       );
     });
@@ -178,8 +184,11 @@ describe('AdminService', () => {
         }),
       );
       // T8.1 — rejection notification carries the reason.
-      expect(mailer.sendInstructorNotification).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'rejected', reason: 'why' }),
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'rejected',
+          vars: expect.objectContaining({ reason: 'why' }) as unknown,
+        }),
       );
     });
 
@@ -193,7 +202,7 @@ describe('AdminService', () => {
       expect(repo.updateInstructor).not.toHaveBeenCalled();
       // No state change ⇒ no audit row and no notification.
       expect(audit.record).not.toHaveBeenCalled();
-      expect(mailer.sendInstructorNotification).not.toHaveBeenCalled();
+      expect(mailer.send).not.toHaveBeenCalled();
     });
 
     it('throws 404 for an unknown instructor', async () => {
@@ -226,17 +235,47 @@ describe('AdminService', () => {
         }),
       );
       // T8.1 — deactivation notifies.
-      expect(mailer.sendInstructorNotification).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'deactivated' }),
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ template: 'deactivated' }),
       );
     });
 
-    it('does NOT notify on (re)activation', async () => {
-      // was inactive, now active — silent admin correction.
+    it('sends reactivated with a sign-in link when false flips to true', async () => {
       repo.findInstructorById.mockResolvedValue(makeRow({ is_active: false }));
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ is_active: true, preferred_language: 'zh-CN' }),
+      );
+      await service.setActive('id', true);
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          template: 'reactivated',
+          language: 'zh-CN',
+          mode: 'background',
+          vars: expect.objectContaining({
+            loginUrl: 'https://portal.example.com/login',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('does not notify when the active flag does not change', async () => {
+      repo.findInstructorById.mockResolvedValue(makeRow({ is_active: true }));
       repo.updateInstructor.mockResolvedValue(makeRow({ is_active: true }));
       await service.setActive('id', true);
-      expect(mailer.sendInstructorNotification).not.toHaveBeenCalled();
+      repo.findInstructorById.mockResolvedValue(makeRow({ is_active: false }));
+      repo.updateInstructor.mockResolvedValue(makeRow({ is_active: false }));
+      await service.setActive('id', false);
+      expect(mailer.send).not.toHaveBeenCalled();
+    });
+
+    it('survives a mailer that rejects', async () => {
+      mailer.send.mockRejectedValueOnce(new Error('boom'));
+      repo.findInstructorById.mockResolvedValue(makeRow());
+      repo.updateInstructor.mockResolvedValue(makeRow({ is_active: false }));
+      await expect(service.setActive('id', false)).resolves.toMatchObject({
+        isActive: false,
+      });
     });
 
     it('throws 404 for an unknown instructor', async () => {

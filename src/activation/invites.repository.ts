@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import type { InviteRecipient, InviteRow, NewInvite } from './activation.types';
+import type { InviteRecipient, InviteRow } from './activation.types';
 
 const TABLE = 'instructor_invites';
 const INVITE_COLUMNS =
@@ -42,8 +42,6 @@ export abstract class InvitesRepository {
     season: string,
     now: Date,
   ): Promise<InviteRecipient[]>;
-  abstract listInvitedAuthUserIds(season: string): Promise<Set<string>>;
-  abstract insert(invite: NewInvite): Promise<void>;
   abstract setToken(
     id: string,
     tokenHash: string,
@@ -125,29 +123,6 @@ export class SupabaseInvitesRepository extends InvitesRepository {
       throw failure('list invites due for a reminder', error.message);
     }
     return ((data ?? []) as unknown as RecipientRecord[]).map(toRecipient);
-  }
-
-  async listInvitedAuthUserIds(season: string): Promise<Set<string>> {
-    const { data, error } = await this.supabase
-      .from(TABLE)
-      .select('auth_user_id')
-      .eq('season', season);
-    if (error) {
-      throw failure('list invites', error.message);
-    }
-    return new Set(
-      ((data ?? []) as { auth_user_id: string }[]).map((r) => r.auth_user_id),
-    );
-  }
-
-  async insert(invite: NewInvite): Promise<void> {
-    const { error } = await this.supabase.from(TABLE).upsert(invite, {
-      onConflict: 'instructor_id,season',
-      ignoreDuplicates: true,
-    });
-    if (error) {
-      throw failure('create invite', error.message);
-    }
   }
 
   async setToken(id: string, tokenHash: string, expiresAt: Date) {

@@ -105,10 +105,7 @@ export class AdminService {
         instructorId: row.id,
         authUserId: row.auth_user_id,
       })
-      .catch(() => {
-        // MailerService is contracted never to reject in background mode, but
-        // be defensive so a regression there can never break an admin action.
-      });
+      .catch(() => undefined);
   }
 
   /** T6.3 — list every instructor, optionally narrowed by status / active. */
@@ -187,7 +184,7 @@ export class AdminService {
       },
     });
 
-    // T8.1 — fire-and-forget notification (approved / rejected). Failures are
+    // Fire-and-forget notification (approved / rejected). Failures are
     // audited by the mailer and MUST NOT roll back the transition.
     if (status === 'approved') {
       this.notifyInstructor(updated, 'approved', {
@@ -232,7 +229,6 @@ export class AdminService {
       metadata: { from: current.is_active, to: isActive },
     });
 
-    // Notify only when the flag actually flips.
     if (!isActive && current.is_active) {
       this.notifyInstructor(updated, 'deactivated', {});
     } else if (isActive && !current.is_active) {

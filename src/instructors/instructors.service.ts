@@ -70,7 +70,7 @@ export class InstructorsService {
   ) {}
 
   /**
-   * T3.1 — Get the caller's profile, creating a `pending` row on first verified
+   * Get the caller's profile, creating a `pending` row on first verified
    * call and returning the same row idempotently thereafter. Creating the row
    * emails every admin (`admin.instructor_pending`) in the background.
    */

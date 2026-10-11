@@ -12,6 +12,7 @@ export {
   type SupportedLanguage,
   type EmailButtonCopy,
   type EmailCopy,
+  type EmailGenericCopy,
   type EmailLayoutCopy,
   type EmailMessages,
   type EmailRejectedCopy,

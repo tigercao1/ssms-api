@@ -146,6 +146,13 @@ export interface EmailMessages {
     emailChange: EmailButtonCopy;
     reauthentication: EmailCopy;
     passwordChanged: EmailCopy;
+    emailChanged: EmailCopy;
+    phoneChanged: EmailCopy;
+    identityLinked: EmailCopy;
+    identityUnlinked: EmailCopy;
+    mfaEnrolled: EmailCopy;
+    mfaUnenrolled: EmailCopy;
+    generic: EmailGenericCopy;
   };
   invite: {
     season: EmailButtonCopy;
@@ -182,6 +189,11 @@ export interface EmailCopy {
 
 export interface EmailButtonCopy extends EmailCopy {
   button: string;
+}
+
+export interface EmailGenericCopy extends EmailButtonCopy {
+  /** Shown above the button, only when the email has a link. */
+  linkParagraph: string;
 }
 
 export interface EmailRejectedCopy extends EmailCopy {

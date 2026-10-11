@@ -150,7 +150,6 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     },
     sample: (context) => ({
       confirmUrl: sampleVerifyUrl(context, 'signup'),
-      code: SAMPLE_CODE,
     }),
   },
   'auth.recovery': {
@@ -165,7 +164,6 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     },
     sample: (context) => ({
       resetUrl: sampleVerifyUrl(context, 'recovery'),
-      code: SAMPLE_CODE,
     }),
   },
   'auth.magic_link': {
@@ -180,7 +178,6 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     },
     sample: (context) => ({
       signInUrl: sampleVerifyUrl(context, 'magiclink'),
-      code: SAMPLE_CODE,
     }),
   },
   'auth.invite': {
@@ -207,7 +204,6 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     sample: (context) => ({
       confirmUrl: sampleVerifyUrl(context, 'email_change'),
       newEmail: 'lin.wei@example.com',
-      code: SAMPLE_CODE,
     }),
   },
   'auth.reauthentication': {
@@ -224,6 +220,70 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
       greeting: null,
     }),
     sample: () => ({}),
+  },
+  'auth.email_changed': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.auth.emailChanged, vars),
+      greeting: null,
+    }),
+    sample: () => ({
+      oldEmail: 'lin.wei@example.com',
+      newEmail: 'lin.wei@example.org',
+    }),
+  },
+  'auth.phone_changed': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.auth.phoneChanged, vars),
+      greeting: null,
+    }),
+    sample: () => ({}),
+  },
+  'auth.identity_linked': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.auth.identityLinked, vars),
+      greeting: null,
+    }),
+    sample: () => ({ provider: 'google' }),
+  },
+  'auth.identity_unlinked': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.auth.identityUnlinked, vars),
+      greeting: null,
+    }),
+    sample: () => ({ provider: 'google' }),
+  },
+  'auth.mfa_enrolled': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.auth.mfaEnrolled, vars),
+      greeting: null,
+    }),
+    sample: () => ({ factorType: 'totp' }),
+  },
+  'auth.mfa_unenrolled': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.auth.mfaUnenrolled, vars),
+      greeting: null,
+    }),
+    sample: () => ({ factorType: 'totp' }),
+  },
+  'auth.generic': {
+    build: (catalog, vars) => {
+      const copy = catalog.email.auth.generic;
+      const blocks = fill(copy, vars);
+      const url = vars.actionUrl?.trim();
+      if (!url) {
+        return { ...blocks, greeting: null };
+      }
+      return {
+        ...blocks,
+        greeting: null,
+        paragraphs: [...blocks.paragraphs, copy.linkParagraph],
+        button: { label: copy.button, url },
+      };
+    },
+    sample: (context) => ({
+      actionUrl: sampleVerifyUrl(context, 'signup'),
+    }),
   },
   'invite.season': {
     build: (catalog, vars) => {

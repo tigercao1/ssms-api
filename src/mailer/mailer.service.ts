@@ -122,7 +122,13 @@ export class MailerService {
     let lastError = 'unknown send failure';
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
-        const { id } = await this.sender.send({ to: request.to, ...rendered });
+        const { id } = await this.sender.send({
+          to: request.to,
+          ...rendered,
+          ...(request.idempotencyKey
+            ? { idempotencyKey: request.idempotencyKey }
+            : {}),
+        });
         this.logger.log(
           `Sent ${request.template} to ${redactEmail(request.to)}` +
             (id ? ` (id=${id})` : '') +

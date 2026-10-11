@@ -13,6 +13,3 @@ create table if not exists google_connection (
 alter table google_connection enable row level security;
 alter table google_connection force row level security;
 revoke all on google_connection from public, anon, authenticated;
-
-comment on table google_connection is
-  'Single-row Google Calendar OAuth connection; refresh token AES-256-GCM encrypted by the API, service_role only.';

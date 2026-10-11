@@ -21,7 +21,11 @@ import type {
 } from './google.types';
 import { GoogleCalendarClient } from './google-calendar.client';
 import { GoogleConnectionRepository } from './google-connection.repository';
-import { type GoogleCodeGrant, GoogleOAuthClient } from './google-oauth.client';
+import {
+  type GoogleCodeGrant,
+  GoogleOAuthClient,
+  type GoogleUserInfo,
+} from './google-oauth.client';
 import {
   defaultGoogleRuntime,
   GOOGLE_RUNTIME,
@@ -46,7 +50,7 @@ export const GOOGLE_CALLBACK_ERRORS = {
   serverError: 'server_error',
 } as const;
 
-type CallbackError =
+export type GoogleCallbackError =
   (typeof GOOGLE_CALLBACK_ERRORS)[keyof typeof GOOGLE_CALLBACK_ERRORS];
 
 export interface OAuthCallbackParams {
@@ -120,7 +124,19 @@ export class GoogleConnectionService {
       });
     }
 
-    const rejection = rejectionFor(grant, config);
+    let userInfo: GoogleUserInfo;
+    try {
+      userInfo = await this.oauth.userInfo(grant.accessToken);
+    } catch (err) {
+      const code = err instanceof GoogleAuthError ? err.code : 'unknown';
+      this.logger.warn(`Google userinfo lookup failed: ${code}`);
+      await this.oauth.revoke(grant.refreshToken ?? grant.accessToken);
+      return this.portalUrl({
+        error: GOOGLE_CALLBACK_ERRORS.tokenExchangeFailed,
+      });
+    }
+
+    const rejection = rejectionFor(grant, userInfo, config);
     if (rejection) {
       await this.oauth.revoke(grant.refreshToken ?? grant.accessToken);
       await this.audit.record({
@@ -129,7 +145,7 @@ export class GoogleConnectionService {
         targetType: 'google_connection',
         metadata: {
           reason: rejection,
-          accountEmail: grant.email,
+          accountEmail: userInfo.email,
           scopes: grant.scopes,
         },
       });
@@ -138,7 +154,7 @@ export class GoogleConnectionService {
 
     try {
       await this.connections.save({
-        accountEmail: grant.email as string,
+        accountEmail: userInfo.email as string,
         refreshTokenEnc: encryptToken(
           grant.refreshToken as string,
           config.encKey,
@@ -159,7 +175,7 @@ export class GoogleConnectionService {
       action: AUDIT_ACTIONS.googleConnect,
       actor,
       targetType: 'google_connection',
-      metadata: { accountEmail: grant.email, scopes: grant.scopes },
+      metadata: { accountEmail: userInfo.email, scopes: grant.scopes },
     });
     return this.portalUrl({ connected: '1' });
   }
@@ -230,7 +246,9 @@ export class GoogleConnectionService {
     );
   }
 
-  private portalUrl(params: Record<string, string>): string {
+  private portalUrl(
+    params: { error: GoogleCallbackError } | { connected: '1' },
+  ): string {
     const base =
       this.configService.get<string>('GOOGLE_OAUTH_RETURN_URL')?.trim() ||
       DEFAULT_GOOGLE_OAUTH_RETURN_URL;
@@ -240,9 +258,10 @@ export class GoogleConnectionService {
 
 function rejectionFor(
   grant: GoogleCodeGrant,
+  userInfo: GoogleUserInfo,
   config: GoogleConfig,
-): CallbackError | null {
-  if (grant.email === null || grant.email !== config.allowedAccount) {
+): GoogleCallbackError | null {
+  if (!userInfo.emailVerified || userInfo.email !== config.allowedAccount) {
     return GOOGLE_CALLBACK_ERRORS.wrongAccount;
   }
   if (!GOOGLE_CALENDAR_SCOPES.every((scope) => grant.scopes.includes(scope))) {

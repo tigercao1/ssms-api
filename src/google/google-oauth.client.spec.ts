@@ -13,15 +13,9 @@ import {
   GOOGLE_AUTHORIZE_URL,
   GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_URL,
+  GOOGLE_USERINFO_URL,
   GoogleOAuthClient,
 } from './google-oauth.client';
-
-const goodClaims = {
-  iss: 'https://accounts.google.com',
-  aud: TEST_CLIENT_ID,
-  email: 'Admin@ssnow.club',
-  email_verified: true,
-};
 
 function build(handler: FakeHandler, env = GOOGLE_ENV) {
   const fake = fakeGoogleRuntime(handler);
@@ -58,14 +52,14 @@ describe('GoogleOAuthClient', () => {
     );
   });
 
-  it('exchanges a code and reads the verified email and granted scopes', async () => {
+  it('exchanges a code for tokens and granted scopes', async () => {
     const { client, calls } = build(() =>
       json({
         access_token: 'at',
         expires_in: 3599,
         refresh_token: 'rt',
         scope: GOOGLE_CALENDAR_SCOPES.join(' '),
-        id_token: idToken(goodClaims),
+        id_token: idToken({ email: 'admin@ssnow.club', email_verified: true }),
       }),
     );
     await expect(client.exchangeCode('the-code')).resolves.toEqual({
@@ -73,7 +67,6 @@ describe('GoogleOAuthClient', () => {
       expiresInSeconds: 3599,
       refreshToken: 'rt',
       scopes: [...GOOGLE_CALENDAR_SCOPES],
-      email: 'admin@ssnow.club',
     });
     expect(calls[0].url).toBe(GOOGLE_TOKEN_URL);
     const form = new URLSearchParams(calls[0].body);
@@ -82,30 +75,63 @@ describe('GoogleOAuthClient', () => {
     expect(form.get('redirect_uri')).toContain('/admin/google/oauth/callback');
   });
 
-  it.each([
-    ['wrong audience', { ...goodClaims, aud: 'someone-else' }],
-    ['unverified email', { ...goodClaims, email_verified: false }],
-    ['foreign issuer', { ...goodClaims, iss: 'https://evil.example' }],
-    ['no email', { ...goodClaims, email: undefined }],
-  ])('returns no email for an id_token with %s', async (_label, claims) => {
-    const { client } = build(() =>
-      json({ access_token: 'at', id_token: idToken(claims) }),
-    );
-    expect((await client.exchangeCode('c')).email).toBeNull();
-  });
-
-  it('returns no email when the id_token is missing or garbled', async () => {
-    const { client } = build(() =>
-      json({ access_token: 'at', id_token: 'a.%%%.c' }),
-    );
-    const grant = await client.exchangeCode('c');
-    expect(grant).toMatchObject({
-      email: null,
+  it('defaults a sparse token response', async () => {
+    const { client } = build(() => json({ access_token: 'at' }));
+    await expect(client.exchangeCode('c')).resolves.toEqual({
+      accessToken: 'at',
+      expiresInSeconds: 0,
       refreshToken: null,
       scopes: [],
     });
-    const { client: bare } = build(() => json({ access_token: 'at' }));
-    expect((await bare.exchangeCode('c')).email).toBeNull();
+  });
+
+  it('reads the account email from userinfo with the access token', async () => {
+    const { client, calls } = build(() =>
+      json({ email: 'Admin@ssnow.club', email_verified: true }),
+    );
+    await expect(client.userInfo('at-1')).resolves.toEqual({
+      email: 'admin@ssnow.club',
+      emailVerified: true,
+    });
+    expect(calls[0].url).toBe(GOOGLE_USERINFO_URL);
+    expect(calls[0].method).toBe('GET');
+    expect(calls[0].headers).toMatchObject({ Authorization: 'Bearer at-1' });
+  });
+
+  it.each([
+    ['unverified', { email: 'admin@ssnow.club', email_verified: false }],
+    ['string-verified', { email: 'admin@ssnow.club', email_verified: 'true' }],
+    ['unflagged', { email: 'admin@ssnow.club' }],
+  ])('treats an %s userinfo email as unverified', async (_label, body) => {
+    const { client } = build(() => json(body));
+    expect((await client.userInfo('at')).emailVerified).toBe(false);
+  });
+
+  it('reports no email when userinfo omits it', async () => {
+    const { client } = build(() => json({ email_verified: true }));
+    await expect(client.userInfo('at')).resolves.toEqual({
+      email: null,
+      emailVerified: true,
+    });
+  });
+
+  it('surfaces userinfo HTTP and network failures', async () => {
+    const { client } = build(() => json({ error: 'invalid_token' }, 401));
+    await expect(client.userInfo('at')).rejects.toMatchObject({
+      status: 401,
+      code: 'invalid_token',
+    });
+
+    const { client: bare } = build(() => json({}, 401));
+    await expect(bare.userInfo('at')).rejects.toMatchObject({
+      code: 'http_error',
+    });
+
+    const { client: offline, runtime } = build(() => json({}));
+    (runtime.fetch as jest.Mock).mockRejectedValue(new Error('ECONNRESET'));
+    await expect(offline.userInfo('at')).rejects.toMatchObject({
+      code: 'network_error',
+    });
   });
 
   it('surfaces the OAuth error code without echoing secrets', async () => {

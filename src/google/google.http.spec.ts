@@ -37,7 +37,10 @@ import {
   GoogleCalendarClient,
 } from './google-calendar.client';
 import { GoogleConnectionRepository } from './google-connection.repository';
-import { GoogleConnectionService } from './google-connection.service';
+import {
+  GOOGLE_CALLBACK_ERRORS,
+  GoogleConnectionService,
+} from './google-connection.service';
 import {
   GOOGLE_NOT_CONFIGURED,
   GOOGLE_NOT_CONNECTED,
@@ -46,6 +49,7 @@ import {
 import {
   GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_URL,
+  GOOGLE_USERINFO_URL,
   GoogleOAuthClient,
 } from './google-oauth.client';
 import { GOOGLE_RUNTIME } from './google-runtime';
@@ -82,6 +86,8 @@ interface TokenGrant {
   id_token?: string;
 }
 
+const ALLOWED_USERINFO = { email: 'admin@ssnow.club', email_verified: true };
+
 const goodGrant = (overrides: Partial<TokenGrant> = {}): TokenGrant => ({
   access_token: 'at-1',
   expires_in: 3599,
@@ -91,12 +97,6 @@ const goodGrant = (overrides: Partial<TokenGrant> = {}): TokenGrant => ({
     'https://www.googleapis.com/auth/userinfo.email',
     ...GOOGLE_CALENDAR_SCOPES,
   ].join(' '),
-  id_token: idToken({
-    iss: 'https://accounts.google.com',
-    aud: TEST_CLIENT_ID,
-    email: 'admin@ssnow.club',
-    email_verified: true,
-  }),
   ...overrides,
 });
 
@@ -105,11 +105,15 @@ async function build(env: Record<string, string> = GOOGLE_ENV) {
   const audit = recordingAudit();
   const state = {
     tokenResponse: (): Response => json(goodGrant()),
+    userInfo: (): Response => json(ALLOWED_USERINFO),
     api: (call: RecordedCall): Response => json({ items: [], call: call.url }),
   };
   const fake = fakeGoogleRuntime((call) => {
     if (call.url === GOOGLE_TOKEN_URL) {
       return state.tokenResponse();
+    }
+    if (call.url === GOOGLE_USERINFO_URL) {
+      return state.userInfo();
     }
     if (call.url === GOOGLE_REVOKE_URL) {
       return json({});
@@ -239,6 +243,23 @@ describe('/admin/google', () => {
   });
 
   describe('GET /oauth/callback', () => {
+    it('exposes exactly the documented callback error codes', () => {
+      expect(Object.values(GOOGLE_CALLBACK_ERRORS).sort()).toEqual(
+        [
+          'access_denied',
+          'wrong_account',
+          'missing_scopes',
+          'invalid_state',
+          'token_exchange_failed',
+          'no_refresh_token',
+          'not_configured',
+          'oauth_error',
+          'missing_code',
+          'server_error',
+        ].sort(),
+      );
+    });
+
     it('stores the encrypted refresh token, audits and redirects to the portal', async () => {
       const state = await connectState();
       const res = await callback({ state, code: 'auth-code', scope: 'x' });
@@ -271,18 +292,23 @@ describe('/admin/google', () => {
       expect(exchange.get('code')).toBe('auth-code');
     });
 
+    it('verifies the account through userinfo with the fresh access token', async () => {
+      await callback({ state: await connectState(), code: 'c' });
+      const lookup = ctx.calls.find((c) => c.url === GOOGLE_USERINFO_URL);
+      expect(lookup?.headers).toMatchObject({ Authorization: 'Bearer at-1' });
+    });
+
+    it('accepts the allowed account regardless of email case', async () => {
+      ctx.state.userInfo = () =>
+        json({ email: 'Admin@SSnow.Club', email_verified: true });
+      const res = await callback({ state: await connectState(), code: 'c' });
+      expect(redirectOf(res).searchParams.get('connected')).toBe('1');
+      expect(ctx.repo.row?.account_email).toBe('admin@ssnow.club');
+    });
+
     it('rejects a different Google account and revokes what it was given', async () => {
-      ctx.state.tokenResponse = () =>
-        json(
-          goodGrant({
-            id_token: idToken({
-              iss: 'https://accounts.google.com',
-              aud: TEST_CLIENT_ID,
-              email: 'someone@ssnow.club',
-              email_verified: true,
-            }),
-          }),
-        );
+      ctx.state.userInfo = () =>
+        json({ email: 'someone@ssnow.club', email_verified: true });
       const res = await callback({ state: await connectState(), code: 'c' });
       expect(redirectOf(res).searchParams.get('error')).toBe('wrong_account');
       expect(ctx.repo.row).toBeNull();
@@ -301,12 +327,58 @@ describe('/admin/google', () => {
       ]);
     });
 
-    it('rejects a grant without a verified email', async () => {
-      ctx.state.tokenResponse = () => json(goodGrant({ id_token: undefined }));
+    it('ignores an id_token that claims the allowed account', async () => {
+      ctx.state.tokenResponse = () =>
+        json(
+          goodGrant({
+            id_token: idToken({
+              iss: 'https://accounts.google.com',
+              aud: TEST_CLIENT_ID,
+              email: 'admin@ssnow.club',
+              email_verified: true,
+            }),
+          }),
+        );
+      ctx.state.userInfo = () =>
+        json({ email: 'someone@ssnow.club', email_verified: true });
       const res = await callback({ state: await connectState(), code: 'c' });
       expect(redirectOf(res).searchParams.get('error')).toBe('wrong_account');
       expect(ctx.repo.row).toBeNull();
     });
+
+    it.each([
+      ['unverified', { email: 'admin@ssnow.club', email_verified: false }],
+      ['missing', { email_verified: true }],
+    ])('rejects a userinfo response with an %s email', async (_label, body) => {
+      ctx.state.userInfo = () => json(body);
+      const res = await callback({ state: await connectState(), code: 'c' });
+      expect(redirectOf(res).searchParams.get('error')).toBe('wrong_account');
+      expect(ctx.repo.row).toBeNull();
+    });
+
+    it.each([
+      [
+        'a network error',
+        () => {
+          throw new Error('ECONNRESET');
+        },
+      ],
+      ['an HTTP error', () => json({ error: 'invalid_token' }, 401)],
+    ])(
+      'reports token_exchange_failed and revokes on %s from userinfo',
+      async (_label, userInfo) => {
+        ctx.state.userInfo = userInfo;
+        const res = await callback({ state: await connectState(), code: 'c' });
+        expect(redirectOf(res).searchParams.get('error')).toBe(
+          'token_exchange_failed',
+        );
+        expect(ctx.repo.row).toBeNull();
+        const revoke = ctx.calls.find((c) => c.url === GOOGLE_REVOKE_URL);
+        expect(new URLSearchParams(revoke?.body).get('token')).toBe(
+          REFRESH_TOKEN,
+        );
+      },
+    );
 
     it.each(GOOGLE_CALENDAR_SCOPES.map((s) => [s]))(
       'rejects a grant missing %s',

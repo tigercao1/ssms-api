@@ -23,11 +23,8 @@ export const GOOGLE_AUTHORIZE_URL =
   'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
-
-const GOOGLE_ISSUERS = new Set([
-  'https://accounts.google.com',
-  'accounts.google.com',
-]);
+export const GOOGLE_USERINFO_URL =
+  'https://openidconnect.googleapis.com/v1/userinfo';
 
 export interface GoogleAccessGrant {
   accessToken: string;
@@ -37,7 +34,11 @@ export interface GoogleAccessGrant {
 export interface GoogleCodeGrant extends GoogleAccessGrant {
   refreshToken: string | null;
   scopes: string[];
+}
+
+export interface GoogleUserInfo {
   email: string | null;
+  emailVerified: boolean;
 }
 
 interface TokenResponse {
@@ -45,14 +46,11 @@ interface TokenResponse {
   expires_in?: number;
   refresh_token?: string;
   scope?: string;
-  id_token?: string;
 }
 
-interface IdTokenClaims {
-  iss?: string;
-  aud?: string;
-  email?: string;
-  email_verified?: boolean | string;
+interface UserInfoResponse {
+  email?: unknown;
+  email_verified?: unknown;
 }
 
 @Injectable()
@@ -116,7 +114,42 @@ export class GoogleOAuthClient {
       expiresInSeconds: body.expires_in ?? 0,
       refreshToken: body.refresh_token ?? null,
       scopes: (body.scope ?? '').split(' ').filter((s) => s !== ''),
-      email: verifiedEmail(body.id_token, config.clientId),
+    };
+  }
+
+  async userInfo(accessToken: string): Promise<GoogleUserInfo> {
+    let response: Response;
+    try {
+      ({ response } = await sendWithRetry(
+        this.runtime,
+        GOOGLE_USERINFO_URL,
+        () => ({
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/json',
+          },
+        }),
+      ));
+    } catch (err) {
+      throw new GoogleAuthError(
+        undefined,
+        'network_error',
+        (err as Error).message,
+      );
+    }
+    if (!response.ok) {
+      const body = await readErrorBody(response);
+      throw new GoogleAuthError(
+        response.status,
+        errorReason(body) ?? 'http_error',
+        errorMessage(body),
+      );
+    }
+    const body = (await response.json()) as UserInfoResponse;
+    return {
+      email: typeof body.email === 'string' ? body.email.toLowerCase() : null,
+      emailVerified: body.email_verified === true,
     };
   }
 
@@ -189,34 +222,4 @@ export class GoogleOAuthClient {
     }
     return body;
   }
-}
-
-function verifiedEmail(
-  idToken: string | undefined,
-  clientId: string,
-): string | null {
-  const payload = idToken?.split('.')[1];
-  if (!payload) {
-    return null;
-  }
-  let claims: IdTokenClaims;
-  try {
-    claims = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf8'),
-    ) as IdTokenClaims;
-  } catch {
-    return null;
-  }
-  const verified =
-    claims.email_verified === true || claims.email_verified === 'true';
-  if (
-    !claims.iss ||
-    !GOOGLE_ISSUERS.has(claims.iss) ||
-    claims.aud !== clientId ||
-    !verified ||
-    typeof claims.email !== 'string'
-  ) {
-    return null;
-  }
-  return claims.email.toLowerCase();
 }

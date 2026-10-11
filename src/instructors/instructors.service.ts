@@ -2,8 +2,11 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { resolveEmailLanguage } from '../mailer/email-language';
+import { MailerService } from '../mailer/mailer.service';
 import {
   formatCertification,
   formatTrainerStatus,
@@ -57,15 +60,19 @@ function bioStateOf(row: InstructorRow): BioStateInput {
 
 @Injectable()
 export class InstructorsService {
+  private readonly logger = new Logger(InstructorsService.name);
+
   constructor(
     private readonly repo: InstructorsRepository,
     @Inject(TRANSLATION_QUEUE)
     private readonly translationQueue: TranslationQueuePort,
+    private readonly mailer: MailerService,
   ) {}
 
   /**
-   * T3.1 — Get the caller's profile, creating a `pending` row on first verified
-   * call and returning the same row idempotently thereafter.
+   * Get the caller's profile, creating a `pending` row on first verified
+   * call and returning the same row idempotently thereafter. Creating the row
+   * emails every admin (`admin.instructor_pending`) in the background.
    */
   async getOrCreateForUser(
     authUserId: string,
@@ -78,6 +85,7 @@ export class InstructorsService {
 
     const created = await this.repo.insertPending(authUserId, email);
     if (created) {
+      void this.notifyAdminsOfPending(created);
       return this.buildProfile(created);
     }
 
@@ -88,6 +96,31 @@ export class InstructorsService {
       throw new NotFoundException('Instructor profile could not be created');
     }
     return this.buildProfile(raced);
+  }
+
+  private async notifyAdminsOfPending(row: InstructorRow): Promise<void> {
+    try {
+      const admins = await this.repo.listAdminRecipients();
+      const reviewUrl = this.mailer.portalLink(`/admin/instructors/${row.id}`);
+      await Promise.all(
+        admins.map((admin) =>
+          this.mailer.send({
+            template: 'admin.instructor_pending',
+            to: admin.email,
+            language: resolveEmailLanguage(admin.preferredLanguage),
+            vars: { instructorEmail: row.email, reviewUrl },
+            mode: 'background',
+            authUserId: admin.authUserId,
+            metadata: { pendingInstructorId: row.id },
+          }),
+        ),
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify admins of pending instructor ${row.id}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async getProfileById(instructorId: string): Promise<InstructorProfile> {

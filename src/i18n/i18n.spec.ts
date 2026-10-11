@@ -43,18 +43,34 @@ describe('i18n catalogs', () => {
     }
   });
 
-  it('exposes the notification copy the Notifications module (T8.2) consumes', () => {
-    for (const type of ['approved', 'rejected', 'deactivated'] as const) {
-      for (const lang of ['en', 'zh-CN'] as const) {
-        const copy = catalogs[lang].notification[type];
-        expect(copy.subject).toBeTruthy();
-        expect(copy.greeting).toBeTruthy();
-        expect(copy.body).toBeTruthy();
-        expect(copy.reasonLabel).toBeTruthy();
-        expect(copy.linkLabel).toBeTruthy();
-        expect(copy.signoff).toBeTruthy();
-      }
+  it('brands every email subject and sign-off as Serendipity Snow Club', () => {
+    for (const lang of ['en', 'zh-CN'] as const) {
+      const { layout } = catalogs[lang].email;
+      expect(layout.signoffTeam).toContain('Serendipity Snow Club');
+      expect(layout.footerQuestions).toContain('info@ssnow.club');
     }
+    expect(zhCN.email.layout.signoffTeam).toBe('Serendipity Snow Club 团队');
+  });
+
+  it('keeps every email paragraph list the same length in both languages', () => {
+    const walk = (enNode: unknown, zhNode: unknown): void => {
+      if (Array.isArray(enNode)) {
+        expect((zhNode as unknown[]).length).toBe(enNode.length);
+        return;
+      }
+      if (enNode && typeof enNode === 'object') {
+        for (const [key, value] of Object.entries(enNode)) {
+          walk(value, (zhNode as Record<string, unknown>)[key]);
+        }
+      }
+    };
+    walk(en.email, zhCN.email);
+  });
+
+  it('drops the old "visible to partners" wording from instructor emails', () => {
+    const all = JSON.stringify([en.email, zhCN.email]);
+    expect(all).not.toMatch(/partner/i);
+    expect(all).not.toContain('合作伙伴');
   });
 });
 
@@ -82,8 +98,8 @@ describe('language resolution', () => {
 describe('t() lookup + fallback', () => {
   it('resolves a dot-path key in the requested language', () => {
     expect(t('en', 'error.unauthorized')).toBe(en.error.unauthorized);
-    expect(t('zh-CN', 'notification.approved.subject')).toBe(
-      zhCN.notification.approved.subject,
+    expect(t('zh-CN', 'email.approved.subject')).toBe(
+      zhCN.email.approved.subject,
     );
   });
 

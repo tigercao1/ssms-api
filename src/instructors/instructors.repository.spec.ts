@@ -28,6 +28,10 @@ class QueryBuilder implements PromiseLike<DbResult> {
   insert(): this {
     return this;
   }
+  in(column: string, values: unknown): this {
+    this.filters.push([column, values]);
+    return this;
+  }
   maybeSingle(): Promise<DbResult> {
     return Promise.resolve(this.result);
   }
@@ -49,6 +53,18 @@ class FakeSupabase {
   rpcResult: { error: unknown } = { error: null };
   rpcCalls: Array<{ name: string; params: unknown }> = [];
   builders: QueryBuilder[] = [];
+  userPages: Array<{ data: { users: unknown[] }; error: unknown }> = [];
+  listUsersCalls: unknown[] = [];
+  auth = {
+    admin: {
+      listUsers: (params: unknown) => {
+        this.listUsersCalls.push(params);
+        return Promise.resolve(
+          this.userPages.shift() ?? { data: { users: [] }, error: null },
+        );
+      },
+    },
+  };
   from(table: string): QueryBuilder {
     const builder = new QueryBuilder(this.next, table);
     this.builders.push(builder);
@@ -295,5 +311,94 @@ describe('SupabaseInstructorsRepository', () => {
     await expect(
       repo.setAdditionalPhoto('inst-1', 3, null),
     ).rejects.toBeInstanceOf(InternalServerErrorException);
+  });
+
+  describe('listAdminRecipients', () => {
+    const user = (id: string, role: string | undefined, email?: string) => ({
+      id,
+      email,
+      app_metadata: role ? { role } : {},
+    });
+
+    it('pages through auth users, keeps admins with an email and attaches instructor languages', async () => {
+      const { repo, fake } = makeRepo();
+      const fullPage = Array.from({ length: 1000 }, (_, i) =>
+        user(`u-${i}`, 'instructor', `u${i}@x.com`),
+      );
+      fullPage[0] = user('admin-1', 'admin', 'boss@x.com');
+      fake.userPages = [
+        { data: { users: fullPage }, error: null },
+        {
+          data: {
+            users: [
+              user('admin-2', 'admin', 'ops@x.com'),
+              user('admin-3', 'admin'),
+              user('u-x', undefined, 'plain@x.com'),
+            ],
+          },
+          error: null,
+        },
+      ];
+      fake.next = {
+        data: [{ auth_user_id: 'admin-1', preferred_language: 'zh-CN' }],
+        error: null,
+      };
+
+      await expect(repo.listAdminRecipients()).resolves.toEqual([
+        {
+          authUserId: 'admin-1',
+          email: 'boss@x.com',
+          preferredLanguage: 'zh-CN',
+        },
+        { authUserId: 'admin-2', email: 'ops@x.com', preferredLanguage: null },
+      ]);
+      expect(fake.listUsersCalls).toEqual([
+        { page: 1, perPage: 1000 },
+        { page: 2, perPage: 1000 },
+      ]);
+      expect(fake.builders[0].table).toBe('instructors');
+      expect(fake.builders[0].filters).toEqual([
+        ['auth_user_id', ['admin-1', 'admin-2']],
+      ]);
+    });
+
+    it('returns [] without querying instructors when there are no admins', async () => {
+      const { repo, fake } = makeRepo();
+      fake.userPages = [
+        { data: { users: [user('u', 'instructor', 'a@b.c')] }, error: null },
+      ];
+      await expect(repo.listAdminRecipients()).resolves.toEqual([]);
+      expect(fake.builders).toHaveLength(0);
+    });
+
+    it('throws when the auth admin API fails', async () => {
+      const { repo, fake } = makeRepo();
+      fake.userPages = [{ data: { users: [] }, error: { message: 'nope' } }];
+      await expect(repo.listAdminRecipients()).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+    });
+
+    it('throws when the instructor language lookup fails', async () => {
+      const { repo, fake } = makeRepo();
+      fake.userPages = [
+        { data: { users: [user('admin-1', 'admin', 'a@b.c')] }, error: null },
+      ];
+      fake.next = { data: null, error: { message: 'db down' } };
+      await expect(repo.listAdminRecipients()).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+    });
+
+    it('treats a null instructor result as no languages', async () => {
+      const { repo, fake } = makeRepo();
+      fake.userPages = [
+        { data: { users: [user('admin-1', 'admin', 'a@b.c')] }, error: null },
+      ];
+      fake.next = { data: null, error: null };
+      await expect(repo.listAdminRecipients()).resolves.toEqual([
+        { authUserId: 'admin-1', email: 'a@b.c', preferredLanguage: null },
+      ]);
+    });
   });
 });

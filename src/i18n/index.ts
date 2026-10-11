@@ -10,8 +10,11 @@ export {
   DEFAULT_LANGUAGE,
   type MessageCatalog,
   type SupportedLanguage,
-  type NotificationCopy,
-  type NotificationMessages,
+  type EmailButtonCopy,
+  type EmailCopy,
+  type EmailLayoutCopy,
+  type EmailMessages,
+  type EmailRejectedCopy,
 } from './messages.types';
 export { en } from './en/messages';
 export { zhCN } from './zh-CN/messages';
@@ -55,11 +58,11 @@ export function getCatalog(
   return catalogs[resolveLanguage(language)];
 }
 
-type Vars = Record<string, string | number>;
+export type Vars = Record<string, string | number>;
 
 /**
  * Translate a dot-path key (e.g. `'error.unauthorized'`,
- * `'notification.approved.subject'`) for a language, walking the fallback chain
+ * `'email.approved.subject'`) for a language, walking the fallback chain
  * (`zh-CN → en`) when a key is absent. `{token}` placeholders are interpolated
  * from `vars`.
  *
@@ -96,7 +99,8 @@ function lookup(catalog: MessageCatalog, key: string): unknown {
     );
 }
 
-function interpolate(template: string, vars: Vars): string {
+/** Fills `{token}` placeholders from `vars`; unknown tokens are left as-is. */
+export function interpolate(template: string, vars: Vars): string {
   return template.replace(/\{(\w+)\}/g, (match, token: string) =>
     token in vars ? String(vars[token]) : match,
   );

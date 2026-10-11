@@ -17,6 +17,15 @@ import {
 /** Postgres unique-violation; surfaced when two first-calls race the insert. */
 export const PG_UNIQUE_VIOLATION = '23505';
 
+const AUTH_USERS_PAGE_SIZE = 1000;
+
+/** An auth user with `app_metadata.role = 'admin'`, plus their instructor language if any. */
+export interface AdminRecipient {
+  authUserId: string;
+  email: string;
+  preferredLanguage: string | null;
+}
+
 /**
  * Data-access boundary for the Instructors module. Declared as an abstract
  * class so it doubles as a DI token and lets unit tests bind an in-memory fake
@@ -46,6 +55,8 @@ export abstract class InstructorsRepository {
     slot: AdditionalPhotoSlot,
     url: string | null,
   ): Promise<void>;
+  /** Every admin user with an email, via the Supabase admin API. */
+  abstract listAdminRecipients(): Promise<AdminRecipient[]>;
 }
 
 const INSTRUCTOR_COLUMNS =
@@ -243,5 +254,57 @@ export class SupabaseInstructorsRepository extends InstructorsRepository {
         `Failed to update photo ${slot}: ${error.message}`,
       );
     }
+  }
+
+  async listAdminRecipients(): Promise<AdminRecipient[]> {
+    const admins: { id: string; email: string }[] = [];
+    for (let page = 1; ; page++) {
+      const { data, error } = await this.supabase.auth.admin.listUsers({
+        page,
+        perPage: AUTH_USERS_PAGE_SIZE,
+      });
+      if (error) {
+        throw new InternalServerErrorException(
+          `Failed to list users: ${error.message}`,
+        );
+      }
+      for (const user of data.users) {
+        if (user.app_metadata?.role === 'admin' && user.email) {
+          admins.push({ id: user.id, email: user.email });
+        }
+      }
+      if (data.users.length < AUTH_USERS_PAGE_SIZE) {
+        break;
+      }
+    }
+    if (admins.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await this.supabase
+      .from('instructors')
+      .select('auth_user_id, preferred_language')
+      .in(
+        'auth_user_id',
+        admins.map((a) => a.id),
+      );
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to load admin languages: ${error.message}`,
+      );
+    }
+    const languages = new Map(
+      (
+        (data ?? []) as {
+          auth_user_id: string;
+          preferred_language: string | null;
+        }[]
+      ).map((row) => [row.auth_user_id, row.preferred_language]),
+    );
+    return admins.map((admin) => ({
+      authUserId: admin.id,
+      email: admin.email,
+      preferredLanguage: languages.get(admin.id) ?? null,
+    }));
   }
 }

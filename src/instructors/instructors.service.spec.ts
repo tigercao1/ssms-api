@@ -1,6 +1,10 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { InstructorsService } from './instructors.service';
-import { InstructorsRepository } from './instructors.repository';
+import type { MailerService } from '../mailer/mailer.service';
+import {
+  type AdminRecipient,
+  InstructorsRepository,
+} from './instructors.repository';
 import {
   CertificationRow,
   InstructorProfilePatch,
@@ -52,6 +56,8 @@ class FakeRepo extends InstructorsRepository {
   certs: CertificationRow[] = [];
   trainers: TrainerStatusRow[] = [];
   photoVersionBumps: string[] = [];
+  admins: AdminRecipient[] = [];
+  adminsError: Error | null = null;
 
   findByAuthUserId(authUserId: string): Promise<InstructorRow | null> {
     return Promise.resolve(
@@ -119,6 +125,11 @@ class FakeRepo extends InstructorsRepository {
     this.photoVersionBumps.push(id);
     return Promise.resolve();
   }
+  listAdminRecipients(): Promise<AdminRecipient[]> {
+    return this.adminsError
+      ? Promise.reject(this.adminsError)
+      : Promise.resolve(this.admins);
+  }
   setAdditionalPhoto(
     id: string,
     slot: 2 | 3,
@@ -130,6 +141,10 @@ class FakeRepo extends InstructorsRepository {
     }
     return Promise.resolve();
   }
+}
+
+function flush(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 class FakeQueue implements TranslationQueuePort {
@@ -144,11 +159,22 @@ describe('InstructorsService', () => {
   let repo: FakeRepo;
   let queue: FakeQueue;
   let service: InstructorsService;
+  let mailer: { send: jest.Mock; portalLink: jest.Mock };
 
   beforeEach(() => {
     repo = new FakeRepo();
     queue = new FakeQueue();
-    service = new InstructorsService(repo, queue);
+    mailer = {
+      send: jest.fn().mockResolvedValue('sent'),
+      portalLink: jest.fn(
+        (path: string) => `https://portal.example.com${path}`,
+      ),
+    };
+    service = new InstructorsService(
+      repo,
+      queue,
+      mailer as unknown as MailerService,
+    );
   });
 
   describe('getOrCreateForUser (T3.1)', () => {
@@ -177,6 +203,55 @@ describe('InstructorsService', () => {
       };
       const profile = await service.getOrCreateForUser('auth-9', 'x@y.com');
       expect(profile.id).toBe(existing.id);
+      await flush();
+      expect(mailer.send).not.toHaveBeenCalled();
+    });
+
+    it('emails every admin in the background when it creates the pending row', async () => {
+      repo.admins = [
+        {
+          authUserId: 'admin-1',
+          email: 'boss@example.com',
+          preferredLanguage: 'en',
+        },
+        {
+          authUserId: 'admin-2',
+          email: 'ops@example.com',
+          preferredLanguage: null,
+        },
+      ];
+      const profile = await service.getOrCreateForUser('auth-1', 'new@b.com');
+      await flush();
+
+      expect(mailer.send).toHaveBeenCalledTimes(2);
+      const reviewUrl = `https://portal.example.com/admin/instructors/${profile.id}`;
+      expect(mailer.send).toHaveBeenCalledWith({
+        template: 'admin.instructor_pending',
+        to: 'boss@example.com',
+        language: 'en',
+        vars: { instructorEmail: 'new@b.com', reviewUrl },
+        mode: 'background',
+        authUserId: 'admin-1',
+        metadata: { pendingInstructorId: profile.id },
+      });
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'ops@example.com',
+          language: 'bilingual',
+        }),
+      );
+
+      await service.getOrCreateForUser('auth-1', 'new@b.com');
+      await flush();
+      expect(mailer.send).toHaveBeenCalledTimes(2);
+    });
+
+    it('still returns the profile when the admin lookup fails', async () => {
+      repo.adminsError = new Error('auth api down');
+      const profile = await service.getOrCreateForUser('auth-1', 'new@b.com');
+      await flush();
+      expect(profile.approvalStatus).toBe('pending');
+      expect(mailer.send).not.toHaveBeenCalled();
     });
   });
 

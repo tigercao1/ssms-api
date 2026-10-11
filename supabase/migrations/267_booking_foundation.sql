@@ -178,3 +178,66 @@ revoke all on classes from public, anon, authenticated;
 alter table class_participants enable row level security;
 alter table class_participants force row level security;
 revoke all on class_participants from public, anon, authenticated;
+
+create or replace function public.sync_lesson_products(p_rows jsonb)
+returns table (inserted int, updated int)
+language sql
+security invoker
+set search_path = public
+as $$
+  with incoming as (
+    select *
+      from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r (
+        shopify_product_id  bigint,
+        shopify_variant_id  bigint,
+        product_title       text,
+        variant_title       text,
+        lesson_type         text,
+        group_size          int,
+        sessions            int,
+        duration_min        int,
+        priced_per_student  boolean,
+        instructor_id       uuid,
+        price               numeric(10, 2),
+        currency            text
+      )
+  ),
+  written as (
+    insert into lesson_products as lp (
+      shopify_product_id, shopify_variant_id, product_title, variant_title,
+      lesson_type, group_size, sessions, duration_min, priced_per_student,
+      instructor_id, price, currency
+    )
+    select shopify_product_id, shopify_variant_id, product_title, variant_title,
+           coalesce(lesson_type, 'other'), group_size, sessions, duration_min,
+           coalesce(priced_per_student, false), instructor_id, price, currency
+      from incoming
+    on conflict (shopify_variant_id) do update set
+      shopify_product_id = excluded.shopify_product_id,
+      product_title      = excluded.product_title,
+      variant_title      = excluded.variant_title,
+      price              = excluded.price,
+      currency           = excluded.currency,
+      lesson_type        = case when lp.status = 'suggested' then excluded.lesson_type else lp.lesson_type end,
+      group_size         = case when lp.status = 'suggested' then excluded.group_size else lp.group_size end,
+      sessions           = case when lp.status = 'suggested' then excluded.sessions else lp.sessions end,
+      duration_min       = case when lp.status = 'suggested' then excluded.duration_min else lp.duration_min end,
+      priced_per_student = case when lp.status = 'suggested' then excluded.priced_per_student else lp.priced_per_student end,
+      instructor_id      = case when lp.status = 'suggested' then excluded.instructor_id else lp.instructor_id end
+    where (lp.shopify_product_id, lp.product_title, lp.variant_title, lp.price, lp.currency)
+            is distinct from
+          (excluded.shopify_product_id, excluded.product_title, excluded.variant_title, excluded.price, excluded.currency)
+       or (lp.status = 'suggested'
+           and (lp.lesson_type, lp.group_size, lp.sessions, lp.duration_min, lp.priced_per_student, lp.instructor_id)
+                 is distinct from
+               (excluded.lesson_type, excluded.group_size, excluded.sessions, excluded.duration_min, excluded.priced_per_student, excluded.instructor_id))
+    returning (xmax = 0) as was_inserted
+  )
+  select (count(*) filter (where was_inserted))::int,
+         (count(*) filter (where not was_inserted))::int
+    from written;
+$$;
+
+revoke all on function public.sync_lesson_products(jsonb)
+  from public, anon, authenticated;
+grant execute on function public.sync_lesson_products(jsonb) to service_role;

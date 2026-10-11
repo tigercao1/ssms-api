@@ -34,6 +34,9 @@ export const AUDIT_ACTIONS = {
   pageUnpublish: 'page.unpublish',
   pageDelete: 'page.delete',
   pageStorageInconsistent: 'page.storage_inconsistent',
+  lessonProductSync: 'lesson_product.sync',
+  lessonProductUpdate: 'lesson_product.update',
+  instructorGoogleCalendarUpdate: 'instructor.google_calendar_update',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -61,6 +64,7 @@ export interface AuditEntry {
     | 'api_key'
     | 'reference'
     | 'public_page'
+    | 'lesson_product'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

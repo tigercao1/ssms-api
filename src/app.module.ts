@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { AuthHooksModule } from './auth-hooks/auth-hooks.module';
 import { HealthModule } from './health/health.module';
 import { validateEnv } from './config/env.validation';
 import { ReferenceDataModule } from './reference-data/reference-data.module';
@@ -53,6 +54,7 @@ import { CustomersModule } from './customers/customers.module';
     ActivationModule,
     LessonsModule,
     CustomersModule,
+    AuthHooksModule,
   ],
   controllers: [AppController],
   providers: [AppService],

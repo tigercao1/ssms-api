@@ -196,11 +196,37 @@ describe('MailerService', () => {
       outcome: 'failed',
       message: 'hard down',
     });
-    expect(send).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledTimes(2);
     expect(inserts.email_log[0]).toMatchObject({
       status: 'failed',
-      metadata: { mode: 'sync' },
+      metadata: { mode: 'sync', attempts: 2 },
     });
+  });
+
+  it('sync: bounds each attempt to fit the 5s hook budget', async () => {
+    const { client } = makeSupabase();
+    const send = jest.fn().mockRejectedValue(new Error('timeout'));
+    const mailer = service({ isConfigured: () => true, send }, client);
+
+    await expect(mailer.send(request({ mode: 'sync' }))).rejects.toBeInstanceOf(
+      EmailDeliveryError,
+    );
+    const timeouts = send.mock.calls.map(
+      ([message]: [{ timeoutMs?: number }]) => message.timeoutMs ?? Infinity,
+    );
+    const worstCaseMs = timeouts.reduce((sum, ms) => sum + ms, 0) + 250;
+    expect(worstCaseMs).toBeLessThan(5_000);
+  });
+
+  it('background: gives each attempt a longer timeout', async () => {
+    const { client } = makeSupabase();
+    const send = jest.fn().mockResolvedValue({ id: 'x' });
+    const mailer = service({ isConfigured: () => true, send }, client);
+
+    await mailer.send(request({ mode: 'background' }));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 10_000 }),
+    );
   });
 
   it('sync: throws when the sender is not configured', async () => {

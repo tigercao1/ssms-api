@@ -9,13 +9,23 @@ import {
   type RenderedEmail,
   type SendEmailRequest,
   type SendOutcome,
+  type SendMode,
 } from './mailer.types';
 import { EmailRenderer } from './templates/email-renderer';
 
 const AUDIT_TABLE = 'audit_log';
 const EMAIL_LOG_TABLE = 'email_log';
-const DEFAULT_MAX_ATTEMPTS = 3;
 const BACKOFF_BASE_MS = 250;
+
+/**
+ * Per-mode retry budget. `sync` serves the Supabase send-email hook, which has
+ * a 5s budget for the whole call: 2 x 1.5s + 250ms backoff stays under it.
+ */
+const RETRY_POLICY: Record<SendMode, { attempts: number; timeoutMs: number }> =
+  {
+    sync: { attempts: 2, timeoutMs: 1_500 },
+    background: { attempts: 3, timeoutMs: 10_000 },
+  };
 
 interface AttemptResult {
   outcome: SendOutcome;
@@ -37,7 +47,6 @@ interface AttemptResult {
 @Injectable()
 export class MailerService {
   private readonly logger = new Logger(MailerService.name);
-  private readonly maxAttempts = DEFAULT_MAX_ATTEMPTS;
 
   constructor(
     @Inject(EMAIL_SENDER) private readonly sender: EmailSender,
@@ -119,12 +128,14 @@ export class MailerService {
     request: SendEmailRequest,
     rendered: RenderedEmail,
   ): Promise<AttemptResult> {
+    const { attempts, timeoutMs } = RETRY_POLICY[request.mode];
     let lastError = 'unknown send failure';
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const { id } = await this.sender.send({
           to: request.to,
           ...rendered,
+          timeoutMs,
           ...(request.idempotencyKey
             ? { idempotencyKey: request.idempotencyKey }
             : {}),
@@ -138,15 +149,15 @@ export class MailerService {
       } catch (err) {
         lastError = errorMessage(err);
         this.logger.warn(
-          `Attempt ${attempt}/${this.maxAttempts} to send ${request.template} ` +
+          `Attempt ${attempt}/${attempts} to send ${request.template} ` +
             `failed: ${lastError}`,
         );
-        if (attempt < this.maxAttempts) {
+        if (attempt < attempts) {
           await delay(BACKOFF_BASE_MS * 2 ** (attempt - 1));
         }
       }
     }
-    return { outcome: 'failed', attempts: this.maxAttempts, error: lastError };
+    return { outcome: 'failed', attempts, error: lastError };
   }
 
   /** Best-effort `email_log` insert; a logging failure is only logged. */

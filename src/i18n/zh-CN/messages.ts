@@ -224,6 +224,80 @@ export const zhCN: MessageCatalog = {
         ],
         finePrint: '您收到这封安全提醒，是因为您的账户密码发生了变更。',
       },
+      emailChanged: {
+        subject: '您的 Serendipity Snow Club 账户邮箱已更改',
+        preheader: '关于您账户的安全提醒。',
+        heading: '账户邮箱已更改',
+        paragraphs: [
+          '您的 Serendipity Snow Club 账户邮箱已从 {oldEmail} 更改为 {newEmail}。',
+          '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint:
+          '您的账户邮箱发生了变更，因此我们将这封安全提醒发送到您之前的邮箱。',
+      },
+      phoneChanged: {
+        subject: '您的 Serendipity Snow Club 账户手机号已更改',
+        preheader: '关于您账户的安全提醒。',
+        heading: '手机号已更改',
+        paragraphs: [
+          '您的 Serendipity Snow Club 账户手机号刚刚已更改。',
+          '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint: '您收到这封安全提醒，是因为您的账户手机号发生了变更。',
+      },
+      identityLinked: {
+        subject: '您的账户新增了一种登录方式',
+        preheader: '关于您账户的安全提醒。',
+        heading: '已新增登录方式',
+        paragraphs: [
+          '您的 Serendipity Snow Club 账户已关联新的登录方式（{provider}）。',
+          '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint: '您收到这封安全提醒，是因为您账户的登录方式发生了变更。',
+      },
+      identityUnlinked: {
+        subject: '您的账户移除了一种登录方式',
+        preheader: '关于您账户的安全提醒。',
+        heading: '已移除登录方式',
+        paragraphs: [
+          '您的 Serendipity Snow Club 账户已移除一种登录方式（{provider}）。',
+          '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint: '您收到这封安全提醒，是因为您账户的登录方式发生了变更。',
+      },
+      mfaEnrolled: {
+        subject: '您的账户已添加两步验证',
+        preheader: '关于您账户的安全提醒。',
+        heading: '已添加两步验证',
+        paragraphs: [
+          '您的 Serendipity Snow Club 账户已添加新的两步验证方式（{factorType}）。',
+          '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint: '您收到这封安全提醒，是因为您账户的两步验证设置发生了变更。',
+      },
+      mfaUnenrolled: {
+        subject: '您的账户已移除两步验证',
+        preheader: '关于您账户的安全提醒。',
+        heading: '已移除两步验证',
+        paragraphs: [
+          '您的 Serendipity Snow Club 账户已移除一种两步验证方式（{factorType}）。',
+          '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint: '您收到这封安全提醒，是因为您账户的两步验证设置发生了变更。',
+      },
+      generic: {
+        subject: '关于您的 Serendipity Snow Club 账户',
+        preheader: '有关您账户的最新消息。',
+        heading: '关于您的账户',
+        paragraphs: [
+          '我们收到了一项与您的 Serendipity Snow Club 账户相关的请求。',
+        ],
+        linkParagraph:
+          '如果是您本人操作，请点击下方按钮继续。链接 1 小时内有效。',
+        button: '继续',
+        finePrint:
+          '如果这不是您本人的操作，请忽略这封邮件，或回复这封邮件，我们会协助您保护账户安全。',
+      },
     },
     invite: {
       season: {

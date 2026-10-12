@@ -227,6 +227,85 @@ export const en: MessageCatalog = {
         finePrint:
           "You're receiving this security notice because your account password changed.",
       },
+      emailChanged: {
+        subject: 'Your Serendipity Snow Club email address was changed',
+        preheader: 'A quick security notice about your account.',
+        heading: 'Your email address was changed',
+        paragraphs: [
+          'The email address for your Serendipity Snow Club account was changed from {oldEmail} to {newEmail}.',
+          "If you made this change, there's nothing else to do. If you didn't, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice at your previous email address because your account email changed.",
+      },
+      phoneChanged: {
+        subject: 'Your Serendipity Snow Club phone number was changed',
+        preheader: 'A quick security notice about your account.',
+        heading: 'Your phone number was changed',
+        paragraphs: [
+          'The phone number on your Serendipity Snow Club account was just changed.',
+          "If you made this change, there's nothing else to do. If you didn't, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice because your account phone number changed.",
+      },
+      identityLinked: {
+        subject: 'A new sign-in method was added to your account',
+        preheader: 'A quick security notice about your account.',
+        heading: 'New sign-in method added',
+        paragraphs: [
+          'A new sign-in method ({provider}) was linked to your Serendipity Snow Club account.',
+          "If you made this change, there's nothing else to do. If you didn't, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice because the sign-in methods on your account changed.",
+      },
+      identityUnlinked: {
+        subject: 'A sign-in method was removed from your account',
+        preheader: 'A quick security notice about your account.',
+        heading: 'Sign-in method removed',
+        paragraphs: [
+          'A sign-in method ({provider}) was removed from your Serendipity Snow Club account.',
+          "If you made this change, there's nothing else to do. If you didn't, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice because the sign-in methods on your account changed.",
+      },
+      mfaEnrolled: {
+        subject: 'Two-step verification was added to your account',
+        preheader: 'A quick security notice about your account.',
+        heading: 'Two-step verification added',
+        paragraphs: [
+          'A new two-step verification method ({factorType}) was added to your Serendipity Snow Club account.',
+          "If you made this change, there's nothing else to do. If you didn't, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice because the two-step verification settings on your account changed.",
+      },
+      mfaUnenrolled: {
+        subject: 'Two-step verification was removed from your account',
+        preheader: 'A quick security notice about your account.',
+        heading: 'Two-step verification removed',
+        paragraphs: [
+          'A two-step verification method ({factorType}) was removed from your Serendipity Snow Club account.',
+          "If you made this change, there's nothing else to do. If you didn't, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice because the two-step verification settings on your account changed.",
+      },
+      generic: {
+        subject: 'A message about your Serendipity Snow Club account',
+        preheader: 'An update about your account.',
+        heading: 'About your account',
+        paragraphs: [
+          'We received a request related to your Serendipity Snow Club account.',
+        ],
+        linkParagraph:
+          'If it was you, use the button below to continue. The link is valid for 1 hour.',
+        button: 'Continue',
+        finePrint:
+          "If you didn't make this request, you can ignore this email, or reply to it and we'll help secure your account.",
+      },
     },
     invite: {
       season: {

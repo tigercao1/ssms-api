@@ -26,6 +26,13 @@ export type EmailTemplate =
   | 'auth.email_change'
   | 'auth.reauthentication'
   | 'auth.password_changed'
+  | 'auth.email_changed'
+  | 'auth.phone_changed'
+  | 'auth.identity_linked'
+  | 'auth.identity_unlinked'
+  | 'auth.mfa_enrolled'
+  | 'auth.mfa_unenrolled'
+  | 'auth.generic'
   | 'invite.season'
   | 'invite.reminder'
   | 'admin.instructor_pending';
@@ -59,6 +66,13 @@ export interface EmailTemplateVars {
   };
   'auth.reauthentication': { code: string };
   'auth.password_changed': Record<string, never>;
+  'auth.email_changed': { oldEmail: string; newEmail: string };
+  'auth.phone_changed': Record<string, never>;
+  'auth.identity_linked': { provider: string };
+  'auth.identity_unlinked': { provider: string };
+  'auth.mfa_enrolled': { factorType: string };
+  'auth.mfa_unenrolled': { factorType: string };
+  'auth.generic': { actionUrl?: string | null };
   'invite.season': InviteVars;
   'invite.reminder': InviteVars;
   'admin.instructor_pending': { instructorEmail: string; reviewUrl: string };
@@ -109,6 +123,8 @@ export interface EmailMessage {
   text: string;
   /** Sent as the provider's `Idempotency-Key` header when set. */
   idempotencyKey?: string;
+  /** Abort the provider request after this many milliseconds. */
+  timeoutMs?: number;
 }
 
 /** A rendered email before it is addressed. */

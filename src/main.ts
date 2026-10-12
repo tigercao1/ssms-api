@@ -4,7 +4,7 @@ import { AppModule } from './app.module';
 import { buildCorsOptions, parseAllowedOrigins } from './config/cors';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Global validation — see backend-architecture.md §4.
   app.useGlobalPipes(

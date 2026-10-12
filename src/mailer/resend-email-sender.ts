@@ -4,6 +4,7 @@ import type { EmailSender } from './email-sender.interface';
 import { DEFAULT_REPLY_TO, readOptional } from './mailer.config';
 import type { EmailMessage } from './mailer.types';
 
+const DEFAULT_TIMEOUT_MS = 10_000;
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
 /**
@@ -48,6 +49,7 @@ export class ResendEmailSender implements EmailSender {
 
     const response = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
+      signal: AbortSignal.timeout(message.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',

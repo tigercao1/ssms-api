@@ -26,6 +26,13 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'auth.email_change',
   'auth.reauthentication',
   'auth.password_changed',
+  'auth.email_changed',
+  'auth.phone_changed',
+  'auth.identity_linked',
+  'auth.identity_unlinked',
+  'auth.mfa_enrolled',
+  'auth.mfa_unenrolled',
+  'auth.generic',
   'invite.season',
   'invite.reminder',
   'admin.instructor_pending',
@@ -144,6 +151,40 @@ describe('EmailRenderer', () => {
     expect(html).toContain('99887766');
     expect(html).not.toContain(`bgcolor="${BRAND_RED}"`);
     expect(text).not.toContain(en.email.layout.codeLabel);
+  });
+
+  it('auth link samples carry no fallback code', () => {
+    for (const template of [
+      'auth.confirm_signup',
+      'auth.recovery',
+      'auth.magic_link',
+      'auth.email_change',
+    ] as const) {
+      const { text } = renderer.renderSample(template, 'en');
+      expect(text).not.toContain(en.email.layout.codeLabel);
+    }
+  });
+
+  it('auth.email_changed names the old and new addresses', () => {
+    const { text } = renderer.render('auth.email_changed', 'en', {
+      oldEmail: 'old@example.com',
+      newEmail: 'new@example.com',
+    });
+    expect(text).toContain('from old@example.com to new@example.com');
+  });
+
+  it('auth.generic shows the link paragraph and button only with a link', () => {
+    const withLink = renderer.render('auth.generic', 'en', {
+      actionUrl: 'https://x.example/verify?token=a',
+    });
+    expect(withLink.text).toContain(en.email.auth.generic.linkParagraph);
+    expect(withLink.html).toContain('href="https://x.example/verify?token=a"');
+
+    const withoutLink = renderer.render('auth.generic', 'en', {
+      actionUrl: null,
+    });
+    expect(withoutLink.text).not.toContain(en.email.auth.generic.linkParagraph);
+    expect(withoutLink.html).not.toContain(`bgcolor="${BRAND_RED}"`);
   });
 
   it('fills invite vars into subject and copy', () => {

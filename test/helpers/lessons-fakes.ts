@@ -10,6 +10,15 @@ import type {
   LessonProductStatus,
 } from '../../src/lessons/lessons.types';
 import type { ShopifyAdminClient } from '../../src/shopify/shopify-admin.client';
+import {
+  type ClassFilter,
+  ClassesRepository,
+  type ClassRow,
+} from '../../src/lessons/classes.repository';
+import {
+  type InstructorCalendarRow,
+  InstructorCalendarsRepository,
+} from '../../src/lessons/instructor-calendars.repository';
 
 export interface FakeVariant {
   id: number;
@@ -258,6 +267,7 @@ export function recordingSupabase(
       'in',
       'gte',
       'lt',
+      'limit',
       'order',
       'insert',
       'update',
@@ -289,4 +299,85 @@ export function recordingSupabase(
     },
   };
   return { client: client as never, queries };
+}
+
+export class InMemoryClassesRepository extends ClassesRepository {
+  rows: ClassRow[] = [];
+  filters: ClassFilter[] = [];
+
+  list(filter: ClassFilter): Promise<ClassRow[]> {
+    this.filters.push(filter);
+    return Promise.resolve(
+      this.rows
+        .filter(
+          (r) =>
+            (!filter.from || r.starts_at >= filter.from) &&
+            (!filter.to || r.starts_at < filter.to) &&
+            (!filter.instructorId || r.instructor_id === filter.instructorId),
+        )
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
+    );
+  }
+}
+
+export function classRow(overrides: Partial<ClassRow> = {}): ClassRow {
+  return {
+    id: nextId(),
+    instructor_id: EDDIE_ID,
+    lesson_product_id: null,
+    location_id: null,
+    starts_at: '2026-12-12T15:00:00.000Z',
+    ends_at: '2026-12-12T16:00:00.000Z',
+    status: 'scheduled',
+    source: 'ssms',
+    google_calendar_id: null,
+    google_event_id: null,
+    notes: null,
+    created_at: '2026-10-10T00:00:00.000Z',
+    updated_at: '2026-10-10T00:00:00.000Z',
+    instructor: { display_name_en: 'Eddie', display_name_zh: '艾迪' },
+    location: null,
+    lesson_product: null,
+    participants: [],
+    ...overrides,
+  };
+}
+
+export class InMemoryInstructorCalendarsRepository extends InstructorCalendarsRepository {
+  instructorIds = new Set([EDDIE_ID, ERIC_ID]);
+  rows = new Map<
+    string,
+    InstructorCalendarRow & { updated_by: string | null }
+  >();
+  private clock = Date.parse('2026-10-10T00:00:00.000Z');
+
+  instructorExists(id: string): Promise<boolean> {
+    return Promise.resolve(this.instructorIds.has(id));
+  }
+
+  find(instructorId: string): Promise<InstructorCalendarRow | null> {
+    const row = this.rows.get(instructorId);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  upsert(
+    instructorId: string,
+    googleCalendarId: string,
+    userId: string | null,
+  ): Promise<InstructorCalendarRow> {
+    this.clock += 1000;
+    const row = {
+      instructor_id: instructorId,
+      google_calendar_id: googleCalendarId,
+      updated_at: new Date(this.clock).toISOString(),
+      updated_by: userId,
+    };
+    this.rows.set(instructorId, row);
+    return Promise.resolve({ ...row });
+  }
+
+  remove(instructorId: string): Promise<void> {
+    this.rows.delete(instructorId);
+    return Promise.resolve();
+  }
 }

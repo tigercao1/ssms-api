@@ -123,6 +123,24 @@ describe('ResendEmailSender', () => {
     });
   });
 
+  it('aborts the request after the message timeout', async () => {
+    global.fetch = jest.fn(
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
+        }),
+    ) as unknown as typeof fetch;
+
+    const sender = new ResendEmailSender(
+      configWith({ RESEND_API_KEY: 're_secret', MAIL_FROM: 'a@b.com' }),
+    );
+    const started = Date.now();
+    await expect(sender.send({ ...message, timeoutMs: 50 })).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it('throws with the provider detail on a non-2xx response', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,

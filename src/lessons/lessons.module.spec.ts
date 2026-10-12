@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import { CreditsService } from './credits.service';
 import { LessonProductSyncService } from './lesson-product-sync.service';
 import { LessonProductsController } from './lesson-products.controller';
 import {
@@ -40,6 +41,7 @@ describe('LessonsModule in the app', () => {
       SupabaseLessonProductsRepository,
     );
     expect(moduleRef.get(LessonProductSyncService).isEnabled()).toBe(false);
+    expect(moduleRef.get(CreditsService)).toBeInstanceOf(CreditsService);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(supabase.rpc).not.toHaveBeenCalledWith(
       'sync_lesson_products',

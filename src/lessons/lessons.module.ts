@@ -6,6 +6,7 @@ import {
   SupabaseClassesRepository,
 } from './classes.repository';
 import { ClassesService } from './classes.service';
+import { CreditsService } from './credits.service';
 import { InstructorCalendarsController } from './instructor-calendars.controller';
 import {
   InstructorCalendarsRepository,
@@ -19,6 +20,10 @@ import {
   SupabaseLessonProductsRepository,
 } from './lesson-products.repository';
 import { LessonProductsService } from './lesson-products.service';
+import {
+  PurchaseCreditsRepository,
+  SupabasePurchaseCreditsRepository,
+} from './purchase-credits.repository';
 import { ShopifyLessonCatalog } from './shopify-lesson-catalog';
 
 @Module({
@@ -38,11 +43,17 @@ import { ShopifyLessonCatalog } from './shopify-lesson-catalog';
       provide: InstructorCalendarsRepository,
       useClass: SupabaseInstructorCalendarsRepository,
     },
+    {
+      provide: PurchaseCreditsRepository,
+      useClass: SupabasePurchaseCreditsRepository,
+    },
     ShopifyLessonCatalog,
     LessonProductSyncService,
     LessonProductsService,
     ClassesService,
     InstructorCalendarsService,
+    CreditsService,
   ],
+  exports: [CreditsService],
 })
 export class LessonsModule {}

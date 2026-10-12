@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { ThrottlerModule } from '@nestjs/throttler';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -18,7 +17,7 @@ import type { InstructorRow } from '../instructors/instructors.types';
 import { EMAIL_SENDER } from '../mailer/email-sender.interface';
 import type { EmailMessage } from '../mailer/mailer.types';
 import { AuthHooksModule } from './auth-hooks.module';
-import { SEND_EMAIL_HOOK_RATE_LIMIT } from './send-email-hook.controller';
+import { HOOK_RATE_LIMIT } from './hook-throttler.guard';
 import { EMAIL_SEND_FAILED } from './send-email-hook.service';
 
 const SECRET_B64 = randomBytes(32).toString('base64');
@@ -112,7 +111,6 @@ async function createApp(
               : { SEND_EMAIL_HOOK_SECRET: options.secret },
         ],
       }),
-      ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
       FakeDatabaseModule,
       AuthHooksModule,
     ],
@@ -285,7 +283,7 @@ describe('POST /hooks/auth/send-email (HTTP)', () => {
 
   it('throttles a client past the per-minute limit', async () => {
     const body = JSON.stringify(hookPayload({}));
-    for (let i = 0; i < SEND_EMAIL_HOOK_RATE_LIMIT.limit; i++) {
+    for (let i = 0; i < HOOK_RATE_LIMIT.limit; i++) {
       await post(h.server, body, { 'Fly-Client-IP': '203.0.113.9' });
     }
     const limited = await post(h.server, body, {

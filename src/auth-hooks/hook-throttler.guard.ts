@@ -15,7 +15,7 @@ import { clientIp } from '../activation/activation-throttler.guard';
 export const HOOK_RATE_LIMIT = { limit: 120, ttl: 60_000 };
 
 export const HOOK_THROTTLE_OPTIONS: ThrottlerModuleOptions = {
-  throttlers: [{ name: 'hook', ...HOOK_RATE_LIMIT }],
+  throttlers: [{ name: 'default', ...HOOK_RATE_LIMIT }],
 };
 
 class FlyClientIpThrottlerGuard extends ThrottlerGuard {

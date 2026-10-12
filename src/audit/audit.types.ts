@@ -38,9 +38,14 @@ export const AUDIT_ACTIONS = {
   googleConnectRejected: 'google.connect_rejected',
   googleDisconnect: 'google.disconnect',
   googleTokenInvalid: 'google.token_invalid',
-  lessonProductSync: 'lesson_product.sync',
-  lessonProductUpdate: 'lesson_product.update',
   instructorGoogleCalendarUpdate: 'instructor.google_calendar_update',
+  instructorGoogleCalendarSuggest: 'instructor.google_calendar_suggest',
+  lessonTypeCreate: 'lesson_type.create',
+  lessonTypeUpdate: 'lesson_type.update',
+  payRateCreate: 'pay_rate.create',
+  payRateUpdate: 'pay_rate.update',
+  customerSync: 'customer.sync',
+  customerCreate: 'customer.create',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -69,7 +74,9 @@ export interface AuditEntry {
     | 'reference'
     | 'public_page'
     | 'google_connection'
-    | 'lesson_product'
+    | 'lesson_type'
+    | 'pay_rate'
+    | 'customer'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

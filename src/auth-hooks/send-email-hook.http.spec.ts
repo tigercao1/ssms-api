@@ -9,6 +9,7 @@ import { Test } from '@nestjs/testing';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { Webhook } from 'standardwebhooks';
 import request from 'supertest';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
@@ -83,7 +84,7 @@ function sign(body: string, at: Date = new Date(), secret = SECRET_B64) {
 
 interface Harness {
   app: INestApplication;
-  server: Server;
+  server: string;
   sent: EmailMessage[];
   sender: { send: jest.Mock; isConfigured: () => boolean };
 }
@@ -131,11 +132,17 @@ async function createApp(
       transform: true,
     }),
   );
-  await app.init();
-  return { app, server: app.getHttpServer() as Server, sent, sender };
+  await app.listen(0, '127.0.0.1');
+  const address = (app.getHttpServer() as Server).address() as AddressInfo;
+  return {
+    app,
+    server: `http://127.0.0.1:${address.port}`,
+    sent,
+    sender,
+  };
 }
 
-function post(server: Server, body: string, headers: Record<string, string>) {
+function post(server: string, body: string, headers: Record<string, string>) {
   return request(server)
     .post(PATH)
     .set('Content-Type', 'application/json')

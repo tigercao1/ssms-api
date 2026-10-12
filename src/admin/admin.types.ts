@@ -73,6 +73,7 @@ export interface AdminInstructorRecord {
 export interface ListInstructorsFilter {
   status?: ApprovalStatus;
   isActive?: boolean;
+  q?: string;
 }
 
 /** Mutable core columns an admin transition can write. */

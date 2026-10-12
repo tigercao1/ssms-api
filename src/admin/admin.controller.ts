@@ -72,6 +72,7 @@ export class AdminController {
     return this.admin.listInstructors({
       status: query.status,
       isActive: query.active,
+      q: query.q,
     });
   }
 

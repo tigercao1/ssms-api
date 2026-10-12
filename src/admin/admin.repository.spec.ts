@@ -17,11 +17,12 @@ function makeSupabaseStub(result: {
     from?: string;
     select?: unknown[];
     eq: unknown[][];
+    or: unknown[][];
     order: unknown[][];
     update?: unknown;
     insert?: unknown;
     delete?: boolean;
-  } = { eq: [], order: [] };
+  } = { eq: [], or: [], order: [] };
 
   const resolved = {
     data: result.data ?? null,
@@ -36,6 +37,10 @@ function makeSupabaseStub(result: {
   });
   builder.eq = jest.fn((...a: unknown[]) => {
     calls.eq.push(a);
+    return builder;
+  });
+  builder.or = jest.fn((...a: unknown[]) => {
+    calls.or.push(a);
     return builder;
   });
   builder.order = jest.fn((...a: unknown[]) => {
@@ -79,6 +84,25 @@ async function build(stub: ReturnType<typeof makeSupabaseStub>) {
 }
 
 describe('SupabaseAdminRepository', () => {
+  it('listInstructors matches every search word against English name, Chinese name or email', async () => {
+    const stub = makeSupabaseStub({ data: [] });
+    const repo = await build(stub);
+
+    await repo.listInstructors({ q: ' eric  wang ' });
+    expect(stub.calls.or).toEqual([
+      [
+        'display_name_en.ilike."%eric%",display_name_zh.ilike."%eric%",email.ilike."%eric%"',
+      ],
+      [
+        'display_name_en.ilike."%wang%",display_name_zh.ilike."%wang%",email.ilike."%wang%"',
+      ],
+    ]);
+
+    stub.calls.or = [];
+    await repo.listInstructors({ q: '   ' });
+    expect(stub.calls.or).toEqual([]);
+  });
+
   it('listInstructors applies no eq filters when none given, orders deterministically', async () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);

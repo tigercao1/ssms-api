@@ -18,6 +18,8 @@ import { ShopifySyncModule } from './shopify-sync/shopify-sync.module';
 import { PublicPagesModule } from './public-pages/public-pages.module';
 import { GoogleModule } from './google/google.module';
 import { ActivationModule } from './activation/activation.module';
+import { LessonsModule } from './lessons/lessons.module';
+import { CustomersModule } from './customers/customers.module';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { ActivationModule } from './activation/activation.module';
     PublicPagesModule,
     GoogleModule,
     ActivationModule,
+    LessonsModule,
+    CustomersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

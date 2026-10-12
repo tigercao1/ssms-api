@@ -54,6 +54,11 @@ describe('AdminController', () => {
     });
   });
 
+  it('GET /admin/instructors?q= → forwards the search text', async () => {
+    await controller.listInstructors({ q: '王' });
+    expect(service.listInstructors).toHaveBeenCalledWith({ q: '王' });
+  });
+
   it('GET /admin/instructors/:id → getInstructor(id)', async () => {
     await expect(controller.getInstructor('inst-1')).resolves.toBe(fakeRecord);
     expect(service.getInstructor).toHaveBeenCalledWith('inst-1');

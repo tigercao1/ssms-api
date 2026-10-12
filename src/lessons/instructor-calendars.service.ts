@@ -51,7 +51,6 @@ export interface InstructorCalendarsOverview {
 
 export interface SetInstructorCalendarInput {
   googleCalendarId: string | null;
-  calendarSummary?: string | null;
   matchStatus?: CalendarMatchStatus;
 }
 
@@ -83,19 +82,32 @@ export class InstructorCalendarsService {
     await this.requireInstructor(instructorId);
     const before = await this.repo.find(instructorId);
     const next = input.googleCalendarId?.trim() || null;
-    let row: InstructorCalendarRow | null = null;
+    const current = toCalendar(instructorId, before);
+    let result: InstructorGoogleCalendar;
     if (next === null) {
+      if (!before) {
+        return current;
+      }
       await this.repo.remove(instructorId);
+      result = toCalendar(instructorId, null);
     } else {
+      const write = {
+        google_calendar_id: next,
+        calendar_summary: await this.summaryFor(next, before),
+        match_status: input.matchStatus ?? 'confirmed',
+      };
+      if (
+        before &&
+        before.google_calendar_id === write.google_calendar_id &&
+        before.calendar_summary === write.calendar_summary &&
+        before.match_status === write.match_status
+      ) {
+        return current;
+      }
       try {
-        row = await this.repo.upsert(
+        result = toCalendar(
           instructorId,
-          {
-            google_calendar_id: next,
-            calendar_summary: input.calendarSummary?.trim() || null,
-            match_status: input.matchStatus ?? 'confirmed',
-          },
-          actor.userId ?? null,
+          await this.repo.upsert(instructorId, write, actor.userId ?? null),
         );
       } catch (err) {
         if (hasCode(err, PG_UNIQUE_VIOLATION)) {
@@ -104,25 +116,44 @@ export class InstructorCalendarsService {
         throw err;
       }
     }
-    const result = toCalendar(instructorId, row);
-    if (
-      (before?.google_calendar_id ?? null) !== result.googleCalendarId ||
-      (before?.match_status ?? null) !== result.matchStatus
-    ) {
-      await this.audit.record({
-        action: AUDIT_ACTIONS.instructorGoogleCalendarUpdate,
-        actor: { ...actor, role: 'admin' },
-        targetType: 'instructor',
-        targetId: instructorId,
-        metadata: {
-          from: before?.google_calendar_id ?? null,
-          to: result.googleCalendarId,
-          fromStatus: before?.match_status ?? null,
-          toStatus: result.matchStatus,
-        },
-      });
-    }
+    await this.recordUpdate(instructorId, current, result, actor);
     return result;
+  }
+
+  private async summaryFor(
+    calendarId: string,
+    before: InstructorCalendarRow | null,
+  ): Promise<string | null> {
+    const google = await this.loadCalendars();
+    const found = google.calendars.find((c) => c.id === calendarId);
+    if (found) {
+      return found.summary.trim() || null;
+    }
+    return before?.google_calendar_id === calendarId
+      ? before.calendar_summary
+      : null;
+  }
+
+  private async recordUpdate(
+    instructorId: string,
+    from: InstructorGoogleCalendar,
+    to: InstructorGoogleCalendar,
+    actor: AuditActor,
+  ): Promise<void> {
+    await this.audit.record({
+      action: AUDIT_ACTIONS.instructorGoogleCalendarUpdate,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'instructor',
+      targetId: instructorId,
+      metadata: {
+        from: from.googleCalendarId,
+        to: to.googleCalendarId,
+        fromStatus: from.matchStatus,
+        toStatus: to.matchStatus,
+        fromSummary: from.calendarSummary,
+        toSummary: to.calendarSummary,
+      },
+    });
   }
 
   async overview(): Promise<InstructorCalendarsOverview> {

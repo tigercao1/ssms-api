@@ -122,6 +122,13 @@ describe('lessons admin HTTP', () => {
             .patch(`/admin/instructors/${EDDIE_ID}/google-calendar`)
             .send({ googleCalendarId: 'x@example.com' }),
       ],
+      [
+        'PATCH instructor calendar',
+        (r) =>
+          r
+            .patch(`/admin/instructor-calendars/${EDDIE_ID}`)
+            .send({ googleCalendarId: 'x@example.com' }),
+      ],
     ];
 
     it.each(routes)('%s → 401 without a token', async (_name, send) => {
@@ -615,16 +622,14 @@ describe('lessons admin HTTP', () => {
     });
   });
 
-  describe('/admin/instructors/:id/google-calendar', () => {
+  describe('GET /admin/instructors/:id/google-calendar', () => {
     beforeEach(async () => {
       ctx = await build();
     });
 
     const url = (id = EDDIE_ID) => `/admin/instructors/${id}/google-calendar`;
-    const set = (body: object, id = EDDIE_ID) =>
-      http().patch(url(id)).set('Authorization', admin).send(body);
 
-    it('starts empty, saves a confirmed id, and audits the change once', async () => {
+    it('starts empty and reads back a saved link', async () => {
       const empty = await http()
         .get(url())
         .set('Authorization', admin)
@@ -637,26 +642,70 @@ describe('lessons admin HTTP', () => {
         updatedAt: null,
       });
 
-      const saved = await set({
-        googleCalendarId: ' eddie@example.com ',
-        calendarSummary: ' Eddie Chen ',
-      }).expect(200);
-      expect(saved.body).toMatchObject({
-        instructorId: EDDIE_ID,
-        googleCalendarId: 'eddie@example.com',
-        calendarSummary: 'Eddie Chen',
-        matchStatus: 'confirmed',
-      });
-      await set({ googleCalendarId: 'eddie@example.com' }).expect(200);
-
+      await http()
+        .patch(`/admin/instructor-calendars/${EDDIE_ID}`)
+        .set('Authorization', admin)
+        .send({ googleCalendarId: 'eddie@example.com' })
+        .expect(200);
       const read = await http()
         .get(url())
         .set('Authorization', admin)
         .expect(200);
       expect(read.body).toMatchObject({
         googleCalendarId: 'eddie@example.com',
+        matchStatus: 'confirmed',
       });
-      expect(ctx.calendars.rows.get(EDDIE_ID)?.updated_by).toBe(ADMIN_ID);
+    });
+
+    it('is 404 for an unknown instructor', async () => {
+      await http().get(url(UNKNOWN_ID)).set('Authorization', admin).expect(404);
+    });
+  });
+
+  describe.each([
+    [
+      'PATCH /admin/instructor-calendars/:instructorId',
+      (id: string) => `/admin/instructor-calendars/${id}`,
+    ],
+    [
+      'PATCH /admin/instructors/:id/google-calendar',
+      (id: string) => `/admin/instructors/${id}/google-calendar`,
+    ],
+  ])('%s', (_name, url) => {
+    const googleCalendars = [
+      {
+        id: 'eddie@example.com',
+        summary: ' Eddie Chen ',
+        accessRole: 'reader',
+      },
+      { id: 'eddie-2@example.com', summary: 'Eddie 2', accessRole: 'reader' },
+    ];
+
+    beforeEach(async () => {
+      ctx = await build(fakeGoogle({ calendars: googleCalendars }));
+    });
+
+    const set = (body: object, id = EDDIE_ID) =>
+      http().patch(url(id)).set('Authorization', admin).send(body);
+
+    it('saves a confirmed link with the Google summary and audits it once', async () => {
+      const saved = await set({
+        googleCalendarId: ' eddie@example.com ',
+      }).expect(200);
+      expect(saved.body).toEqual({
+        instructorId: EDDIE_ID,
+        googleCalendarId: 'eddie@example.com',
+        calendarSummary: 'Eddie Chen',
+        matchStatus: 'confirmed',
+        updatedAt: expect.any(String) as string,
+      });
+      await set({ googleCalendarId: 'eddie@example.com' }).expect(200);
+
+      expect(ctx.calendars.rows.get(EDDIE_ID)).toMatchObject({
+        google_calendar_id: 'eddie@example.com',
+        calendar_summary: 'Eddie Chen',
+        updated_by: ADMIN_ID,
+      });
       expect(ctx.audit.entries).toEqual([
         expect.objectContaining({
           action: 'instructor.google_calendar_update',
@@ -667,23 +716,146 @@ describe('lessons admin HTTP', () => {
             to: 'eddie@example.com',
             fromStatus: null,
             toStatus: 'confirmed',
+            fromSummary: null,
+            toSummary: 'Eddie Chen',
           },
         }),
       ]);
     });
 
-    it('clears the id with null', async () => {
+    it('audits a change of calendar and of match status', async () => {
+      await set({
+        googleCalendarId: 'eddie@example.com',
+        matchStatus: 'suggested',
+      }).expect(200);
+      await set({
+        googleCalendarId: 'eddie@example.com',
+        matchStatus: 'confirmed',
+      }).expect(200);
+      await set({ googleCalendarId: 'eddie-2@example.com' }).expect(200);
+      expect(ctx.audit.entries.map((e) => e.metadata)).toEqual([
+        expect.objectContaining({
+          to: 'eddie@example.com',
+          toStatus: 'suggested',
+        }),
+        expect.objectContaining({
+          from: 'eddie@example.com',
+          fromStatus: 'suggested',
+          toStatus: 'confirmed',
+        }),
+        expect.objectContaining({
+          from: 'eddie@example.com',
+          to: 'eddie-2@example.com',
+          fromSummary: 'Eddie Chen',
+          toSummary: 'Eddie 2',
+        }),
+      ]);
+    });
+
+    it('audits a summary-only change picked up from Google', async () => {
+      ctx.calendars.rows.set(EDDIE_ID, {
+        instructor_id: EDDIE_ID,
+        google_calendar_id: 'eddie@example.com',
+        calendar_summary: 'Old name',
+        match_status: 'confirmed',
+        updated_at: '2026-10-10T00:00:00.000Z',
+        updated_by: null,
+      });
+      const res = await set({ googleCalendarId: 'eddie@example.com' }).expect(
+        200,
+      );
+      expect(res.body).toMatchObject({ calendarSummary: 'Eddie Chen' });
+      expect(ctx.audit.entries).toEqual([
+        expect.objectContaining({
+          action: 'instructor.google_calendar_update',
+          metadata: {
+            from: 'eddie@example.com',
+            to: 'eddie@example.com',
+            fromStatus: 'confirmed',
+            toStatus: 'confirmed',
+            fromSummary: 'Old name',
+            toSummary: 'Eddie Chen',
+          },
+        }),
+      ]);
+    });
+
+    it('keeps the stored summary when Google cannot be read, without writing', async () => {
+      await ctx.app.close();
+      ctx = await build(fakeGoogle({ connected: false }));
+      ctx.calendars.rows.set(EDDIE_ID, {
+        instructor_id: EDDIE_ID,
+        google_calendar_id: 'eddie@example.com',
+        calendar_summary: 'Eddie Chen',
+        match_status: 'confirmed',
+        updated_at: '2026-10-10T00:00:00.000Z',
+        updated_by: null,
+      });
+      const res = await set({ googleCalendarId: 'eddie@example.com' }).expect(
+        200,
+      );
+      expect(res.body).toMatchObject({
+        calendarSummary: 'Eddie Chen',
+        updatedAt: '2026-10-10T00:00:00.000Z',
+      });
+      expect(ctx.audit.entries).toEqual([]);
+
+      await set({ googleCalendarId: 'other@example.com' }).expect(200);
+      expect(ctx.audit.entries[0].metadata).toMatchObject({
+        to: 'other@example.com',
+        fromSummary: 'Eddie Chen',
+        toSummary: null,
+      });
+    });
+
+    it('stores no summary for a calendar Google does not list', async () => {
+      const res = await set({ googleCalendarId: 'unknown@example.com' }).expect(
+        200,
+      );
+      expect(res.body).toMatchObject({ calendarSummary: null });
+    });
+
+    it('still saves when listing Google calendars fails', async () => {
+      await ctx.app.close();
+      ctx = await build(
+        fakeGoogle({ error: new GoogleApiError(500, 'backendError', 'boom') }),
+      );
+      const res = await set({ googleCalendarId: 'eddie@example.com' }).expect(
+        200,
+      );
+      expect(res.body).toMatchObject({
+        googleCalendarId: 'eddie@example.com',
+        calendarSummary: null,
+      });
+      expect(ctx.audit.entries).toHaveLength(1);
+    });
+
+    it('clears the link with null and audits it', async () => {
       await set({ googleCalendarId: 'eddie@example.com' }).expect(200);
       const res = await set({ googleCalendarId: null }).expect(200);
-      expect(res.body).toMatchObject({
+      expect(res.body).toEqual({
+        instructorId: EDDIE_ID,
         googleCalendarId: null,
+        calendarSummary: null,
         matchStatus: null,
+        updatedAt: null,
       });
       expect(ctx.calendars.rows.has(EDDIE_ID)).toBe(false);
-      expect(ctx.audit.entries[1].metadata).toMatchObject({
-        from: 'eddie@example.com',
-        to: null,
+      expect(ctx.audit.entries[1]).toMatchObject({
+        action: 'instructor.google_calendar_update',
+        targetId: EDDIE_ID,
+        metadata: {
+          from: 'eddie@example.com',
+          to: null,
+          fromStatus: 'confirmed',
+          toStatus: null,
+          fromSummary: 'Eddie Chen',
+          toSummary: null,
+        },
       });
+
+      await set({ googleCalendarId: null }).expect(200);
+      expect(ctx.audit.entries).toHaveLength(2);
     });
 
     it('is 409 when the calendar belongs to another instructor', async () => {
@@ -695,11 +867,13 @@ describe('lessons admin HTTP', () => {
       expect((res.body as { message: string }).message).toBe(
         CALENDAR_ALREADY_LINKED,
       );
+      expect(ctx.calendars.rows.has(ERIC_ID)).toBe(false);
+      expect(ctx.audit.entries).toHaveLength(1);
     });
 
     it('is 404 for an unknown instructor', async () => {
-      await http().get(url(UNKNOWN_ID)).set('Authorization', admin).expect(404);
       await set({ googleCalendarId: 'x@example.com' }, UNKNOWN_ID).expect(404);
+      expect(ctx.audit.entries).toEqual([]);
     });
 
     it.each([
@@ -709,9 +883,13 @@ describe('lessons admin HTTP', () => {
       [{ googleCalendarId: 42 }],
       [{ googleCalendarId: 'a'.repeat(321) }],
       [{ googleCalendarId: 'x@example.com', matchStatus: 'maybe' }],
-      [{ googleCalendarId: 'x@example.com', calendarSummary: 'a'.repeat(501) }],
+      [{ googleCalendarId: 'x@example.com', calendarSummary: 'Eddie' }],
     ])('rejects %j with 400', async (body) => {
       await set(body).expect(400);
+    });
+
+    it('rejects a non-UUID instructor id with 400', async () => {
+      await set({ googleCalendarId: 'x@example.com' }, 'eddie').expect(400);
     });
   });
 

@@ -47,6 +47,16 @@ export class InstructorCalendarsController {
     return this.calendars.suggest(toActor(user, userAgent));
   }
 
+  @Patch('instructor-calendars/:instructorId')
+  updateLink(
+    @Param('instructorId', new ParseUUIDPipe()) instructorId: string,
+    @Body() dto: UpdateGoogleCalendarDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<InstructorGoogleCalendar> {
+    return this.update(instructorId, dto, user, userAgent);
+  }
+
   @Get('instructors/:id/google-calendar')
   get(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -65,7 +75,6 @@ export class InstructorCalendarsController {
       id,
       {
         googleCalendarId: dto.googleCalendarId,
-        calendarSummary: dto.calendarSummary,
         matchStatus: dto.matchStatus,
       },
       toActor(user, userAgent),

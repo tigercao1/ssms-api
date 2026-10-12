@@ -1,45 +1,102 @@
-/**
- * Shared types for the Notifications module (MailerService + Resend).
- *
- * See ADMIN_ROLE_PLAN.md (Notifications), AUTH_V1_DECISIONS.md (Notifications)
- * and V1_SCOPE.md. Admin actions trigger transactional email to the affected
- * instructor; sending is fire-and-forget and must never roll back the action.
- */
+import type { SupportedLanguage } from '../i18n';
 
 /**
- * Languages a notification can be rendered in. Mirrors the instructor profile's
- * `preferred_language` (default `en`). zh-CN is Simplified Chinese.
+ * Language an email is rendered in. `bilingual` renders the zh-CN block, a
+ * divider, then the en block, with a `"<zh> / <en>"` subject. It is used when
+ * the recipient has no instructor row (and so no `preferred_language`).
  */
-export type NotificationLanguage = 'en' | 'zh-CN';
+export type EmailLanguage = SupportedLanguage | 'bilingual';
 
-/** The default language used when an instructor has no `preferred_language`. */
-export const DEFAULT_NOTIFICATION_LANGUAGE: NotificationLanguage = 'en';
+export const EMAIL_LANGUAGES: readonly EmailLanguage[] = [
+  'en',
+  'zh-CN',
+  'bilingual',
+];
 
-/**
- * The transactional notifications v1 sends, one per admin action.
- * Template keys map 1:1 (see AUTH_V1_DECISIONS.md Notifications).
- */
-export type NotificationType = 'approved' | 'rejected' | 'deactivated';
+/** Every transactional email the API can send. */
+export type EmailTemplate =
+  | 'approved'
+  | 'rejected'
+  | 'deactivated'
+  | 'reactivated'
+  | 'auth.confirm_signup'
+  | 'auth.recovery'
+  | 'auth.magic_link'
+  | 'auth.invite'
+  | 'auth.email_change'
+  | 'auth.reauthentication'
+  | 'auth.password_changed'
+  | 'invite.season'
+  | 'invite.reminder'
+  | 'admin.instructor_pending';
 
-/**
- * Context passed to a template renderer to fill an instructor notification.
- * `reason` is optional and only meaningful for `rejected` (from admin metadata).
- */
-export interface InstructorNotificationContext {
-  /** Recipient email address (the instructor's verified email). */
-  to: string;
-  /** Which notification to render + send. */
-  type: NotificationType;
-  /** Instructor's preferred language; falls back to {@link DEFAULT_NOTIFICATION_LANGUAGE}. */
-  language?: NotificationLanguage | null;
-  /** Display name used in the greeting (optional). */
+interface GreetingVars {
+  /** Recipient's display name for the greeting; omitted or blank → "Hi there". */
   displayName?: string | null;
-  /** Optional rejection reason, surfaced only for `rejected`. */
-  reason?: string | null;
-  /** Link back to the portal (optional, used by `approved`). */
-  portalUrl?: string | null;
-  /** Instructor id, recorded in the failure audit row for traceability. */
+}
+
+interface InviteVars extends GreetingVars {
+  /** Season label shown in copy, e.g. `2026/27`. */
+  season: string;
+  activateUrl: string;
+  validDays: number;
+}
+
+/** Variables each template needs, keyed by template. */
+export interface EmailTemplateVars {
+  approved: GreetingVars & { loginUrl: string };
+  rejected: GreetingVars & { reason?: string | null };
+  deactivated: GreetingVars;
+  reactivated: GreetingVars & { loginUrl: string };
+  'auth.confirm_signup': { confirmUrl: string; code?: string | null };
+  'auth.recovery': { resetUrl: string; code?: string | null };
+  'auth.magic_link': { signInUrl: string; code?: string | null };
+  'auth.invite': { acceptUrl: string };
+  'auth.email_change': {
+    confirmUrl: string;
+    newEmail: string;
+    code?: string | null;
+  };
+  'auth.reauthentication': { code: string };
+  'auth.password_changed': Record<string, never>;
+  'invite.season': InviteVars;
+  'invite.reminder': InviteVars;
+  'admin.instructor_pending': { instructorEmail: string; reviewUrl: string };
+}
+
+/**
+ * `background`: retries, never throws, resolves to the outcome (callers `void`
+ * it). `sync`: retries, then throws {@link EmailDeliveryError} when the email
+ * was not sent — for callers where a user is waiting on the email.
+ */
+export type SendMode = 'background' | 'sync';
+
+export interface SendEmailRequest<T extends EmailTemplate = EmailTemplate> {
+  template: T;
+  to: string;
+  language: EmailLanguage;
+  vars: EmailTemplateVars[T];
+  mode: SendMode;
   instructorId?: string | null;
+  authUserId?: string | null;
+  /** Extra non-secret context stored on the `email_log` row. */
+  metadata?: Record<string, unknown>;
+  /** Provider idempotency key: repeats of the same key within 24 h send once. */
+  idempotencyKey?: string;
+}
+
+/** Result of a send (for callers / tests / observability). */
+export type SendOutcome = 'sent' | 'skipped' | 'failed';
+
+/** Thrown by `MailerService.send` in `sync` mode when the email was not sent. */
+export class EmailDeliveryError extends Error {
+  constructor(
+    readonly outcome: Exclude<SendOutcome, 'sent'>,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EmailDeliveryError';
+  }
 }
 
 /** A fully-rendered email ready to hand to the {@link EmailSender}. */
@@ -48,6 +105,11 @@ export interface EmailMessage {
   subject: string;
   /** HTML body. */
   html: string;
-  /** Plain-text fallback body. */
+  /** Plain-text alternative body. */
   text: string;
+  /** Sent as the provider's `Idempotency-Key` header when set. */
+  idempotencyKey?: string;
 }
+
+/** A rendered email before it is addressed. */
+export type RenderedEmail = Omit<EmailMessage, 'to' | 'idempotencyKey'>;

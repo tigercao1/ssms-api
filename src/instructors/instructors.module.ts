@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BioTranslationModule } from '../bio-translation/bio-translation.module';
 import { TranslationQueueService } from '../bio-translation/translation-queue.service';
+import { MailerModule } from '../mailer/mailer.module';
 import { InstructorsController } from './instructors.controller';
 import { InstructorsService } from './instructors.service';
 import {
@@ -18,10 +19,11 @@ import { TRANSLATION_QUEUE } from './translation-queue.port';
  * The repository is bound behind the abstract `InstructorsRepository` token so
  * tests can swap in an in-memory fake. TRANSLATION_QUEUE is bound to the real
  * BioTranslation `TranslationQueueService` (T5.2) so the profile save flow
- * enqueues bio translations via `enqueueForProfile`.
+ * enqueues bio translations via `enqueueForProfile`. MailerModule supplies
+ * the admin alert sent when a pending row is first created.
  */
 @Module({
-  imports: [BioTranslationModule],
+  imports: [BioTranslationModule, MailerModule],
   controllers: [InstructorsController],
   providers: [
     InstructorsService,

@@ -16,6 +16,8 @@ import { PublicApiModule } from './public-api/public-api.module';
 import { MailerModule } from './mailer/mailer.module';
 import { ShopifySyncModule } from './shopify-sync/shopify-sync.module';
 import { PublicPagesModule } from './public-pages/public-pages.module';
+import { GoogleModule } from './google/google.module';
+import { ActivationModule } from './activation/activation.module';
 import { LessonsModule } from './lessons/lessons.module';
 
 @Module({
@@ -46,6 +48,8 @@ import { LessonsModule } from './lessons/lessons.module';
     MailerModule,
     ShopifySyncModule,
     PublicPagesModule,
+    GoogleModule,
+    ActivationModule,
     LessonsModule,
   ],
   controllers: [AppController],

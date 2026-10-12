@@ -70,6 +70,56 @@ describe('ResendEmailSender', () => {
       from: 'Snow <a@b.com>',
       to: ['jane@example.com'],
       subject: 'Hi',
+      html: '<p>Hi</p>',
+      text: 'Hi',
+      reply_to: 'info@ssnow.club',
+    });
+  });
+
+  it('sends Idempotency-Key only when the message has one', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ id: 'resend-1' }),
+    });
+    global.fetch = fetchMock;
+    const sender = new ResendEmailSender(
+      configWith({ RESEND_API_KEY: 're_x', MAIL_FROM: 'a@b.com' }),
+    );
+
+    await sender.send({ ...message, idempotencyKey: 'invite-1-sent-t' });
+    await sender.send(message);
+
+    const headers = (
+      fetchMock.mock.calls as [string, { headers: Record<string, string> }][]
+    ).map(([, init]) => init.headers);
+    expect(headers[0]['Idempotency-Key']).toBe('invite-1-sent-t');
+    expect(headers[1]).not.toHaveProperty('Idempotency-Key');
+  });
+
+  it('sets reply_to from MAIL_REPLY_TO', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.reject(new Error('no body')),
+    });
+    global.fetch = fetchMock;
+
+    const sender = new ResendEmailSender(
+      configWith({
+        RESEND_API_KEY: 're_secret',
+        MAIL_FROM: 'a@b.com',
+        MAIL_REPLY_TO: ' help@example.com ',
+      }),
+    );
+    const result = await sender.send(message);
+
+    expect(result.id).toBeUndefined();
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({
+      reply_to: 'help@example.com',
     });
   });
 

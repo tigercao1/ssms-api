@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { EmailSender } from './email-sender.interface';
+import { DEFAULT_REPLY_TO, readOptional } from './mailer.config';
 import type { EmailMessage } from './mailer.types';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -16,7 +17,8 @@ const RESEND_ENDPOINT = 'https://api.resend.com/emails';
  * Config (read from env via ConfigService; all optional so non-prod boots
  * cleanly — see {@link isConfigured}):
  *   - `RESEND_API_KEY`  — provider secret (`re_...`).
- *   - `MAIL_FROM`       — verified sender, e.g. `Snow School <noreply@example.com>`.
+ *   - `MAIL_FROM`       — verified sender, e.g. `Serendipity Snow <noreply@contact.ssnow.club>`.
+ *   - `MAIL_REPLY_TO`   — Reply-To address (default `info@ssnow.club`).
  *
  * Throws on any non-2xx response so MailerService can retry / audit.
  */
@@ -25,10 +27,12 @@ export class ResendEmailSender implements EmailSender {
   private readonly logger = new Logger(ResendEmailSender.name);
   private readonly apiKey?: string;
   private readonly from?: string;
+  private readonly replyTo: string;
 
   constructor(config: ConfigService) {
-    this.apiKey = config.get<string>('RESEND_API_KEY')?.trim() || undefined;
-    this.from = config.get<string>('MAIL_FROM')?.trim() || undefined;
+    this.apiKey = readOptional(config, 'RESEND_API_KEY');
+    this.from = readOptional(config, 'MAIL_FROM');
+    this.replyTo = readOptional(config, 'MAIL_REPLY_TO') ?? DEFAULT_REPLY_TO;
   }
 
   isConfigured(): boolean {
@@ -47,10 +51,14 @@ export class ResendEmailSender implements EmailSender {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
+        ...(message.idempotencyKey
+          ? { 'Idempotency-Key': message.idempotencyKey }
+          : {}),
       },
       body: JSON.stringify({
         from: this.from,
         to: [message.to],
+        reply_to: this.replyTo,
         subject: message.subject,
         html: message.html,
         text: message.text,

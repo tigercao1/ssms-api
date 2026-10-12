@@ -2,36 +2,37 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { EMAIL_SENDER, type EmailSender } from './email-sender.interface';
+import { MailerConfig } from './mailer.config';
 import {
-  NOTIFICATION_RENDERER,
-  type NotificationRenderer,
-} from './notification-renderer.interface';
-import type {
-  EmailMessage,
-  InstructorNotificationContext,
+  EmailDeliveryError,
+  type EmailTemplate,
+  type RenderedEmail,
+  type SendEmailRequest,
+  type SendOutcome,
 } from './mailer.types';
+import { EmailRenderer } from './templates/email-renderer';
 
 const AUDIT_TABLE = 'audit_log';
+const EMAIL_LOG_TABLE = 'email_log';
 const DEFAULT_MAX_ATTEMPTS = 3;
 const BACKOFF_BASE_MS = 250;
 
-/** Result of a notification attempt (for callers / tests / observability). */
-export type SendOutcome =
-  | 'sent' // delivered to the provider
-  | 'skipped' // sender not configured — intentionally no-op
-  | 'failed'; // all attempts exhausted; audited as notification.failure
+interface AttemptResult {
+  outcome: SendOutcome;
+  attempts: number;
+  providerId?: string;
+  error?: string;
+}
 
 /**
- * Transactional email for admin actions (ADMIN_ROLE_PLAN.md, AUTH_V1_DECISIONS.md).
+ * Transactional email: renders an {@link EmailTemplate} through the shared
+ * branded layout and hands it to the {@link EMAIL_SENDER} binding (Resend).
  *
- * Contract (locked in V1_SCOPE.md): **fire-and-forget with retry**. A failed
- * send must NEVER throw to the caller and must NEVER roll back the underlying
- * admin action (approve / reject / deactivate). On final failure we record a
- * `notification.failure` row in `audit_log` so an unhealthy mailer is visible.
- *
- * Rendering (copy + language by `preferred_language`) is delegated to the
- * {@link NOTIFICATION_RENDERER} binding; transport to the {@link EMAIL_SENDER}
- * binding (Resend in v1). Neither concern leaks into call sites.
+ * Every send retries up to 3 times and writes one `email_log` row with the
+ * final outcome (`sent`, `skipped` when the sender is not configured, or
+ * `failed`). A failure also writes a `notification.failure` row to
+ * `audit_log`. In `background` mode {@link send} never rejects; in `sync`
+ * mode it throws {@link EmailDeliveryError} when the email was not sent.
  */
 @Injectable()
 export class MailerService {
@@ -40,100 +41,164 @@ export class MailerService {
 
   constructor(
     @Inject(EMAIL_SENDER) private readonly sender: EmailSender,
-    @Inject(NOTIFICATION_RENDERER)
-    private readonly renderer: NotificationRenderer,
+    private readonly renderer: EmailRenderer,
+    private readonly config: MailerConfig,
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
   ) {}
 
+  /** Absolute portal URL for `path`, from `PORTAL_URL`. */
+  portalLink(path: string): string {
+    return this.config.portalLink(path);
+  }
+
   /**
-   * Renders + sends an instructor notification for an admin action.
-   *
-   * Resolves (never rejects) to a {@link SendOutcome}. Callers may `void` the
-   * promise for true fire-and-forget, or `await` it to observe the outcome —
-   * either way the admin transaction is unaffected.
+   * Renders and sends one email. Resolves to the {@link SendOutcome}; in
+   * `sync` mode a `skipped` or `failed` outcome throws
+   * {@link EmailDeliveryError} instead.
    */
-  async sendInstructorNotification(
-    context: InstructorNotificationContext,
+  async send<T extends EmailTemplate>(
+    request: SendEmailRequest<T>,
   ): Promise<SendOutcome> {
+    let result: AttemptResult;
+    try {
+      result = await this.deliver(request);
+    } catch (err) {
+      result = { outcome: 'failed', attempts: 0, error: errorMessage(err) };
+    }
+    if (request.mode === 'sync' && result.outcome !== 'sent') {
+      throw new EmailDeliveryError(
+        result.outcome,
+        result.error ?? `Email ${request.template} was not sent`,
+      );
+    }
+    return result.outcome;
+  }
+
+  private async deliver<T extends EmailTemplate>(
+    request: SendEmailRequest<T>,
+  ): Promise<AttemptResult> {
     if (!this.sender.isConfigured()) {
       this.logger.warn(
-        `Email sender not configured; skipping ${context.type} notification ` +
-          `to ${redactEmail(context.to)}.`,
+        `Email sender not configured; skipping ${request.template} ` +
+          `to ${redactEmail(request.to)}.`,
       );
-      return 'skipped';
+      const result: AttemptResult = {
+        outcome: 'skipped',
+        attempts: 0,
+        error: 'Email sender is not configured',
+      };
+      await this.writeLog(request, result);
+      return result;
     }
 
-    let message: EmailMessage;
+    let rendered: RenderedEmail;
     try {
-      message = this.renderer.render(context);
-    } catch (err) {
-      // A render bug must not break the admin action either.
-      await this.auditFailure(context, err as Error, 0);
-      this.logger.error(
-        `Failed to render ${context.type} notification: ${(err as Error).message}`,
+      rendered = this.renderer.render(
+        request.template,
+        request.language,
+        request.vars,
       );
-      return 'failed';
+    } catch (err) {
+      const error = errorMessage(err);
+      this.logger.error(`Failed to render ${request.template}: ${error}`);
+      const result: AttemptResult = { outcome: 'failed', attempts: 0, error };
+      await this.auditFailure(request, result);
+      await this.writeLog(request, result);
+      return result;
     }
 
-    return this.sendWithRetry(message, context);
+    const result = await this.sendWithRetry(request, rendered);
+    if (result.outcome === 'failed') {
+      await this.auditFailure(request, result);
+    }
+    await this.writeLog(request, result, rendered.subject);
+    return result;
   }
 
   private async sendWithRetry(
-    message: EmailMessage,
-    context: InstructorNotificationContext,
-  ): Promise<SendOutcome> {
-    let lastError: Error | undefined;
-
+    request: SendEmailRequest,
+    rendered: RenderedEmail,
+  ): Promise<AttemptResult> {
+    let lastError = 'unknown send failure';
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
-        const { id } = await this.sender.send(message);
+        const { id } = await this.sender.send({
+          to: request.to,
+          ...rendered,
+          ...(request.idempotencyKey
+            ? { idempotencyKey: request.idempotencyKey }
+            : {}),
+        });
         this.logger.log(
-          `Sent ${context.type} notification to ${redactEmail(context.to)}` +
+          `Sent ${request.template} to ${redactEmail(request.to)}` +
             (id ? ` (id=${id})` : '') +
             (attempt > 1 ? ` after ${attempt} attempts` : ''),
         );
-        return 'sent';
+        return { outcome: 'sent', attempts: attempt, providerId: id };
       } catch (err) {
-        lastError = err as Error;
+        lastError = errorMessage(err);
         this.logger.warn(
-          `Attempt ${attempt}/${this.maxAttempts} to send ${context.type} ` +
-            `notification failed: ${lastError.message}`,
+          `Attempt ${attempt}/${this.maxAttempts} to send ${request.template} ` +
+            `failed: ${lastError}`,
         );
         if (attempt < this.maxAttempts) {
           await delay(BACKOFF_BASE_MS * 2 ** (attempt - 1));
         }
       }
     }
-
-    await this.auditFailure(
-      context,
-      lastError ?? new Error('unknown send failure'),
-      this.maxAttempts,
-    );
-    return 'failed';
+    return { outcome: 'failed', attempts: this.maxAttempts, error: lastError };
   }
 
-  /**
-   * Records a `notification.failure` audit row. Best-effort: a failure to write
-   * the audit row is itself only logged — it must not surface to the caller.
-   */
+  /** Best-effort `email_log` insert; a logging failure is only logged. */
+  private async writeLog(
+    request: SendEmailRequest,
+    result: AttemptResult,
+    subject?: string,
+  ): Promise<void> {
+    try {
+      const { error } = await this.supabase.from(EMAIL_LOG_TABLE).insert({
+        template: request.template,
+        recipient: request.to,
+        language: request.language,
+        instructor_id: request.instructorId ?? null,
+        auth_user_id: request.authUserId ?? null,
+        provider_id: result.providerId ?? null,
+        status: result.outcome,
+        error: result.outcome === 'sent' ? null : (result.error ?? null),
+        metadata: {
+          ...request.metadata,
+          mode: request.mode,
+          attempts: result.attempts,
+          ...(subject ? { subject } : {}),
+        },
+      });
+      if (error) {
+        this.logger.error(`Failed to write email_log row: ${error.message}`);
+      }
+    } catch (logErr) {
+      this.logger.error(
+        `Unexpected error writing email_log row: ${errorMessage(logErr)}`,
+      );
+    }
+  }
+
+  /** Best-effort `notification.failure` audit row. */
   private async auditFailure(
-    context: InstructorNotificationContext,
-    err: Error,
-    attempts: number,
+    request: SendEmailRequest,
+    result: AttemptResult,
   ): Promise<void> {
     try {
       const { error } = await this.supabase.from(AUDIT_TABLE).insert({
         actor_role: 'system',
         action: 'notification.failure',
         target_type: 'instructor',
-        target_id: context.instructorId ?? null,
+        target_id: request.instructorId ?? null,
         metadata: {
-          notification_type: context.type,
-          language: context.language ?? null,
-          recipient: redactEmail(context.to),
-          attempts,
-          error: err.message,
+          notification_type: request.template,
+          language: request.language,
+          recipient: redactEmail(request.to),
+          attempts: result.attempts,
+          error: result.error ?? null,
         },
       });
       if (error) {
@@ -144,10 +209,14 @@ export class MailerService {
     } catch (auditErr) {
       this.logger.error(
         `Unexpected error writing notification.failure audit row: ` +
-          `${(auditErr as Error).message}`,
+          `${errorMessage(auditErr)}`,
       );
     }
   }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function delay(ms: number): Promise<void> {
@@ -155,7 +224,7 @@ function delay(ms: number): Promise<void> {
 }
 
 /** Masks the local part of an email for logs (keeps domain for debugging). */
-function redactEmail(email: string): string {
+export function redactEmail(email: string): string {
   const at = email.indexOf('@');
   if (at <= 0) {
     return '***';

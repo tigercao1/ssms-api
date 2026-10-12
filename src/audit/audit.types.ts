@@ -34,6 +34,10 @@ export const AUDIT_ACTIONS = {
   pageUnpublish: 'page.unpublish',
   pageDelete: 'page.delete',
   pageStorageInconsistent: 'page.storage_inconsistent',
+  googleConnect: 'google.connect',
+  googleConnectRejected: 'google.connect_rejected',
+  googleDisconnect: 'google.disconnect',
+  googleTokenInvalid: 'google.token_invalid',
   lessonProductSync: 'lesson_product.sync',
   lessonProductUpdate: 'lesson_product.update',
   instructorGoogleCalendarUpdate: 'instructor.google_calendar_update',
@@ -64,6 +68,7 @@ export interface AuditEntry {
     | 'api_key'
     | 'reference'
     | 'public_page'
+    | 'google_connection'
     | 'lesson_product'
     | null;
   targetId?: string | null;

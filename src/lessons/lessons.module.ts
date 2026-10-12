@@ -1,59 +1,51 @@
 import { Module } from '@nestjs/common';
-import { ShopifyModule } from '../shopify/shopify.module';
+import { GoogleModule } from '../google/google.module';
 import { ClassesController } from './classes.controller';
 import {
   ClassesRepository,
   SupabaseClassesRepository,
 } from './classes.repository';
 import { ClassesService } from './classes.service';
-import { CreditsService } from './credits.service';
 import { InstructorCalendarsController } from './instructor-calendars.controller';
 import {
   InstructorCalendarsRepository,
   SupabaseInstructorCalendarsRepository,
 } from './instructor-calendars.repository';
 import { InstructorCalendarsService } from './instructor-calendars.service';
-import { LessonProductSyncService } from './lesson-product-sync.service';
-import { LessonProductsController } from './lesson-products.controller';
+import { LessonTypesController } from './lesson-types.controller';
 import {
-  LessonProductsRepository,
-  SupabaseLessonProductsRepository,
-} from './lesson-products.repository';
-import { LessonProductsService } from './lesson-products.service';
+  LessonTypesRepository,
+  SupabaseLessonTypesRepository,
+} from './lesson-types.repository';
+import { LessonTypesService } from './lesson-types.service';
+import { PayRatesController } from './pay-rates.controller';
 import {
-  PurchaseCreditsRepository,
-  SupabasePurchaseCreditsRepository,
-} from './purchase-credits.repository';
-import { ShopifyLessonCatalog } from './shopify-lesson-catalog';
+  PayRatesRepository,
+  SupabasePayRatesRepository,
+} from './pay-rates.repository';
+import { PayRatesService } from './pay-rates.service';
 
 @Module({
-  imports: [ShopifyModule],
+  imports: [GoogleModule],
   controllers: [
-    LessonProductsController,
+    LessonTypesController,
+    PayRatesController,
     ClassesController,
     InstructorCalendarsController,
   ],
   providers: [
-    {
-      provide: LessonProductsRepository,
-      useClass: SupabaseLessonProductsRepository,
-    },
+    { provide: LessonTypesRepository, useClass: SupabaseLessonTypesRepository },
+    { provide: PayRatesRepository, useClass: SupabasePayRatesRepository },
     { provide: ClassesRepository, useClass: SupabaseClassesRepository },
     {
       provide: InstructorCalendarsRepository,
       useClass: SupabaseInstructorCalendarsRepository,
     },
-    {
-      provide: PurchaseCreditsRepository,
-      useClass: SupabasePurchaseCreditsRepository,
-    },
-    ShopifyLessonCatalog,
-    LessonProductSyncService,
-    LessonProductsService,
+    LessonTypesService,
+    PayRatesService,
     ClassesService,
     InstructorCalendarsService,
-    CreditsService,
   ],
-  exports: [CreditsService],
+  exports: [PayRatesService],
 })
 export class LessonsModule {}

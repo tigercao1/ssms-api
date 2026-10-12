@@ -3,36 +3,58 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import { Roles, RolesGuard } from '../admin/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
-import { toActor } from './admin-actor';
+import { GoogleErrorFilter } from '../google/google-error.filter';
+import { toActor } from '../audit/admin-actor';
 import { UpdateGoogleCalendarDto } from './dto/update-google-calendar.dto';
 import {
+  type InstructorCalendarsOverview,
   type InstructorGoogleCalendar,
   InstructorCalendarsService,
+  type SuggestCalendarsResult,
 } from './instructor-calendars.service';
 
-@Controller('admin/instructors')
+@Controller('admin')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseFilters(GoogleErrorFilter)
 @Roles('admin')
 export class InstructorCalendarsController {
   constructor(private readonly calendars: InstructorCalendarsService) {}
 
-  @Get(':id/google-calendar')
+  @Get('instructor-calendars')
+  overview(): Promise<InstructorCalendarsOverview> {
+    return this.calendars.overview();
+  }
+
+  @Post('instructor-calendars/suggest')
+  @HttpCode(HttpStatus.OK)
+  suggest(
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<SuggestCalendarsResult> {
+    return this.calendars.suggest(toActor(user, userAgent));
+  }
+
+  @Get('instructors/:id/google-calendar')
   get(
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<InstructorGoogleCalendar> {
     return this.calendars.get(id);
   }
 
-  @Patch(':id/google-calendar')
+  @Patch('instructors/:id/google-calendar')
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateGoogleCalendarDto,
@@ -41,7 +63,11 @@ export class InstructorCalendarsController {
   ): Promise<InstructorGoogleCalendar> {
     return this.calendars.set(
       id,
-      dto.googleCalendarId,
+      {
+        googleCalendarId: dto.googleCalendarId,
+        calendarSummary: dto.calendarSummary,
+        matchStatus: dto.matchStatus,
+      },
       toActor(user, userAgent),
     );
   }

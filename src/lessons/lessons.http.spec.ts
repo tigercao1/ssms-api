@@ -1,124 +1,82 @@
-import {
-  type CanActivate,
-  type ExecutionContext,
-  type INestApplication,
-  UnauthorizedException,
-  ValidationPipe,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import type { Request } from 'express';
 import request from 'supertest';
-import type { App } from 'supertest/types';
 import {
-  catalogPage,
+  ADMIN_AUTH as admin,
+  ADMIN_ID,
+  INSTRUCTOR_AUTH,
+  startAdminApp,
+} from '../../test/helpers/admin-http';
+import {
   classRow,
   EDDIE_ID,
-  eddieProducts,
   ERIC_ID,
-  fakeShopify,
+  fakeGoogle,
   InMemoryClassesRepository,
   InMemoryInstructorCalendarsRepository,
-  InMemoryLessonProductsRepository,
+  InMemoryLessonTypesRepository,
+  InMemoryPayRatesRepository,
 } from '../../test/helpers/lessons-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
-import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
-import { ShopifyAdminClient } from '../shopify/shopify-admin.client';
-import { ShopifyGraphqlError } from '../shopify/shopify.errors';
+import { GoogleApiError } from '../google/google.errors';
+import { GoogleCalendarClient } from '../google/google-calendar.client';
 import { ClassesController } from './classes.controller';
 import { ClassesRepository } from './classes.repository';
 import { ClassesService } from './classes.service';
 import { InstructorCalendarsController } from './instructor-calendars.controller';
 import { InstructorCalendarsRepository } from './instructor-calendars.repository';
-import { InstructorCalendarsService } from './instructor-calendars.service';
-import { LessonProductSyncService } from './lesson-product-sync.service';
-import { LessonProductsController } from './lesson-products.controller';
-import { LessonProductsRepository } from './lesson-products.repository';
 import {
-  LESSON_PRODUCT_CONFLICT,
-  LESSON_PRODUCT_SESSIONS_REQUIRED,
-  LessonProductsService,
-} from './lesson-products.service';
-import type { LessonProduct } from './lessons.types';
-import { ShopifyLessonCatalog } from './shopify-lesson-catalog';
+  CALENDAR_ALREADY_LINKED,
+  InstructorCalendarsService,
+} from './instructor-calendars.service';
+import { LessonTypesController } from './lesson-types.controller';
+import { LessonTypesRepository } from './lesson-types.repository';
+import {
+  LESSON_TYPE_NAME_TAKEN,
+  LessonTypesService,
+} from './lesson-types.service';
+import { PayRatesController } from './pay-rates.controller';
+import { PayRatesRepository } from './pay-rates.repository';
+import {
+  PAY_RATE_INSTRUCTOR_NOT_FOUND,
+  PAY_RATE_LESSON_TYPE_NOT_FOUND,
+  PAY_RATE_OVERLAP,
+  PAY_RATE_RANGE_INVALID,
+  PayRatesService,
+} from './pay-rates.service';
 
-const ADMIN_ID = '7d0f8a1e-5b2c-4e3d-9a8b-1c2d3e4f5a6b';
+const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
 
-class FakeJwtGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<Request>();
-    const role = /^Bearer jwt-(\w+)$/.exec(
-      req.headers.authorization ?? '',
-    )?.[1];
-    if (!role) {
-      throw new UnauthorizedException();
-    }
-    (req as Request & { user: unknown }).user = {
-      sub: role === 'admin' ? ADMIN_ID : 'user-1',
-      app_metadata: { role },
-    };
-    return true;
-  }
-}
-
-async function build(
-  options: { pages?: unknown[]; env?: Record<string, string> } = {},
-) {
-  const products = new InMemoryLessonProductsRepository();
+async function build(google = fakeGoogle()) {
+  const lessonTypes = new InMemoryLessonTypesRepository();
+  const payRates = new InMemoryPayRatesRepository();
   const classes = new InMemoryClassesRepository();
   const calendars = new InMemoryInstructorCalendarsRepository();
   const audit = recordingAudit();
-  const shopify = fakeShopify(options.pages ?? []);
-  const moduleRef = await Test.createTestingModule({
-    controllers: [
-      LessonProductsController,
-      ClassesController,
-      InstructorCalendarsController,
-    ],
-    providers: [
-      LessonProductSyncService,
-      LessonProductsService,
-      ClassesService,
-      InstructorCalendarsService,
-      ShopifyLessonCatalog,
-      { provide: LessonProductsRepository, useValue: products },
-      { provide: ClassesRepository, useValue: classes },
-      { provide: InstructorCalendarsRepository, useValue: calendars },
-      { provide: ShopifyAdminClient, useValue: shopify.client },
-      { provide: AuditService, useValue: audit },
-      {
-        provide: ConfigService,
-        useValue: new ConfigService(
-          options.env ?? { LESSON_PRODUCT_SYNC_ENABLED: 'true' },
-        ),
-      },
-    ],
-  })
-    .overrideGuard(SupabaseAuthGuard)
-    .useClass(FakeJwtGuard)
-    .compile();
-  const app = moduleRef.createNestApplication<INestApplication<App>>();
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
+  const app = await startAdminApp(
+    Test.createTestingModule({
+      controllers: [
+        LessonTypesController,
+        PayRatesController,
+        ClassesController,
+        InstructorCalendarsController,
+      ],
+      providers: [
+        LessonTypesService,
+        PayRatesService,
+        ClassesService,
+        InstructorCalendarsService,
+        { provide: LessonTypesRepository, useValue: lessonTypes },
+        { provide: PayRatesRepository, useValue: payRates },
+        { provide: ClassesRepository, useValue: classes },
+        { provide: InstructorCalendarsRepository, useValue: calendars },
+        { provide: GoogleCalendarClient, useValue: google.client },
+        { provide: AuditService, useValue: audit },
+      ],
     }),
   );
-  await app.init();
-  return {
-    app,
-    products,
-    classes,
-    calendars,
-    audit,
-    graphql: shopify.graphql,
-  };
+  return { app, lessonTypes, payRates, classes, calendars, audit, google };
 }
-
-const admin = 'Bearer jwt-admin';
-const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
 
 describe('lessons admin HTTP', () => {
   let ctx: Awaited<ReturnType<typeof build>>;
@@ -134,14 +92,25 @@ describe('lessons admin HTTP', () => {
     });
 
     const routes: [string, (r: ReturnType<typeof http>) => request.Test][] = [
-      ['GET lesson products', (r) => r.get('/admin/lesson-products')],
+      ['GET lesson types', (r) => r.get('/admin/lesson-types')],
+      ['POST lesson type', (r) => r.post('/admin/lesson-types').send({})],
       [
-        'PATCH lesson product',
-        (r) =>
-          r.patch(`/admin/lesson-products/${UNKNOWN_ID}`).send({ sessions: 1 }),
+        'PATCH lesson type',
+        (r) => r.patch(`/admin/lesson-types/${UNKNOWN_ID}`).send({}),
       ],
-      ['POST sync', (r) => r.post('/admin/lesson-products/sync')],
+      ['GET pay rates', (r) => r.get('/admin/pay-rates')],
+      ['GET resolved pay rate', (r) => r.get('/admin/pay-rates/resolve')],
+      ['POST pay rate', (r) => r.post('/admin/pay-rates').send({})],
+      [
+        'PATCH pay rate',
+        (r) => r.patch(`/admin/pay-rates/${UNKNOWN_ID}`).send({}),
+      ],
       ['GET classes', (r) => r.get('/admin/classes')],
+      ['GET instructor calendars', (r) => r.get('/admin/instructor-calendars')],
+      [
+        'POST calendar suggestions',
+        (r) => r.post('/admin/instructor-calendars/suggest'),
+      ],
       [
         'GET google calendar',
         (r) => r.get(`/admin/instructors/${EDDIE_ID}/google-calendar`),
@@ -160,236 +129,380 @@ describe('lessons admin HTTP', () => {
     });
 
     it.each(routes)('%s → 403 for a non-admin', async (_name, send) => {
-      await send(http())
-        .set('Authorization', 'Bearer jwt-instructor')
-        .expect(403);
+      await send(http()).set('Authorization', INSTRUCTOR_AUTH).expect(403);
     });
   });
 
-  describe('POST /admin/lesson-products/sync', () => {
-    it('is 503 with a clear message while the flag is off', async () => {
-      ctx = await build({ env: {} });
-      const res = await http()
-        .post('/admin/lesson-products/sync')
-        .set('Authorization', admin)
-        .expect(503);
-      expect((res.body as { message: string }).message).toContain(
-        'LESSON_PRODUCT_SYNC_ENABLED',
-      );
-      expect(ctx.graphql).not.toHaveBeenCalled();
-    });
-
-    it('syncs and returns the counts', async () => {
-      ctx = await build({ pages: [catalogPage(eddieProducts)] });
-      const res = await http()
-        .post('/admin/lesson-products/sync')
-        .set('Authorization', admin)
-        .expect(200);
-      expect(res.body).toMatchObject({ inserted: 4, variants: 4 });
-      expect(ctx.products.rows).toHaveLength(4);
-      expect(ctx.audit.entries[0].actor).toMatchObject({ userId: ADMIN_ID });
-    });
-
-    it('is 502 naming the missing read_products scope', async () => {
-      ctx = await build({
-        pages: [
-          new ShopifyGraphqlError([
-            {
-              message: 'Access denied for products field.',
-              extensions: { code: 'ACCESS_DENIED' },
-            },
-          ]),
-        ],
-      });
-      const res = await http()
-        .post('/admin/lesson-products/sync')
-        .set('Authorization', admin)
-        .expect(502);
-      expect((res.body as { message: string }).message).toMatch(
-        /^read_products scope missing/,
-      );
-    });
-  });
-
-  describe('GET /admin/lesson-products', () => {
+  describe('/admin/lesson-types', () => {
     beforeEach(async () => {
       ctx = await build();
-      ctx.products.seed({ status: 'suggested' });
-      ctx.products.seed({ shopify_variant_id: 2, status: 'confirmed' });
-      ctx.products.seed({ shopify_variant_id: 3, status: 'ignored' });
     });
 
-    it('lists every product as camelCase with numeric prices', async () => {
-      const res = await http()
-        .get('/admin/lesson-products')
-        .set('Authorization', admin)
-        .expect(200);
-      const body = res.body as LessonProduct[];
-      expect(body).toHaveLength(3);
-      expect(body[0]).toMatchObject({
-        shopifyProductId: 8827109769238,
-        productTitle: '一对一',
-        variantTitle: '单次',
-        lessonType: 'private',
+    const create = (body: object) =>
+      http().post('/admin/lesson-types').set('Authorization', admin).send(body);
+
+    it('creates a lesson type with defaults and audits it', async () => {
+      const res = await create({
+        nameEn: ' Private 2h ',
+        nameZh: '1对1滑雪课 - 2小时',
         groupSize: 1,
-        sessions: 1,
-        pricedPerStudent: false,
-        instructorId: EDDIE_ID,
-        price: 280,
-        currency: 'CAD',
-      });
-    });
-
-    it.each(['suggested', 'confirmed', 'ignored'])(
-      'filters by status=%s',
-      async (status) => {
-        const res = await http()
-          .get(`/admin/lesson-products?status=${status}`)
-          .set('Authorization', admin)
-          .expect(200);
-        expect((res.body as LessonProduct[]).map((p) => p.status)).toEqual([
-          status,
-        ]);
-      },
-    );
-
-    it('rejects an unknown status', async () => {
-      await http()
-        .get('/admin/lesson-products?status=approved')
-        .set('Authorization', admin)
-        .expect(400);
-    });
-  });
-
-  describe('PATCH /admin/lesson-products/:id', () => {
-    let id: string;
-
-    beforeEach(async () => {
-      ctx = await build();
-      id = ctx.products.seed({
-        lesson_type: 'other',
-        group_size: null,
-        sessions: null,
-        instructor_id: null,
-      }).id;
-    });
-
-    const patch = (body: object, target = id) =>
-      http()
-        .patch(`/admin/lesson-products/${target}`)
-        .set('Authorization', admin)
-        .send(body);
-
-    it('applies the edit, confirms it and audits before/after', async () => {
-      const res = await patch({
-        lessonType: 'semi_private',
-        groupSize: 2,
-        sessions: 4,
         durationMin: 120,
-        pricedPerStudent: true,
-        instructorId: ERIC_ID,
-        status: 'confirmed',
-      }).expect(200);
+      }).expect(201);
       expect(res.body).toMatchObject({
-        id,
-        lessonType: 'semi_private',
-        groupSize: 2,
-        sessions: 4,
+        nameEn: 'Private 2h',
+        nameZh: '1对1滑雪课 - 2小时',
+        groupSize: 1,
         durationMin: 120,
-        pricedPerStudent: true,
-        instructorId: ERIC_ID,
-        status: 'confirmed',
+        isPromo: false,
+        active: true,
+        sortOrder: 0,
       });
       expect(ctx.audit.entries).toEqual([
         expect.objectContaining({
-          action: 'lesson_product.update',
-          targetType: 'lesson_product',
-          targetId: id,
-          metadata: expect.objectContaining({
-            before: expect.objectContaining({
-              status: 'suggested',
-              sessions: null,
-            }) as unknown,
-            after: expect.objectContaining({
-              status: 'confirmed',
-              sessions: 4,
-            }) as unknown,
-          }) as unknown,
+          action: 'lesson_type.create',
+          targetType: 'lesson_type',
+          targetId: (res.body as { id: string }).id,
+          actor: expect.objectContaining({ userId: ADMIN_ID }) as unknown,
         }),
       ]);
     });
 
-    it('keeps the confirmed values when Shopify is synced again', async () => {
-      ctx.products.rows[0].shopify_variant_id = 47123482771478;
-      await patch({
-        lessonType: 'group',
-        sessions: 6,
-        status: 'confirmed',
-      }).expect(200);
-      ctx.graphql.mockResolvedValueOnce(catalogPage([eddieProducts[0]]));
-      await http()
-        .post('/admin/lesson-products/sync')
+    it('lists in sort order and filters by active', async () => {
+      ctx.lessonTypes.seed({
+        name_en: 'Promo 1v1',
+        sort_order: 2,
+        is_promo: true,
+      });
+      ctx.lessonTypes.seed({ name_en: 'Private 1h', sort_order: 1 });
+      ctx.lessonTypes.seed({ name_en: 'Old', sort_order: 0, active: false });
+      const all = await http()
+        .get('/admin/lesson-types')
         .set('Authorization', admin)
         .expect(200);
+      expect((all.body as { nameEn: string }[]).map((t) => t.nameEn)).toEqual([
+        'Old',
+        'Private 1h',
+        'Promo 1v1',
+      ]);
+      const active = await http()
+        .get('/admin/lesson-types?active=true')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(
+        (active.body as { nameEn: string }[]).map((t) => t.nameEn),
+      ).toEqual(['Private 1h', 'Promo 1v1']);
+    });
+
+    it('is 409 when the English name is already used', async () => {
+      ctx.lessonTypes.seed({ name_en: 'Private 2h' });
+      const res = await create({
+        nameEn: 'private 2H',
+        durationMin: 60,
+      }).expect(409);
+      expect((res.body as { message: string }).message).toBe(
+        LESSON_TYPE_NAME_TAKEN,
+      );
+    });
+
+    it('updates only the given fields and audits before/after', async () => {
+      const type = ctx.lessonTypes.seed();
       const res = await http()
-        .get('/admin/lesson-products?status=confirmed')
+        .patch(`/admin/lesson-types/${type.id}`)
         .set('Authorization', admin)
+        .send({ active: false, groupSize: null, nameZh: '' })
         .expect(200);
-      expect((res.body as LessonProduct[])[0]).toMatchObject({
-        lessonType: 'group',
-        sessions: 6,
-        instructorId: null,
-        price: 280,
+      expect(res.body).toMatchObject({
+        nameEn: 'Private 2h',
+        active: false,
+        groupSize: null,
+        nameZh: null,
+      });
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'lesson_type.update',
+        targetId: type.id,
+        metadata: {
+          before: {
+            active: true,
+            group_size: 1,
+            name_zh: '1对1滑雪课 - 2小时',
+          },
+          after: { active: false, group_size: null, name_zh: null },
+        },
       });
     });
 
-    it('clears nullable fields with null', async () => {
-      ctx.products.rows[0].instructor_id = EDDIE_ID;
-      const res = await patch({ instructorId: null, groupSize: null }).expect(
-        200,
-      );
-      expect(res.body).toMatchObject({ instructorId: null, groupSize: null });
+    it('is 404 for an unknown id, 400 for an empty patch', async () => {
+      await http()
+        .patch(`/admin/lesson-types/${UNKNOWN_ID}`)
+        .set('Authorization', admin)
+        .send({ active: false })
+        .expect(404);
+      const type = ctx.lessonTypes.seed();
+      await http()
+        .patch(`/admin/lesson-types/${type.id}`)
+        .set('Authorization', admin)
+        .send({})
+        .expect(400);
     });
 
-    it('refuses to confirm a product without sessions', async () => {
-      const res = await patch({ status: 'confirmed' }).expect(400);
-      expect((res.body as { message: string }).message).toBe(
-        LESSON_PRODUCT_SESSIONS_REQUIRED,
-      );
-    });
-
-    it('rejects an instructor that does not exist', async () => {
-      await patch({ instructorId: UNKNOWN_ID }).expect(400);
+    it('is 409 when renaming onto an existing name', async () => {
+      ctx.lessonTypes.seed({ name_en: 'Private 1h' });
+      const type = ctx.lessonTypes.seed({ name_en: 'Private 2h' });
+      await http()
+        .patch(`/admin/lesson-types/${type.id}`)
+        .set('Authorization', admin)
+        .send({ nameEn: 'Private 1h' })
+        .expect(409);
     });
 
     it.each([
-      [{}],
-      [{ lessonType: 'camp' }],
-      [{ lessonType: null }],
-      [{ status: null }],
-      [{ pricedPerStudent: 'yes' }],
-      [{ sessions: 0 }],
-      [{ sessions: 1.5 }],
-      [{ groupSize: 51 }],
-      [{ durationMin: 0 }],
-      [{ instructorId: 'eddie' }],
-      [{ price: 10 }],
+      [{ durationMin: 60 }],
+      [{ nameEn: '', durationMin: 60 }],
+      [{ nameEn: 'X' }],
+      [{ nameEn: 'X', durationMin: 0 }],
+      [{ nameEn: 'X', durationMin: 1441 }],
+      [{ nameEn: 'X', durationMin: 60, groupSize: 0 }],
+      [{ nameEn: 'X', durationMin: 60, isPromo: 'yes' }],
+      [{ nameEn: 'X', durationMin: 60, wechatName: 'x' }],
     ])('rejects %j with 400', async (body) => {
-      await patch(body).expect(400);
-      expect(ctx.audit.entries).toHaveLength(0);
+      await create(body).expect(400);
+    });
+  });
+
+  describe('/admin/pay-rates', () => {
+    let lessonTypeId: string;
+
+    beforeEach(async () => {
+      ctx = await build();
+      lessonTypeId = ctx.lessonTypes.seed().id;
+      ctx.payRates.lessonTypeIds.add(lessonTypeId);
     });
 
-    it('is 404 for an unknown product and 400 for a malformed id', async () => {
-      await patch({ sessions: 1 }, UNKNOWN_ID).expect(404);
-      await patch({ sessions: 1 }, 'not-a-uuid').expect(400);
+    const create = (body: object) =>
+      http()
+        .post('/admin/pay-rates')
+        .set('Authorization', admin)
+        .send({ lessonTypeId, ...body });
+
+    it('creates a default rate in CAD and audits it', async () => {
+      const res = await create({
+        hourlyRate: 42.5,
+        effectiveFrom: '2026-11-01',
+      }).expect(201);
+      expect(res.body).toMatchObject({
+        lessonTypeId,
+        instructorId: null,
+        hourlyRate: 42.5,
+        currency: 'CAD',
+        effectiveFrom: '2026-11-01',
+        effectiveTo: null,
+      });
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'pay_rate.create',
+        targetType: 'pay_rate',
+        targetId: (res.body as { id: string }).id,
+      });
     });
 
-    it('is 409 when the row changed underneath the edit', async () => {
-      jest.spyOn(ctx.products, 'update').mockResolvedValueOnce(null);
-      const res = await patch({ sessions: 2 }).expect(409);
+    it('is 409 when a rate overlaps another for the same type and instructor', async () => {
+      await create({
+        hourlyRate: 40,
+        effectiveFrom: '2026-11-01',
+        effectiveTo: '2026-12-31',
+      }).expect(201);
+      const res = await create({
+        hourlyRate: 45,
+        effectiveFrom: '2026-12-31',
+      }).expect(409);
+      expect((res.body as { message: string }).message).toBe(PAY_RATE_OVERLAP);
+      await create({ hourlyRate: 45, effectiveFrom: '2027-01-01' }).expect(201);
+      await create({
+        hourlyRate: 60,
+        instructorId: EDDIE_ID,
+        effectiveFrom: '2026-11-15',
+      }).expect(201);
+      await create({
+        hourlyRate: 61,
+        instructorId: EDDIE_ID,
+        effectiveFrom: '2027-03-01',
+      }).expect(409);
+    });
+
+    it('is 400 for a range that ends before it starts', async () => {
+      const res = await create({
+        hourlyRate: 40,
+        effectiveFrom: '2026-11-01',
+        effectiveTo: '2026-10-31',
+      }).expect(400);
       expect((res.body as { message: string }).message).toBe(
-        LESSON_PRODUCT_CONFLICT,
+        PAY_RATE_RANGE_INVALID,
       );
+    });
+
+    it('is 400 for an unknown lesson type or instructor', async () => {
+      const type = await http()
+        .post('/admin/pay-rates')
+        .set('Authorization', admin)
+        .send({
+          lessonTypeId: UNKNOWN_ID,
+          hourlyRate: 40,
+          effectiveFrom: '2026-11-01',
+        })
+        .expect(400);
+      expect((type.body as { message: string }).message).toBe(
+        PAY_RATE_LESSON_TYPE_NOT_FOUND,
+      );
+      const instructor = await create({
+        instructorId: UNKNOWN_ID,
+        hourlyRate: 40,
+        effectiveFrom: '2026-11-01',
+      }).expect(400);
+      expect((instructor.body as { message: string }).message).toBe(
+        PAY_RATE_INSTRUCTOR_NOT_FOUND,
+      );
+    });
+
+    it.each([
+      [{ hourlyRate: -1, effectiveFrom: '2026-11-01' }],
+      [{ hourlyRate: 40.123, effectiveFrom: '2026-11-01' }],
+      [{ hourlyRate: '40', effectiveFrom: '2026-11-01' }],
+      [{ hourlyRate: 40, effectiveFrom: '2026-02-30' }],
+      [{ hourlyRate: 40, effectiveFrom: '2026-11-01T00:00:00Z' }],
+      [{ hourlyRate: 40, effectiveFrom: '2026-11-01', currency: 'dollars' }],
+      [{ hourlyRate: 40, effectiveFrom: '2026-11-01', instructorId: 'eddie' }],
+      [{ hourlyRate: 40 }],
+    ])('rejects %j with 400', async (body) => {
+      await create(body).expect(400);
+    });
+
+    it('ends a rate with PATCH, audits it, and refuses to extend into the next one', async () => {
+      const first = await create({
+        hourlyRate: 40,
+        effectiveFrom: '2026-11-01',
+      }).expect(201);
+      const id = (first.body as { id: string }).id;
+      const ended = await http()
+        .patch(`/admin/pay-rates/${id}`)
+        .set('Authorization', admin)
+        .send({ effectiveTo: '2026-12-31', currency: 'cad' })
+        .expect(200);
+      expect(ended.body).toMatchObject({
+        effectiveTo: '2026-12-31',
+        currency: 'CAD',
+      });
+      expect(ctx.audit.entries[1]).toMatchObject({
+        action: 'pay_rate.update',
+        targetId: id,
+        metadata: {
+          before: { effectiveTo: null },
+          after: { effectiveTo: '2026-12-31' },
+        },
+      });
+      await create({ hourlyRate: 45, effectiveFrom: '2027-01-01' }).expect(201);
+      await http()
+        .patch(`/admin/pay-rates/${id}`)
+        .set('Authorization', admin)
+        .send({ effectiveTo: null })
+        .expect(409);
+      await http()
+        .patch(`/admin/pay-rates/${id}`)
+        .set('Authorization', admin)
+        .send({ effectiveFrom: '2027-02-01' })
+        .expect(400);
+    });
+
+    it('is 404 for an unknown rate and 400 for an empty patch', async () => {
+      await http()
+        .patch(`/admin/pay-rates/${UNKNOWN_ID}`)
+        .set('Authorization', admin)
+        .send({ hourlyRate: 1 })
+        .expect(404);
+      await http()
+        .patch(`/admin/pay-rates/${UNKNOWN_ID}`)
+        .set('Authorization', admin)
+        .send({})
+        .expect(400);
+    });
+
+    it('lists with filters', async () => {
+      await create({ hourlyRate: 40, effectiveFrom: '2026-11-01' });
+      await create({
+        hourlyRate: 60,
+        instructorId: EDDIE_ID,
+        effectiveFrom: '2026-11-01',
+      });
+      const all = await http()
+        .get('/admin/pay-rates')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(all.body).toHaveLength(2);
+      const defaults = await http()
+        .get(`/admin/pay-rates?lessonTypeId=${lessonTypeId}&scope=default`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(defaults.body).toEqual([
+        expect.objectContaining({ instructorId: null, hourlyRate: 40 }),
+      ]);
+      const eddie = await http()
+        .get(`/admin/pay-rates?instructorId=${EDDIE_ID}`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(eddie.body).toEqual([
+        expect.objectContaining({ instructorId: EDDIE_ID, hourlyRate: 60 }),
+      ]);
+      const overrides = await http()
+        .get('/admin/pay-rates?scope=override')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(overrides.body).toHaveLength(1);
+    });
+
+    it('resolves the instructor override first, else the default, on the lesson date', async () => {
+      await create({
+        hourlyRate: 40,
+        effectiveFrom: '2026-11-01',
+        effectiveTo: '2026-12-31',
+      });
+      await create({ hourlyRate: 45, effectiveFrom: '2027-01-01' });
+      await create({
+        hourlyRate: 60,
+        instructorId: EDDIE_ID,
+        effectiveFrom: '2026-12-15',
+      });
+      const resolve = async (instructorId: string, date: string) =>
+        (
+          await http()
+            .get(
+              `/admin/pay-rates/resolve?instructorId=${instructorId}&lessonTypeId=${lessonTypeId}&date=${date}`,
+            )
+            .set('Authorization', admin)
+            .expect(200)
+        ).body as {
+          source: string | null;
+          rate: { hourlyRate: number } | null;
+        };
+      expect(await resolve(EDDIE_ID, '2026-12-01')).toMatchObject({
+        source: 'default',
+        rate: { hourlyRate: 40 },
+      });
+      expect(await resolve(EDDIE_ID, '2026-12-15')).toMatchObject({
+        source: 'instructor',
+        rate: { hourlyRate: 60 },
+      });
+      expect(await resolve(ERIC_ID, '2027-01-01')).toMatchObject({
+        source: 'default',
+        rate: { hourlyRate: 45 },
+      });
+      expect(await resolve(ERIC_ID, '2026-10-31')).toEqual({
+        source: null,
+        rate: null,
+      });
+      await http()
+        .get(
+          `/admin/pay-rates/resolve?instructorId=${ERIC_ID}&lessonTypeId=${lessonTypeId}&date=2026-13-01`,
+        )
+        .set('Authorization', admin)
+        .expect(400);
     });
   });
 
@@ -404,19 +517,25 @@ describe('lessons admin HTTP', () => {
           instructor: { display_name_en: 'Eric Wang', display_name_zh: null },
         }),
         classRow({
+          lesson_type_id: '8b9c0d1e-2f3a-4b4c-8d5e-6f7a8b9c0d1e',
+          lesson_type: {
+            name_en: 'Private 1h',
+            name_zh: '1对1滑雪课 - 1小时',
+            duration_min: 60,
+            group_size: 1,
+            is_promo: false,
+          },
           location_id: '6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c',
           location: { name: 'Blue Mountain' },
-          lesson_product: { product_title: '一对一', variant_title: '四次' },
           participants: [
             {
               customer_id: '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d',
-              purchase_id: null,
               attendance: 'expected',
               customer: {
-                name: 'Lily Chen',
+                first_name: 'Lily',
+                last_name: 'Chen',
                 email: 'lily@example.com',
                 phone: null,
-                wechat_id: 'lilyc',
               },
             },
           ],
@@ -424,12 +543,12 @@ describe('lessons admin HTTP', () => {
       );
     });
 
-    it('lists classes in start order with their participants', async () => {
+    it('lists classes in start order with lesson type and participants', async () => {
       const res = await http()
         .get('/admin/classes')
         .set('Authorization', admin)
         .expect(200);
-      const body = res.body as { startsAt: string }[];
+      const body = res.body as Record<string, unknown>[];
       expect(body.map((c) => c.startsAt)).toEqual([
         '2026-12-12T15:00:00.000Z',
         '2026-12-13T15:00:00.000Z',
@@ -438,27 +557,31 @@ describe('lessons admin HTTP', () => {
         instructorId: EDDIE_ID,
         instructorName: 'Eddie',
         instructorNameZh: '艾迪',
+        lessonTypeId: '8b9c0d1e-2f3a-4b4c-8d5e-6f7a8b9c0d1e',
+        lessonTypeNameEn: 'Private 1h',
+        lessonTypeNameZh: '1对1滑雪课 - 1小时',
+        durationMin: 60,
+        groupSize: 1,
+        isPromo: false,
         locationName: 'Blue Mountain',
-        lessonProductTitle: '一对一',
-        lessonVariantTitle: '四次',
         status: 'scheduled',
         source: 'ssms',
         participants: [
           {
             customerId: '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d',
-            purchaseId: null,
             attendance: 'expected',
-            name: 'Lily Chen',
+            firstName: 'Lily',
+            lastName: 'Chen',
             email: 'lily@example.com',
             phone: null,
-            wechatId: 'lilyc',
           },
         ],
       });
       expect(body[1]).toMatchObject({
         instructorName: 'Eric Wang',
+        lessonTypeId: null,
+        lessonTypeNameEn: null,
         locationName: null,
-        lessonProductTitle: null,
         participants: [],
       });
     });
@@ -501,7 +624,7 @@ describe('lessons admin HTTP', () => {
     const set = (body: object, id = EDDIE_ID) =>
       http().patch(url(id)).set('Authorization', admin).send(body);
 
-    it('starts empty, saves an id, and audits the change once', async () => {
+    it('starts empty, saves a confirmed id, and audits the change once', async () => {
       const empty = await http()
         .get(url())
         .set('Authorization', admin)
@@ -509,26 +632,29 @@ describe('lessons admin HTTP', () => {
       expect(empty.body).toEqual({
         instructorId: EDDIE_ID,
         googleCalendarId: null,
+        calendarSummary: null,
+        matchStatus: null,
         updatedAt: null,
       });
 
       const saved = await set({
-        googleCalendarId: ' eddie@group.calendar.google.com ',
+        googleCalendarId: ' eddie@example.com ',
+        calendarSummary: ' Eddie Chen ',
       }).expect(200);
       expect(saved.body).toMatchObject({
         instructorId: EDDIE_ID,
-        googleCalendarId: 'eddie@group.calendar.google.com',
+        googleCalendarId: 'eddie@example.com',
+        calendarSummary: 'Eddie Chen',
+        matchStatus: 'confirmed',
       });
-      await set({ googleCalendarId: 'eddie@group.calendar.google.com' }).expect(
-        200,
-      );
+      await set({ googleCalendarId: 'eddie@example.com' }).expect(200);
 
       const read = await http()
         .get(url())
         .set('Authorization', admin)
         .expect(200);
       expect(read.body).toMatchObject({
-        googleCalendarId: 'eddie@group.calendar.google.com',
+        googleCalendarId: 'eddie@example.com',
       });
       expect(ctx.calendars.rows.get(EDDIE_ID)?.updated_by).toBe(ADMIN_ID);
       expect(ctx.audit.entries).toEqual([
@@ -538,7 +664,9 @@ describe('lessons admin HTTP', () => {
           targetId: EDDIE_ID,
           metadata: {
             from: null,
-            to: 'eddie@group.calendar.google.com',
+            to: 'eddie@example.com',
+            fromStatus: null,
+            toStatus: 'confirmed',
           },
         }),
       ]);
@@ -547,16 +675,26 @@ describe('lessons admin HTTP', () => {
     it('clears the id with null', async () => {
       await set({ googleCalendarId: 'eddie@example.com' }).expect(200);
       const res = await set({ googleCalendarId: null }).expect(200);
-      expect(res.body).toEqual({
-        instructorId: EDDIE_ID,
+      expect(res.body).toMatchObject({
         googleCalendarId: null,
-        updatedAt: null,
+        matchStatus: null,
       });
       expect(ctx.calendars.rows.has(EDDIE_ID)).toBe(false);
-      expect(ctx.audit.entries[1].metadata).toEqual({
+      expect(ctx.audit.entries[1].metadata).toMatchObject({
         from: 'eddie@example.com',
         to: null,
       });
+    });
+
+    it('is 409 when the calendar belongs to another instructor', async () => {
+      await set({ googleCalendarId: 'shared@example.com' }).expect(200);
+      const res = await set(
+        { googleCalendarId: 'shared@example.com' },
+        ERIC_ID,
+      ).expect(409);
+      expect((res.body as { message: string }).message).toBe(
+        CALENDAR_ALREADY_LINKED,
+      );
     });
 
     it('is 404 for an unknown instructor', async () => {
@@ -570,8 +708,151 @@ describe('lessons admin HTTP', () => {
       [{ googleCalendarId: 'two words' }],
       [{ googleCalendarId: 42 }],
       [{ googleCalendarId: 'a'.repeat(321) }],
+      [{ googleCalendarId: 'x@example.com', matchStatus: 'maybe' }],
+      [{ googleCalendarId: 'x@example.com', calendarSummary: 'a'.repeat(501) }],
     ])('rejects %j with 400', async (body) => {
       await set(body).expect(400);
+    });
+  });
+
+  describe('/admin/instructor-calendars', () => {
+    const calendars = [
+      {
+        id: 'admin@ssnow.club',
+        summary: 'admin@ssnow.club',
+        accessRole: 'owner',
+      },
+      {
+        id: 'eddie@example.com',
+        summary: 'eddie@example.com',
+        accessRole: 'reader',
+      },
+      {
+        id: 'eric.wang@gmail.com',
+        summary: 'Eric W',
+        accessRole: 'freeBusyReader',
+      },
+    ];
+
+    it('lists every instructor with their link and proposed calendars', async () => {
+      ctx = await build(fakeGoogle({ calendars }));
+      const res = await http()
+        .get('/admin/instructor-calendars')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        google: { connected: true, error: null },
+        instructors: [
+          {
+            instructorId: EDDIE_ID,
+            displayNameEn: 'Eddie Chen',
+            googleCalendarId: null,
+            suggestion: { calendarId: 'eddie@example.com', matchedBy: 'email' },
+          },
+          {
+            instructorId: ERIC_ID,
+            suggestion: {
+              calendarId: 'eric.wang@gmail.com',
+              matchedBy: 'name',
+            },
+          },
+        ],
+      });
+    });
+
+    it('still lists links when Google is not connected or fails', async () => {
+      ctx = await build(fakeGoogle({ connected: false }));
+      ctx.calendars.rows.set(EDDIE_ID, {
+        instructor_id: EDDIE_ID,
+        google_calendar_id: 'eddie@example.com',
+        calendar_summary: null,
+        match_status: 'confirmed',
+        updated_at: '2026-10-10T00:00:00.000Z',
+        updated_by: null,
+      });
+      const offline = await http()
+        .get('/admin/instructor-calendars')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(offline.body).toMatchObject({
+        google: { connected: false, error: null },
+        instructors: [
+          { googleCalendarId: 'eddie@example.com', candidates: [] },
+          { googleCalendarId: null, candidates: [] },
+        ],
+      });
+      expect(ctx.google.listCalendars).not.toHaveBeenCalled();
+      await ctx.app.close();
+
+      ctx = await build(
+        fakeGoogle({ error: new GoogleApiError(500, 'backendError', 'boom') }),
+      );
+      const failing = await http()
+        .get('/admin/instructor-calendars')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(failing.body).toMatchObject({
+        google: { connected: true, error: 'Google Calendar request failed' },
+      });
+    });
+
+    it('stores unambiguous suggestions for unlinked instructors and audits them', async () => {
+      ctx = await build(fakeGoogle({ calendars }));
+      ctx.calendars.rows.set(ERIC_ID, {
+        instructor_id: ERIC_ID,
+        google_calendar_id: 'eric-confirmed@example.com',
+        calendar_summary: null,
+        match_status: 'confirmed',
+        updated_at: '2026-10-10T00:00:00.000Z',
+        updated_by: null,
+      });
+      const res = await http()
+        .post('/admin/instructor-calendars/suggest')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        suggested: 1,
+        overview: {
+          instructors: [
+            {
+              instructorId: EDDIE_ID,
+              googleCalendarId: 'eddie@example.com',
+              calendarSummary: 'eddie@example.com',
+              matchStatus: 'suggested',
+            },
+            {
+              instructorId: ERIC_ID,
+              googleCalendarId: 'eric-confirmed@example.com',
+              matchStatus: 'confirmed',
+            },
+          ],
+        },
+      });
+      expect(ctx.audit.entries).toEqual([
+        expect.objectContaining({
+          action: 'instructor.google_calendar_suggest',
+          metadata: {
+            suggested: [
+              { instructorId: EDDIE_ID, googleCalendarId: 'eddie@example.com' },
+            ],
+          },
+        }),
+      ]);
+
+      const again = await http()
+        .post('/admin/instructor-calendars/suggest')
+        .set('Authorization', admin)
+        .expect(200);
+      expect((again.body as { suggested: number }).suggested).toBe(0);
+      expect(ctx.audit.entries).toHaveLength(1);
+    });
+
+    it('is 409 when Google is not connected', async () => {
+      ctx = await build(fakeGoogle({ connected: false }));
+      await http()
+        .post('/admin/instructor-calendars/suggest')
+        .set('Authorization', admin)
+        .expect(409);
     });
   });
 });

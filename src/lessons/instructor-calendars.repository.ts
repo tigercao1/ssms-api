@@ -1,29 +1,61 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+  check,
+  type DbResult,
+  hasCode,
+  PG_UNIQUE_VIOLATION,
+} from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import { check } from './lesson-products.repository';
 
 export const INSTRUCTOR_CALENDARS_TABLE = 'instructor_calendars';
-const COLUMNS = 'instructor_id, google_calendar_id, updated_at';
+const COLUMNS =
+  'instructor_id, google_calendar_id, calendar_summary, match_status, updated_at';
+const INSTRUCTOR_COLUMNS =
+  'id, email, display_name_en, display_name_zh, approval_status, is_active';
+
+export type CalendarMatchStatus = 'suggested' | 'confirmed';
 
 export interface InstructorCalendarRow {
   instructor_id: string;
   google_calendar_id: string;
+  calendar_summary: string | null;
+  match_status: CalendarMatchStatus;
   updated_at: string;
+}
+
+export interface InstructorCalendarInput {
+  google_calendar_id: string;
+  calendar_summary: string | null;
+  match_status: CalendarMatchStatus;
+}
+
+export interface CalendarInstructorRow {
+  id: string;
+  email: string | null;
+  display_name_en: string;
+  display_name_zh: string | null;
+  approval_status: string;
+  is_active: boolean;
 }
 
 export abstract class InstructorCalendarsRepository {
   abstract instructorExists(id: string): Promise<boolean>;
+  abstract listInstructors(): Promise<CalendarInstructorRow[]>;
+  abstract list(): Promise<InstructorCalendarRow[]>;
   abstract find(instructorId: string): Promise<InstructorCalendarRow | null>;
   abstract upsert(
     instructorId: string,
-    googleCalendarId: string,
+    input: InstructorCalendarInput,
     userId: string | null,
   ): Promise<InstructorCalendarRow>;
+  abstract insertIfAbsent(
+    instructorId: string,
+    input: InstructorCalendarInput,
+    userId: string | null,
+  ): Promise<boolean>;
   abstract remove(instructorId: string): Promise<void>;
 }
-
-type DbResult<T> = { data: T | null; error: { message: string } | null };
 
 @Injectable()
 export class SupabaseInstructorCalendarsRepository extends InstructorCalendarsRepository {
@@ -43,6 +75,24 @@ export class SupabaseInstructorCalendarsRepository extends InstructorCalendarsRe
     return data !== null;
   }
 
+  async listInstructors(): Promise<CalendarInstructorRow[]> {
+    const { data, error } = (await this.supabase
+      .from('instructors')
+      .select(INSTRUCTOR_COLUMNS)
+      .order('display_name_en', { ascending: true })
+      .order('id', { ascending: true })) as DbResult<CalendarInstructorRow[]>;
+    check(error, 'list instructors');
+    return data ?? [];
+  }
+
+  async list(): Promise<InstructorCalendarRow[]> {
+    const { data, error } = (await this.supabase
+      .from(INSTRUCTOR_CALENDARS_TABLE)
+      .select(COLUMNS)) as DbResult<InstructorCalendarRow[]>;
+    check(error, 'list instructor calendars');
+    return data ?? [];
+  }
+
   async find(instructorId: string): Promise<InstructorCalendarRow | null> {
     const { data, error } = (await this.supabase
       .from(INSTRUCTOR_CALENDARS_TABLE)
@@ -55,17 +105,13 @@ export class SupabaseInstructorCalendarsRepository extends InstructorCalendarsRe
 
   async upsert(
     instructorId: string,
-    googleCalendarId: string,
+    input: InstructorCalendarInput,
     userId: string | null,
   ): Promise<InstructorCalendarRow> {
     const { data, error } = (await this.supabase
       .from(INSTRUCTOR_CALENDARS_TABLE)
       .upsert(
-        {
-          instructor_id: instructorId,
-          google_calendar_id: googleCalendarId,
-          updated_by: userId,
-        },
+        { instructor_id: instructorId, ...input, updated_by: userId },
         { onConflict: 'instructor_id' },
       )
       .select(COLUMNS)
@@ -75,6 +121,29 @@ export class SupabaseInstructorCalendarsRepository extends InstructorCalendarsRe
       throw new Error('Failed to save instructor calendar: no row returned');
     }
     return data;
+  }
+
+  async insertIfAbsent(
+    instructorId: string,
+    input: InstructorCalendarInput,
+    userId: string | null,
+  ): Promise<boolean> {
+    const { data, error } = (await this.supabase
+      .from(INSTRUCTOR_CALENDARS_TABLE)
+      .upsert(
+        { instructor_id: instructorId, ...input, updated_by: userId },
+        { onConflict: 'instructor_id', ignoreDuplicates: true },
+      )
+      .select('instructor_id')) as DbResult<{ instructor_id: string }[]>;
+    try {
+      check(error, 'suggest instructor calendar');
+    } catch (err) {
+      if (hasCode(err, PG_UNIQUE_VIOLATION)) {
+        return false;
+      }
+      throw err;
+    }
+    return (data ?? []).length > 0;
   }
 
   async remove(instructorId: string): Promise<void> {

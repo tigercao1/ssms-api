@@ -1,5 +1,11 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import type { ApprovalStatus } from '../admin.types';
 
 /**
@@ -21,4 +27,12 @@ export class ListInstructorsQueryDto {
   })
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MaxLength(200)
+  q?: string;
 }

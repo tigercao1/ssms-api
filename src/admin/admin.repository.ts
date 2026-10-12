@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { ilikeAny, searchTokens } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import {
   AdminInstructorPatch,
@@ -21,6 +22,12 @@ const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
   'is_active, min_student_age, display_order, inserted_at, updated_at';
+
+const INSTRUCTOR_SEARCH_COLUMNS = [
+  'display_name_en',
+  'display_name_zh',
+  'email',
+];
 
 const REFERENCE_COLUMNS =
   'id, key, name, name_zh, name_en_translated_by, name_zh_translated_by, sort_order, is_active';
@@ -93,6 +100,9 @@ export class SupabaseAdminRepository extends AdminRepository {
     }
     if (filter.isActive !== undefined) {
       query = query.eq('is_active', filter.isActive);
+    }
+    for (const token of searchTokens(filter.q)) {
+      query = query.or(ilikeAny(INSTRUCTOR_SEARCH_COLUMNS, token));
     }
 
     // Deterministic order: newest applications first, id as a stable tiebreaker.

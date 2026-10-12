@@ -8,7 +8,7 @@ import {
 const ID = '3f1c2b7a-9d4e-4c1a-8b2f-6a7e5d4c3b2a';
 
 describe('SupabaseClassesRepository', () => {
-  it('selects classes with instructor, location, product and participants', async () => {
+  it('selects classes with instructor, location, lesson type and participants', async () => {
     const { client, queries } = recordingSupabase({
       classes: { data: [{ id: ID }], error: null },
     });
@@ -21,6 +21,8 @@ describe('SupabaseClassesRepository', () => {
       ['limit', MAX_CLASSES_PER_LIST],
     ]);
     expect(CLASS_COLUMNS).toContain('participants:class_participants(');
+    expect(CLASS_COLUMNS).toContain('lesson_type:lesson_types(');
+    expect(CLASS_COLUMNS).not.toMatch(/product|purchase|wechat/);
   });
 
   it('applies every filter it is given', async () => {

@@ -1,94 +1,103 @@
+create schema if not exists extensions;
+create extension if not exists btree_gist with schema extensions;
+
 create table if not exists instructor_calendars (
   instructor_id       uuid primary key references instructors (id) on delete cascade,
   google_calendar_id  text not null
                         constraint instructor_calendars_google_calendar_id_check
                         check (char_length(google_calendar_id) between 1 and 320),
+  calendar_summary    text
+                        constraint instructor_calendars_calendar_summary_check
+                        check (char_length(calendar_summary) <= 500),
+  match_status        text not null default 'confirmed'
+                        constraint instructor_calendars_match_status_check
+                        check (match_status in ('suggested', 'confirmed')),
   updated_by          uuid,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now()
 );
 
+create unique index if not exists instructor_calendars_google_calendar_id_key
+  on instructor_calendars (google_calendar_id);
+
 create table if not exists customers (
   id                   uuid primary key default gen_random_uuid(),
-  shopify_customer_id  bigint unique,
-  name                 text,
+  shopify_customer_id  bigint not null unique,
+  first_name           text,
+  last_name            text,
   email                text,
   phone                text,
-  wechat_id            text,
+  shopify_updated_at   timestamptz,
+  search_text          text generated always as (
+                         lower(
+                           coalesce(first_name, '') || ' ' || coalesce(last_name, '') || ' ' ||
+                           coalesce(last_name, '') || coalesce(first_name, '') || ' ' ||
+                           coalesce(email, '') || ' ' || coalesce(phone, '') || ' ' ||
+                           regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+                         )
+                       ) stored,
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
 );
 
 create index if not exists customers_email_idx on customers (lower(email));
+create index if not exists customers_phone_idx on customers (phone);
+create index if not exists customers_name_idx on customers (lower(last_name), lower(first_name));
+create index if not exists customers_shopify_updated_at_idx on customers (shopify_updated_at);
 
-create table if not exists lesson_products (
-  id                  uuid primary key default gen_random_uuid(),
-  shopify_product_id  bigint not null,
-  shopify_variant_id  bigint not null unique,
-  product_title       text not null,
-  variant_title       text,
-  lesson_type         text not null default 'other'
-                        constraint lesson_products_lesson_type_check
-                        check (lesson_type in ('private', 'semi_private', 'group', 'other')),
-  group_size          int
-                        constraint lesson_products_group_size_check
-                        check (group_size > 0),
-  sessions            int
-                        constraint lesson_products_sessions_check
-                        check (sessions > 0),
-  duration_min        int
-                        constraint lesson_products_duration_min_check
-                        check (duration_min > 0),
-  priced_per_student  boolean not null default false,
-  instructor_id       uuid references instructors (id) on delete set null,
-  status              text not null default 'suggested'
-                        constraint lesson_products_status_check
-                        check (status in ('suggested', 'confirmed', 'ignored')),
-  price               numeric(10, 2),
-  currency            text,
-  created_at          timestamptz not null default now(),
-  updated_at          timestamptz not null default now()
+create table if not exists lesson_types (
+  id            uuid primary key default gen_random_uuid(),
+  name_en       text not null
+                  constraint lesson_types_name_en_check
+                  check (char_length(btrim(name_en)) between 1 and 200),
+  name_zh       text
+                  constraint lesson_types_name_zh_check
+                  check (char_length(name_zh) <= 200),
+  group_size    int
+                  constraint lesson_types_group_size_check
+                  check (group_size > 0),
+  duration_min  int not null
+                  constraint lesson_types_duration_min_check
+                  check (duration_min between 1 and 1440),
+  is_promo      boolean not null default false,
+  active        boolean not null default true,
+  sort_order    int not null default 0,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
 );
 
-create index if not exists lesson_products_status_idx on lesson_products (status);
-create index if not exists lesson_products_shopify_product_id_idx
-  on lesson_products (shopify_product_id);
-create index if not exists lesson_products_instructor_id_idx
-  on lesson_products (instructor_id);
+create unique index if not exists lesson_types_name_en_key on lesson_types (lower(btrim(name_en)));
 
-create table if not exists purchases (
-  id                    uuid primary key default gen_random_uuid(),
-  customer_id           uuid not null references customers (id),
-  lesson_product_id     uuid not null references lesson_products (id),
-  shopify_order_id      bigint,
-  shopify_line_item_id  bigint unique,
-  quantity              int not null default 1
-                          constraint purchases_quantity_check
-                          check (quantity > 0),
-  credits_total         int not null
-                          constraint purchases_credits_total_check
-                          check (credits_total >= 0),
-  credits_used          int not null default 0,
-  status                text not null default 'active'
-                          constraint purchases_status_check
-                          check (status in ('active', 'refunded', 'void')),
-  purchased_at          timestamptz,
-  created_at            timestamptz not null default now(),
-  updated_at            timestamptz not null default now(),
-  constraint purchases_credits_used_check
-    check (credits_used between 0 and credits_total)
+create table if not exists pay_rates (
+  id              uuid primary key default gen_random_uuid(),
+  lesson_type_id  uuid not null references lesson_types (id),
+  instructor_id   uuid references instructors (id) on delete cascade,
+  hourly_rate     numeric(10, 2) not null
+                    constraint pay_rates_hourly_rate_check
+                    check (hourly_rate >= 0),
+  currency        text not null default 'CAD'
+                    constraint pay_rates_currency_check
+                    check (currency ~ '^[A-Z]{3}$'),
+  effective_from  date not null,
+  effective_to    date,
+  created_by      uuid,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  constraint pay_rates_effective_range_check
+    check (effective_to is null or effective_to >= effective_from),
+  constraint pay_rates_no_overlap exclude using gist (
+    lesson_type_id with =,
+    (coalesce(instructor_id, '00000000-0000-0000-0000-000000000000'::uuid)) with =,
+    (daterange(effective_from, effective_to, '[]')) with &&
+  )
 );
 
-create index if not exists purchases_customer_id_idx on purchases (customer_id);
-create index if not exists purchases_lesson_product_id_idx
-  on purchases (lesson_product_id);
-create index if not exists purchases_shopify_order_id_idx
-  on purchases (shopify_order_id);
+create index if not exists pay_rates_instructor_id_idx on pay_rates (instructor_id);
 
 create table if not exists classes (
   id                  uuid primary key default gen_random_uuid(),
   instructor_id       uuid not null references instructors (id),
-  lesson_product_id   uuid references lesson_products (id) on delete set null,
+  lesson_type_id      uuid references lesson_types (id),
   location_id         uuid references teaching_locations (id) on delete set null,
   starts_at           timestamptz not null,
   ends_at             timestamptz not null,
@@ -110,6 +119,7 @@ create table if not exists classes (
 create index if not exists classes_instructor_id_starts_at_idx
   on classes (instructor_id, starts_at);
 create index if not exists classes_starts_at_idx on classes (starts_at);
+create index if not exists classes_lesson_type_id_idx on classes (lesson_type_id);
 create unique index if not exists classes_google_event_key
   on classes (google_calendar_id, google_event_id)
   where google_event_id is not null;
@@ -117,7 +127,6 @@ create unique index if not exists classes_google_event_key
 create table if not exists class_participants (
   class_id     uuid not null references classes (id) on delete cascade,
   customer_id  uuid not null references customers (id),
-  purchase_id  uuid references purchases (id) on delete set null,
   attendance   text not null default 'expected'
                  constraint class_participants_attendance_check
                  check (attendance in ('expected', 'attended', 'no_show')),
@@ -128,8 +137,6 @@ create table if not exists class_participants (
 
 create index if not exists class_participants_customer_id_idx
   on class_participants (customer_id);
-create index if not exists class_participants_purchase_id_idx
-  on class_participants (purchase_id);
 
 create or replace trigger instructor_calendars_set_updated_at
   before update on instructor_calendars
@@ -139,12 +146,12 @@ create or replace trigger customers_set_updated_at
   before update on customers
   for each row execute function public.set_updated_at();
 
-create or replace trigger lesson_products_set_updated_at
-  before update on lesson_products
+create or replace trigger lesson_types_set_updated_at
+  before update on lesson_types
   for each row execute function public.set_updated_at();
 
-create or replace trigger purchases_set_updated_at
-  before update on purchases
+create or replace trigger pay_rates_set_updated_at
+  before update on pay_rates
   for each row execute function public.set_updated_at();
 
 create or replace trigger classes_set_updated_at
@@ -163,13 +170,13 @@ alter table customers enable row level security;
 alter table customers force row level security;
 revoke all on customers from public, anon, authenticated;
 
-alter table lesson_products enable row level security;
-alter table lesson_products force row level security;
-revoke all on lesson_products from public, anon, authenticated;
+alter table lesson_types enable row level security;
+alter table lesson_types force row level security;
+revoke all on lesson_types from public, anon, authenticated;
 
-alter table purchases enable row level security;
-alter table purchases force row level security;
-revoke all on purchases from public, anon, authenticated;
+alter table pay_rates enable row level security;
+alter table pay_rates force row level security;
+revoke all on pay_rates from public, anon, authenticated;
 
 alter table classes enable row level security;
 alter table classes force row level security;
@@ -178,66 +185,3 @@ revoke all on classes from public, anon, authenticated;
 alter table class_participants enable row level security;
 alter table class_participants force row level security;
 revoke all on class_participants from public, anon, authenticated;
-
-create or replace function public.sync_lesson_products(p_rows jsonb)
-returns table (inserted int, updated int)
-language sql
-security invoker
-set search_path = public
-as $$
-  with incoming as (
-    select *
-      from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r (
-        shopify_product_id  bigint,
-        shopify_variant_id  bigint,
-        product_title       text,
-        variant_title       text,
-        lesson_type         text,
-        group_size          int,
-        sessions            int,
-        duration_min        int,
-        priced_per_student  boolean,
-        instructor_id       uuid,
-        price               numeric(10, 2),
-        currency            text
-      )
-  ),
-  written as (
-    insert into lesson_products as lp (
-      shopify_product_id, shopify_variant_id, product_title, variant_title,
-      lesson_type, group_size, sessions, duration_min, priced_per_student,
-      instructor_id, price, currency
-    )
-    select shopify_product_id, shopify_variant_id, product_title, variant_title,
-           coalesce(lesson_type, 'other'), group_size, sessions, duration_min,
-           coalesce(priced_per_student, false), instructor_id, price, currency
-      from incoming
-    on conflict (shopify_variant_id) do update set
-      shopify_product_id = excluded.shopify_product_id,
-      product_title      = excluded.product_title,
-      variant_title      = excluded.variant_title,
-      price              = excluded.price,
-      currency           = excluded.currency,
-      lesson_type        = case when lp.status = 'suggested' then excluded.lesson_type else lp.lesson_type end,
-      group_size         = case when lp.status = 'suggested' then excluded.group_size else lp.group_size end,
-      sessions           = case when lp.status = 'suggested' then excluded.sessions else lp.sessions end,
-      duration_min       = case when lp.status = 'suggested' then excluded.duration_min else lp.duration_min end,
-      priced_per_student = case when lp.status = 'suggested' then excluded.priced_per_student else lp.priced_per_student end,
-      instructor_id      = case when lp.status = 'suggested' then excluded.instructor_id else lp.instructor_id end
-    where (lp.shopify_product_id, lp.product_title, lp.variant_title, lp.price, lp.currency)
-            is distinct from
-          (excluded.shopify_product_id, excluded.product_title, excluded.variant_title, excluded.price, excluded.currency)
-       or (lp.status = 'suggested'
-           and (lp.lesson_type, lp.group_size, lp.sessions, lp.duration_min, lp.priced_per_student, lp.instructor_id)
-                 is distinct from
-               (excluded.lesson_type, excluded.group_size, excluded.sessions, excluded.duration_min, excluded.priced_per_student, excluded.instructor_id))
-    returning (xmax = 0) as was_inserted
-  )
-  select (count(*) filter (where was_inserted))::int,
-         (count(*) filter (where not was_inserted))::int
-    from written;
-$$;
-
-revoke all on function public.sync_lesson_products(jsonb)
-  from public, anon, authenticated;
-grant execute on function public.sync_lesson_products(jsonb) to service_role;

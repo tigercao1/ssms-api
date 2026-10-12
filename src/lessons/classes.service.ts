@@ -10,12 +10,11 @@ export const CLASS_RANGE_INVALID = '`to` must be after `from`';
 
 export interface AdminClassParticipant {
   customerId: string;
-  purchaseId: string | null;
   attendance: Attendance;
-  name: string | null;
+  firstName: string | null;
+  lastName: string | null;
   email: string | null;
   phone: string | null;
-  wechatId: string | null;
 }
 
 export interface AdminClass {
@@ -23,9 +22,12 @@ export interface AdminClass {
   instructorId: string;
   instructorName: string | null;
   instructorNameZh: string | null;
-  lessonProductId: string | null;
-  lessonProductTitle: string | null;
-  lessonVariantTitle: string | null;
+  lessonTypeId: string | null;
+  lessonTypeNameEn: string | null;
+  lessonTypeNameZh: string | null;
+  durationMin: number | null;
+  groupSize: number | null;
+  isPromo: boolean | null;
   locationId: string | null;
   locationName: string | null;
   startsAt: string;
@@ -62,9 +64,12 @@ function toAdminClass(row: ClassRow): AdminClass {
     instructorId: row.instructor_id,
     instructorName: row.instructor?.display_name_en ?? null,
     instructorNameZh: row.instructor?.display_name_zh ?? null,
-    lessonProductId: row.lesson_product_id,
-    lessonProductTitle: row.lesson_product?.product_title ?? null,
-    lessonVariantTitle: row.lesson_product?.variant_title ?? null,
+    lessonTypeId: row.lesson_type_id,
+    lessonTypeNameEn: row.lesson_type?.name_en ?? null,
+    lessonTypeNameZh: row.lesson_type?.name_zh ?? null,
+    durationMin: row.lesson_type?.duration_min ?? null,
+    groupSize: row.lesson_type?.group_size ?? null,
+    isPromo: row.lesson_type?.is_promo ?? null,
     locationId: row.location_id,
     locationName: row.location?.name ?? null,
     startsAt: row.starts_at,
@@ -76,12 +81,11 @@ function toAdminClass(row: ClassRow): AdminClass {
     notes: row.notes,
     participants: (row.participants ?? []).map((p) => ({
       customerId: p.customer_id,
-      purchaseId: p.purchase_id,
       attendance: p.attendance,
-      name: p.customer?.name ?? null,
+      firstName: p.customer?.first_name ?? null,
+      lastName: p.customer?.last_name ?? null,
       email: p.customer?.email ?? null,
       phone: p.customer?.phone ?? null,
-      wechatId: p.customer?.wechat_id ?? null,
     })),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

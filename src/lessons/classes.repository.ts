@@ -1,35 +1,34 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import { check } from './lesson-products.repository';
+import { check, type DbResult } from '../database/db-result';
 import type { Attendance, ClassSource, ClassStatus } from './lessons.types';
 
 export const CLASSES_TABLE = 'classes';
 export const MAX_CLASSES_PER_LIST = 1000;
 export const CLASS_COLUMNS = [
-  'id, instructor_id, lesson_product_id, location_id, starts_at, ends_at, status, source, google_calendar_id, google_event_id, notes, created_at, updated_at',
+  'id, instructor_id, lesson_type_id, location_id, starts_at, ends_at, status, source, google_calendar_id, google_event_id, notes, created_at, updated_at',
   'instructor:instructors(display_name_en, display_name_zh)',
   'location:teaching_locations(name)',
-  'lesson_product:lesson_products(product_title, variant_title)',
-  'participants:class_participants(customer_id, purchase_id, attendance, customer:customers(name, email, phone, wechat_id))',
+  'lesson_type:lesson_types(name_en, name_zh, duration_min, group_size, is_promo)',
+  'participants:class_participants(customer_id, attendance, customer:customers(first_name, last_name, email, phone))',
 ].join(', ');
 
 export interface ClassParticipantRow {
   customer_id: string;
-  purchase_id: string | null;
   attendance: Attendance;
   customer: {
-    name: string | null;
+    first_name: string | null;
+    last_name: string | null;
     email: string | null;
     phone: string | null;
-    wechat_id: string | null;
   } | null;
 }
 
 export interface ClassRow {
   id: string;
   instructor_id: string;
-  lesson_product_id: string | null;
+  lesson_type_id: string | null;
   location_id: string | null;
   starts_at: string;
   ends_at: string;
@@ -45,9 +44,12 @@ export interface ClassRow {
     display_name_zh: string | null;
   } | null;
   location: { name: string } | null;
-  lesson_product: {
-    product_title: string;
-    variant_title: string | null;
+  lesson_type: {
+    name_en: string;
+    name_zh: string | null;
+    duration_min: number;
+    group_size: number | null;
+    is_promo: boolean;
   } | null;
   participants: ClassParticipantRow[] | null;
 }
@@ -84,10 +86,7 @@ export class SupabaseClassesRepository extends ClassesRepository {
     const { data, error } = (await query
       .order('starts_at', { ascending: true })
       .order('id', { ascending: true })
-      .limit(MAX_CLASSES_PER_LIST)) as unknown as {
-      data: ClassRow[] | null;
-      error: { message: string } | null;
-    };
+      .limit(MAX_CLASSES_PER_LIST)) as unknown as DbResult<ClassRow[]>;
     check(error, 'list classes');
     return data ?? [];
   }

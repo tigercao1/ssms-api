@@ -8,6 +8,7 @@ import type { InvitesRepository } from '../invites.repository';
 import { rosterCsv } from './roster-fixtures.test-util';
 import {
   DEFAULT_SEASON,
+  NO_REFERENCE_ROW,
   RosterCommandError,
   SEND_INTERVAL_MS,
   assertOutsideRepo,
@@ -20,11 +21,23 @@ import {
   type ReleaseReport,
   type RosterDeps,
 } from './roster-import';
+import type { RosterLlmNormalizer, RosterLlmRequest } from './roster-llm';
 import type {
   ExistingAuthUser,
   RosterReader,
   RosterWriter,
 } from './roster-ports';
+
+function full(org: string, track: string, level: number) {
+  return {
+    org,
+    track,
+    level,
+    isPartial: false,
+    partialComponents: [],
+    source: 'rule',
+  };
+}
 
 const NOW = new Date('2026-10-11T04:00:00Z');
 const SEASON = DEFAULT_SEASON;
@@ -183,6 +196,7 @@ describe('parseRosterArgs', () => {
       season: '2026/27',
       only: undefined,
       report: undefined,
+      normalizeWithLlm: false,
     });
   });
 
@@ -203,6 +217,7 @@ describe('parseRosterArgs', () => {
       season: '2027/28',
       only: 'avery@example.test',
       report: 'r.json',
+      normalizeWithLlm: false,
     });
     expect(parseRosterArgs(['--remind']).mode).toBe('remind');
     expect(
@@ -214,6 +229,7 @@ describe('parseRosterArgs', () => {
       only: undefined,
       report: undefined,
       staleClaimMinutes: 45,
+      normalizeWithLlm: false,
     });
     expect(parseRosterArgs(['--apply', '--csv', 'a.csv']).mode).toBe('apply');
     expect(parseRosterArgs(['--dry-run', '--csv', 'a.csv']).mode).toBe(
@@ -394,11 +410,7 @@ describe('runRosterCli --apply', () => {
       ],
     ]);
     expect(h.writer.setProfileRelations.mock.calls).toEqual([
-      [
-        'ins-for-auth-new-1',
-        [{ org: 'csia', track: 'regular', level: 3 }],
-        ['loc-msl'],
-      ],
+      ['ins-for-auth-new-1', [full('csia', 'regular', 3)], ['loc-msl']],
     ]);
     expect(h.writer.insertInvite.mock.calls).toEqual([
       [
@@ -457,7 +469,7 @@ describe('runRosterCli --apply', () => {
     ).toBe('resumed');
     expect(h.writer.setProfileRelations.mock.calls).toContainEqual([
       'ins-for-auth-casey',
-      [{ org: 'casi', track: 'park', level: 1 }],
+      [full('casi', 'park', 1)],
       [],
     ]);
   });
@@ -501,7 +513,7 @@ describe('runRosterCli --apply', () => {
       ).not.toContain('auth-casey');
       expect(h.writer.setProfileRelations.mock.calls).toContainEqual([
         'ins-casey',
-        [{ org: 'casi', track: 'park', level: 1 }],
+        [full('casi', 'park', 1)],
         [],
       ]);
       expect(status).toBe('repaired');
@@ -854,5 +866,378 @@ describe('runRosterCli --release-stale-claims', () => {
     ).rejects.toThrow(/SSMS_CONFIRM_PROD/);
     expect(h.invites.releaseStaleClaims).not.toHaveBeenCalled();
     expect(prod.invites.releaseStaleClaims).not.toHaveBeenCalled();
+  });
+});
+
+const PARTIAL_CASI = 'CASI L3 Partial (Please specify in "Other")';
+const PARTIAL_CSIA = 'CSIA L3 Partial (Please specify in "Other")';
+
+const NORMALIZE_CSV = rosterCsv([
+  {
+    preferred: 'Robin',
+    legal: 'Robin Privatename',
+    email: 'robin@example.test',
+    dob: '6/7/1992',
+    certs: `CSIA L3, ${PARTIAL_CASI}, Ped&Teaching`,
+    locations: 'BM, Shanghai',
+  },
+  {
+    preferred: 'Sky',
+    email: 'sky@example.test',
+    certs: `${PARTIAL_CSIA}, Td`,
+    details: 'CSIA L3 hill 2026',
+    locations: 'MSL, Ottawa Region',
+  },
+  {
+    preferred: 'Tam',
+    email: 'tam@example.test',
+    certs: 'CSIA L2',
+    locations: 'Blue Mountain',
+  },
+]);
+
+function normalizeHarness(llmAnswers?: (request: RosterLlmRequest) => unknown) {
+  const h = harness();
+  (h.deps.readFile as jest.Mock).mockResolvedValue(NORMALIZE_CSV);
+  const normalize = jest.fn((request: RosterLlmRequest) =>
+    Promise.resolve(llmAnswers?.(request) ?? {}),
+  );
+  const llmFactory = jest.fn(
+    (): RosterLlmNormalizer => ({ modelId: 'fake-model', normalize }),
+  );
+  h.deps.llm = llmFactory;
+  return { ...h, normalize, llmFactory };
+}
+
+const SKY_ANSWERS = (request: RosterLlmRequest) =>
+  request.unresolvedCertifications.includes(PARTIAL_CSIA)
+    ? {
+        certifications: [
+          {
+            value: PARTIAL_CSIA,
+            certification: {
+              org: 'csia',
+              track: 'regular',
+              level: 3,
+              isPartial: true,
+              partialComponents: ['ski'],
+            },
+            confidence: 0.9,
+            reason: 'details mention ski',
+          },
+          {
+            value: 'Td',
+            certification: {
+              org: 'csia',
+              track: 'park',
+              level: 1,
+              isPartial: true,
+              partialComponents: ['ski'],
+            },
+            confidence: 0.99,
+            reason: 'guess',
+          },
+        ],
+        locations: [
+          {
+            value: 'Ottawa Region',
+            key: 'teaching_location.moonstone',
+            confidence: 0.5,
+            reason: 'unsure',
+          },
+        ],
+      }
+    : {
+        certifications: [],
+        locations: [
+          {
+            value: 'Shanghai',
+            key: 'teaching_location.blue_mountain',
+            confidence: 0.95,
+            reason: 'wrong but confident',
+          },
+        ],
+      };
+
+describe('runRosterCli normalisation review', () => {
+  it('parses --normalize-with-llm for dry-run and apply only', () => {
+    expect(
+      parseRosterArgs(['--csv', 'a.csv', '--normalize-with-llm'])
+        .normalizeWithLlm,
+    ).toBe(true);
+    expect(
+      parseRosterArgs(['--normalize-with-llm', '--apply', '--csv', 'a.csv']),
+    ).toMatchObject({ mode: 'apply', normalizeWithLlm: true });
+    expect(() => parseRosterArgs(['--send', '--normalize-with-llm'])).toThrow(
+      /--normalize-with-llm works with --dry-run and --apply only/,
+    );
+  });
+
+  it('without the flag is deterministic only and never builds the LLM', async () => {
+    const h = normalizeHarness(SKY_ANSWERS);
+    const report = (await runRosterCli(h.deps, [
+      '--csv',
+      'roster.csv',
+    ])) as ImportReport;
+    expect(h.llmFactory).not.toHaveBeenCalled();
+    expect(h.normalize).not.toHaveBeenCalled();
+    expect(report.rows[0].review).toEqual({
+      raw: {
+        certifications: `CSIA L3, ${PARTIAL_CASI}, Ped&Teaching`,
+        certificationDetails: '',
+        locations: 'BM, Shanghai',
+      },
+      certifications: [
+        { certification: 'CSIA Level 3', source: 'rule' },
+        { certification: 'CASI Level 3 Partial [teaching]', source: 'rule' },
+      ],
+      locations: [{ key: 'teaching_location.blue_mountain', source: 'rule' }],
+      llmProposals: [],
+      unresolved: [
+        { kind: 'location', value: 'Shanghai', note: NO_REFERENCE_ROW },
+      ],
+    });
+    expect(report.rows[1].unmappedCertifications).toEqual([PARTIAL_CSIA, 'Td']);
+    expect(report.rows[2].review).toBeUndefined();
+    expect(report.counts).toMatchObject({
+      rowsNeedingReview: 2,
+      llmCertificationsToWrite: 0,
+      llmLocationsToWrite: 0,
+    });
+    expect(h.logs).toContain('Normalisation review (by CSV line):');
+    expect(h.logs).toContain('  line 2');
+    expect(h.logs).toContain(
+      '    certification CASI Level 3 Partial [teaching] (rule)',
+    );
+    expect(h.logs).toContain(
+      `    location "Shanghai" (unresolved: ${NO_REFERENCE_ROW})`,
+    );
+    expect(h.logs).toContain('    certification "Td" (unresolved)');
+    expect(h.logs.some((l) => l.includes('robin@') && l.includes('line'))).toBe(
+      false,
+    );
+  });
+
+  it('with the flag sends only unresolved rows, keeps validated answers and reports their source', async () => {
+    const h = normalizeHarness(SKY_ANSWERS);
+    const report = (await runRosterCli(h.deps, [
+      '--csv',
+      'roster.csv',
+      '--normalize-with-llm',
+      '--report',
+      OUTSIDE,
+    ])) as ImportReport;
+    expect(h.llmFactory).toHaveBeenCalledTimes(1);
+    expect(h.normalize.mock.calls).toEqual([
+      [
+        {
+          certifications: `CSIA L3, ${PARTIAL_CASI}, Ped&Teaching`,
+          certificationDetails: '',
+          locations: 'BM, Shanghai',
+          unresolvedCertifications: [],
+          unresolvedLocations: ['Shanghai'],
+        },
+      ],
+      [
+        {
+          certifications: `${PARTIAL_CSIA}, Td`,
+          certificationDetails: 'CSIA L3 hill 2026',
+          locations: 'MSL, Ottawa Region',
+          unresolvedCertifications: [PARTIAL_CSIA, 'Td'],
+          unresolvedLocations: ['Ottawa Region'],
+        },
+      ],
+    ]);
+    const sent = JSON.stringify(h.normalize.mock.calls);
+    for (const secret of [
+      'Robin',
+      'Privatename',
+      'robin@',
+      'sky@',
+      '1992',
+      '555-0100',
+      'Fake Street',
+      '000000000',
+    ]) {
+      expect(sent).not.toContain(secret);
+    }
+    expect(h.factories.writer).not.toHaveBeenCalled();
+
+    expect(report.rows[0].unmappedLocations).toEqual([]);
+    expect(report.rows[0].review?.locations).toEqual([
+      { key: 'teaching_location.blue_mountain', source: 'rule' },
+    ]);
+    expect(report.rows[0].review?.llmProposals).toEqual([
+      { value: 'Shanghai', proposal: 'teaching_location.blue_mountain' },
+    ]);
+    expect(h.logs).toContain(
+      '    llm read "Shanghai" as teaching_location.blue_mountain',
+    );
+    expect(report.rows[1].review).toMatchObject({
+      certifications: [
+        { certification: 'CSIA Level 3 Partial [ski]', source: 'llm' },
+      ],
+      locations: [{ key: 'teaching_location.moonstone', source: 'rule' }],
+      unresolved: [
+        {
+          kind: 'certification',
+          value: 'Td',
+          note: 'LLM: violates certification rules',
+        },
+        {
+          kind: 'location',
+          value: 'Ottawa Region',
+          note: `${NO_REFERENCE_ROW}; LLM: low confidence 0.5`,
+        },
+      ],
+    });
+    expect(report.counts).toMatchObject({
+      llmCertificationsToWrite: 1,
+      llmLocationsToWrite: 0,
+    });
+    expect(h.logs).toContain(
+      'LLM normalisation (fake-model): 2 row(s) with unresolved values',
+    );
+    expect(h.logs).toContain(
+      '    certification CSIA Level 3 Partial [ski] (llm)',
+    );
+    expect(
+      h.logs.some((l) =>
+        l.startsWith(
+          'LLM-derived values --apply would write (only with --normalize-with-llm, re-derived and re-validated in that run): 1 certification(s), 0 location(s).',
+        ),
+      ),
+    ).toBe(true);
+    const json = JSON.parse(
+      h.written.get(OUTSIDE_RESOLVED) as string,
+    ) as ImportReport;
+    expect(json.rows[1].review?.certifications[0].source).toBe('llm');
+  });
+
+  it('adds LLM location keys, and drops those missing from the database', async () => {
+    const h = normalizeHarness((request) => ({
+      certifications: [],
+      locations: request.unresolvedLocations.map((value) => ({
+        value,
+        key:
+          value === 'Shanghai'
+            ? 'teaching_location.tremblant'
+            : 'teaching_location.blue_mountain',
+        confidence: 0.9,
+        reason: 'r',
+      })),
+    }));
+    const report = (await runRosterCli(h.deps, [
+      '--csv',
+      'roster.csv',
+      '--normalize-with-llm',
+    ])) as ImportReport;
+    expect(report.rows[0]).toMatchObject({
+      llmLocations: 0,
+      unmappedLocations: ['teaching_location.tremblant (key not in database)'],
+    });
+    expect(report.rows[1].review?.locations).toEqual([
+      { key: 'teaching_location.moonstone', source: 'rule' },
+      { key: 'teaching_location.blue_mountain', source: 'llm' },
+    ]);
+    expect(report.counts.llmLocationsToWrite).toBe(1);
+  });
+
+  it('a failed LLM request leaves the row unresolved', async () => {
+    const h = normalizeHarness();
+    h.normalize.mockRejectedValue(new Error('Gemini HTTP 503'));
+    const report = (await runRosterCli(h.deps, [
+      '--csv',
+      'roster.csv',
+      '--normalize-with-llm',
+    ])) as ImportReport;
+    expect(report.rows[1].unmappedCertifications).toEqual([PARTIAL_CSIA, 'Td']);
+    expect(report.rows[1].review?.unresolved[0]).toEqual({
+      kind: 'certification',
+      value: PARTIAL_CSIA,
+      note: 'LLM: request failed',
+    });
+    expect(h.logs).toContain('  line 3: LLM request failed: Gemini HTTP 503');
+  });
+
+  it('needs a provider only when some value is unresolved', async () => {
+    const missing = normalizeHarness();
+    missing.deps.llm = undefined;
+    await expect(
+      runRosterCli(missing.deps, [
+        '--csv',
+        'roster.csv',
+        '--normalize-with-llm',
+      ]),
+    ).rejects.toThrow(/needs an LLM provider \(set GEMINI_API_KEY\)/);
+    expect(missing.readUsers).not.toHaveBeenCalled();
+
+    const clean = normalizeHarness();
+    (clean.deps.readFile as jest.Mock).mockResolvedValue(
+      rosterCsv([
+        { email: 'tam@example.test', certs: 'CSIA L2', locations: 'MSL' },
+      ]),
+    );
+    await runRosterCli(clean.deps, [
+      '--csv',
+      'roster.csv',
+      '--normalize-with-llm',
+    ]);
+    expect(clean.llmFactory).not.toHaveBeenCalled();
+    expect(clean.logs).toContain('LLM normalisation: no unresolved values');
+  });
+
+  it('--apply writes rule results without the flag and never the unresolved values', async () => {
+    const h = normalizeHarness(SKY_ANSWERS);
+    await runRosterCli(h.deps, ['--apply', '--csv', 'roster.csv']);
+    expect(h.llmFactory).not.toHaveBeenCalled();
+    expect(h.writer.setProfileRelations.mock.calls).toEqual([
+      [
+        'ins-for-auth-new-1',
+        [
+          full('csia', 'regular', 3),
+          {
+            ...full('casi', 'regular', 3),
+            isPartial: true,
+            partialComponents: ['teaching'],
+          },
+        ],
+        ['loc-bm'],
+      ],
+      ['ins-for-auth-new-2', [], ['loc-msl']],
+      ['ins-for-auth-new-3', [full('csia', 'regular', 2)], ['loc-bm']],
+    ]);
+    expect(h.logs).toContain(
+      'LLM-derived values written by this run: 0 certification(s), 0 location(s). Unresolved values were not written.',
+    );
+  });
+
+  it('--apply with the flag writes the validated LLM results of the same run and counts them', async () => {
+    const h = normalizeHarness(SKY_ANSWERS);
+    h.writer.findInstructorId.mockImplementation((authUserId: string) =>
+      Promise.resolve(authUserId === 'auth-new-3' ? 'ins-existing' : null),
+    );
+    await runRosterCli(h.deps, [
+      '--apply',
+      '--csv',
+      'roster.csv',
+      '--normalize-with-llm',
+    ]);
+    expect(h.normalize).toHaveBeenCalledTimes(2);
+    expect(h.writer.setProfileRelations.mock.calls[1]).toEqual([
+      'ins-for-auth-new-2',
+      [
+        {
+          ...full('csia', 'regular', 3),
+          isPartial: true,
+          partialComponents: ['ski'],
+          source: 'llm',
+        },
+      ],
+      ['loc-msl'],
+    ]);
+    expect(h.logs).toContain(
+      'LLM-derived values written by this run: 1 certification(s), 0 location(s). Unresolved values were not written.',
+    );
   });
 });

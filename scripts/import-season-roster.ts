@@ -8,6 +8,7 @@ import { InviteDispatcher } from '../src/activation/invite-dispatcher';
 import { SupabaseInvitesRepository } from '../src/activation/invites.repository';
 import { loadSsmsEnv } from '../src/activation/roster/roster-env';
 import { runRosterCli } from '../src/activation/roster/roster-import';
+import { GeminiRosterNormalizer } from '../src/activation/roster/roster-llm';
 import {
   SupabaseRosterReader,
   SupabaseRosterWriter,
@@ -44,6 +45,16 @@ async function main(): Promise<void> {
           supabase(),
         );
         return new InviteDispatcher(invites(), mailer);
+      },
+      llm: () => {
+        const apiKey = process.env.GEMINI_API_KEY?.trim();
+        if (!apiKey) {
+          throw new Error('--normalize-with-llm needs GEMINI_API_KEY.');
+        }
+        return new GeminiRosterNormalizer({
+          apiKey,
+          model: process.env.GEMINI_MODEL,
+        });
       },
       readFile: (file) => fs.readFile(file, 'utf8'),
       writeFile: (file, contents) =>

@@ -35,6 +35,8 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'auth.generic',
   'invite.season',
   'invite.reminder',
+  'certification.expiring',
+  'certification.expired',
   'admin.instructor_pending',
   'documents.assigned',
   'documents.reminder',

@@ -129,10 +129,7 @@ export class MeCertificationUploadsService {
       contentLength: dto.contentLength,
     };
     await this.storage.put(
-      storageKeys.instructorCertificationIntent(
-        instructor.id,
-        intent.uploadId,
-      ),
+      storageKeys.instructorCertificationIntent(instructor.id, intent.uploadId),
       Buffer.from(JSON.stringify(intent)),
       'application/json',
     );

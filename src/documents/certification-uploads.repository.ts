@@ -77,7 +77,9 @@ export interface InstructorCertificationKeyRow {
 /** Writes and cross-instructor reads of `certification_uploads`. */
 export abstract class CertificationUploadsRepository {
   abstract findById(id: string): Promise<CertificationUploadRow | null>;
-  abstract insert(row: NewCertificationUploadRow): Promise<CertificationUploadRow>;
+  abstract insert(
+    row: NewCertificationUploadRow,
+  ): Promise<CertificationUploadRow>;
   abstract update(
     id: string,
     patch: CertificationUploadWrite,
@@ -124,7 +126,9 @@ export class SupabaseCertificationUploadsRepository extends CertificationUploads
     return data ?? null;
   }
 
-  async insert(row: NewCertificationUploadRow): Promise<CertificationUploadRow> {
+  async insert(
+    row: NewCertificationUploadRow,
+  ): Promise<CertificationUploadRow> {
     const { data, error } = (await this.supabase
       .from(CERTIFICATION_UPLOADS_TABLE)
       .insert(row)
@@ -185,9 +189,7 @@ export class SupabaseCertificationUploadsRepository extends CertificationUploads
       const { data, error } = (await this.supabase
         .from('instructor_certifications')
         .select('instructor_id, org, track, level')
-        .in('instructor_id', ids)) as DbResult<
-        InstructorCertificationKeyRow[]
-      >;
+        .in('instructor_id', ids)) as DbResult<InstructorCertificationKeyRow[]>;
       check(error, 'list instructor certifications');
       return data ?? [];
     });

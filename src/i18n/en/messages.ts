@@ -343,7 +343,8 @@ export const en: MessageCatalog = {
       },
       expiring: {
         subject: 'Your {certification} certification expires on {validUntil}',
-        preheader: 'Upload your renewed certification to stay cleared to teach.',
+        preheader:
+          'Upload your renewed certification to stay cleared to teach.',
         heading: 'Your certification is about to expire',
         paragraphs: [
           'The {certification} proof on your instructor profile is valid until {validUntil}.',

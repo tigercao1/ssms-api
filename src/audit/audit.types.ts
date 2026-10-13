@@ -46,6 +46,11 @@ export const AUDIT_ACTIONS = {
   payRateUpdate: 'pay_rate.update',
   customerSync: 'customer.sync',
   customerCreate: 'customer.create',
+  classImportCreate: 'class_import.create',
+  classImportRowUpdate: 'class_import.row_update',
+  classImportEventMapUpdate: 'class_import.event_map_update',
+  classImportCommit: 'class_import.commit',
+  classImportDiscard: 'class_import.discard',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -77,6 +82,7 @@ export interface AuditEntry {
     | 'lesson_type'
     | 'pay_rate'
     | 'customer'
+    | 'class_import'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

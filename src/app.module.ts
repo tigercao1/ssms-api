@@ -21,6 +21,7 @@ import { GoogleModule } from './google/google.module';
 import { ActivationModule } from './activation/activation.module';
 import { LessonsModule } from './lessons/lessons.module';
 import { CustomersModule } from './customers/customers.module';
+import { ClassImportModule } from './class-import/class-import.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { CustomersModule } from './customers/customers.module';
     ActivationModule,
     LessonsModule,
     CustomersModule,
+    ClassImportModule,
     AuthHooksModule,
   ],
   controllers: [AppController],

@@ -469,6 +469,56 @@ describe('documents signing HTTP', () => {
       expect(ctx.completed.calls).toHaveLength(1);
     });
 
+    it('lets one of two interleaved service calls win without re-stamping', async () => {
+      const service = ctx.app.get(DocumentSigningService);
+      const put = jest.spyOn(ctx.storage, 'put');
+      const evidence = { ip: null, userAgent: null };
+      const results = await Promise.allSettled([
+        service.complete(
+          INSTRUCTOR_USER_ID,
+          ctx.signAssignment.id,
+          validSign,
+          evidence,
+        ),
+        service.complete(
+          INSTRUCTOR_USER_ID,
+          ctx.signAssignment.id,
+          validSign,
+          evidence,
+        ),
+        service.complete(
+          INSTRUCTOR_USER_ID,
+          ctx.readAssignment.id,
+          { acknowledged: true },
+          evidence,
+        ),
+        service.complete(
+          INSTRUCTOR_USER_ID,
+          ctx.readAssignment.id,
+          { acknowledged: true },
+          evidence,
+        ),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([
+        'fulfilled',
+        'rejected',
+        'fulfilled',
+        'rejected',
+      ]);
+      expect(put).toHaveBeenCalledTimes(1);
+      expect(ctx.completed.calls).toHaveLength(1);
+    });
+
+    it('surfaces storage failures as errors', async () => {
+      jest
+        .spyOn(ctx.storage, 'getBuffer')
+        .mockRejectedValueOnce(new Error('R2 down'));
+      await complete(ctx.signAssignment.id, validSign).expect(500);
+      expect(ctx.assignments.rows.get(ctx.signAssignment.id)!.status).toBe(
+        'assigned',
+      );
+    });
+
     it('lets exactly one of two concurrent completions win', async () => {
       const [a, b] = await Promise.all([
         complete(ctx.signAssignment.id, validSign),

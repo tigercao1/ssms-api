@@ -163,26 +163,17 @@ export class DocumentSigningService {
       throw new BadRequestException(CONSENT_REQUIRED);
     }
     const input = this.parseInput(template, dto, instructor, now);
-    const signed = await this.stampAndStore(instructor, row, template, input, {
-      ...evidence,
-      viewedAt: signer.viewed_at,
-      signedAt: signer.completed_at,
-    });
-    const updated = await this.markCompleted(row.id, {
-      ...signer,
-      signer_name: input.signerName,
-      template_sha256: signed.templateSha256,
-      signed_key: signed.key,
-      signed_sha256: signed.sha256,
-      field_values: input.fieldValues,
-    });
-    await this.notifyCompleted({
-      assignment: updated,
+    const signed = await this.signAndStore(
+      instructor,
+      row,
       template,
-      pdf: signed.pdf,
-      sha256: signed.sha256,
-    });
-    const { url } = await this.storage.presignGet(signed.key, {
+      input,
+      evidence,
+      signer,
+    );
+    const updated = signed.assignment;
+    await this.notifyCompleted(signed);
+    const { url } = await this.storage.presignGet(updated.signed_key!, {
       filename: signedFilename(updated),
     });
     return { assignment: toAssignment(updated), signedUrl: url };
@@ -235,18 +226,17 @@ export class DocumentSigningService {
     }
   }
 
-  private stampAndStore(
+  private signAndStore(
     instructor: DocumentInstructorRow,
     row: DocumentAssignmentRow,
     template: DocumentTemplateRow,
     input: SigningInput,
-    evidence: SigningEvidence & { viewedAt: string; signedAt: string },
-  ): Promise<{
-    key: string;
-    pdf: Buffer;
-    sha256: string;
-    templateSha256: string;
-  }> {
+    evidence: SigningEvidence,
+    signer: DocumentAssignmentWrite & {
+      viewed_at: string;
+      completed_at: string;
+    },
+  ): Promise<SignedDocument> {
     const sourceKey = template.source_key;
     if (!sourceKey) {
       throw new BadRequestException(TEMPLATE_PDF_UNAVAILABLE);
@@ -279,21 +269,29 @@ export class DocumentSigningService {
           consentZh: SIGNING_CONSENT.zh,
           ip: evidence.ip,
           userAgent: evidence.userAgent,
-          viewedAt: evidence.viewedAt,
-          signedAt: evidence.signedAt,
+          viewedAt: signer.viewed_at,
+          signedAt: signer.completed_at,
         },
       });
       const key = storageKeys.instructorDocument(instructor.id, row.id);
       await this.storage.put(key, stamped.bytes, PDF_CONTENT_TYPE);
+      const assignment = await this.markCompleted(row.id, {
+        ...signer,
+        signer_name: input.signerName,
+        template_sha256: templateSha256,
+        signed_key: key,
+        signed_sha256: stamped.sha256,
+        field_values: input.fieldValues,
+      });
       return {
-        key,
+        assignment,
+        template,
         pdf: Buffer.from(
           stamped.bytes.buffer,
           stamped.bytes.byteOffset,
           stamped.bytes.byteLength,
         ),
         sha256: stamped.sha256,
-        templateSha256,
       };
     });
   }

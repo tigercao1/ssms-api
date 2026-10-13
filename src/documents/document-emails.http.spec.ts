@@ -8,8 +8,10 @@ import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { InMemoryCertificationUploadsRepository } from '../../test/helpers/certification-fakes';
 import {
   ADMIN_AUTH as admin,
+  certificationUploadRow,
   INSTRUCTOR_AUTH,
   InMemoryDocumentAssignmentsRepository,
   InMemoryDocumentSubjectsRepository,
@@ -28,6 +30,9 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { MailerService } from '../mailer/mailer.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
+import { CertificationExpiryService } from './certification-expiry.service';
+import { CertificationUploadsRepository } from './certification-uploads.repository';
+import { addDays, utcToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
@@ -65,6 +70,7 @@ async function build(env: Record<string, string | undefined> = {}) {
   const templates = new InMemoryDocumentTemplatesRepository();
   const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
+  const uploads = new InMemoryCertificationUploadsRepository(subjects);
   const audit = recordingAudit();
   const mailer = new RecordingMailer();
   const app = await startDocumentsApp(
@@ -78,6 +84,8 @@ async function build(env: Record<string, string | undefined> = {}) {
         DocumentAssignmentsService,
         DocumentNotificationsService,
         DocumentRemindersService,
+        CertificationExpiryService,
+        { provide: CertificationUploadsRepository, useValue: uploads },
         DocumentRemindersAuthGuard,
         { provide: DocumentSigningService, useValue: {} },
         { provide: SupabaseAuthGuard, useClass: FakeJwtGuard },
@@ -96,7 +104,15 @@ async function build(env: Record<string, string | undefined> = {}) {
     page_count: 1,
     title_en: 'Agreement',
   });
-  return { app, templates, assignments, subjects, audit, mailer, template };
+  return {
+    app,
+    templates,
+    assignments,
+    subjects,
+    audit,
+    mailer,
+    template,
+  };
 }
 
 describe('documents emails and reminders HTTP', () => {
@@ -284,6 +300,7 @@ describe('documents emails and reminders HTTP', () => {
         const res = await run(`Bearer ${TOKEN}`).expect(200);
         expect(res.body).toEqual({
           documents: { due: 0, reminded: 0, emails: 0 },
+          certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         await run(admin).expect(200);
       });
@@ -371,6 +388,7 @@ describe('documents emails and reminders HTTP', () => {
 
         expect(res.body).toEqual({
           documents: { due: 4, reminded: 3, emails: 2 },
+          certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         expect(
           ctx.mailer.sent.map((m) => [m.template, m.to, m.metadata]),
@@ -404,6 +422,7 @@ describe('documents emails and reminders HTTP', () => {
         const again = await run(`Bearer ${TOKEN}`).expect(200);
         expect(again.body).toEqual({
           documents: { due: 1, reminded: 0, emails: 0 },
+          certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         expect(ctx.mailer.sent).toHaveLength(2);
       });
@@ -430,6 +449,7 @@ describe('documents emails and reminders HTTP', () => {
 
         expect(res.body).toEqual({
           documents: { due: 2, reminded: 0, emails: 0 },
+          certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         expect(ctx.mailer.sent).toHaveLength(1);
         expect(ctx.assignments.rows.get(rowA.id)?.reminder_sent_at).toBeNull();
@@ -437,6 +457,81 @@ describe('documents emails and reminders HTTP', () => {
         expect(errorLog).toHaveBeenCalledWith(
           expect.stringContaining('db down'),
         );
+      });
+
+      it('emails certification expiry from the same daily run, once per stage', async () => {
+        const { subjects } = ctx;
+        const today = utcToday();
+        const lin = subjects.seedInstructor({ email: 'lin@example.com' });
+        subjects.certifications.set(lin.id, [
+          { org: 'csia', track: 'regular', level: 2 },
+          { org: 'casi', track: 'park', level: 1 },
+        ]);
+        const expiring = certificationUploadRow({
+          instructor_id: lin.id,
+          valid_until: addDays(today, 10),
+        });
+        const expired = certificationUploadRow({
+          instructor_id: lin.id,
+          org: 'casi',
+          track: 'park',
+          valid_until: addDays(today, -2),
+        });
+        subjects.uploads.push(expiring, expired);
+
+        const res = await run(`Bearer ${TOKEN}`).expect(200);
+
+        expect(res.body).toEqual({
+          documents: { due: 0, reminded: 0, emails: 0 },
+          certifications: { expiring: 1, expired: 1, failed: 0 },
+        });
+        expect(
+          ctx.mailer.sent.map((m) => [m.template, m.to, m.idempotencyKey]),
+        ).toEqual([
+          [
+            'certification.expired',
+            'lin@example.com',
+            `certification.expired:${expired.id}:${expired.valid_until}`,
+          ],
+          [
+            'certification.expiring',
+            'lin@example.com',
+            `certification.expiring:${expiring.id}:${expiring.valid_until}`,
+          ],
+        ]);
+
+        const again = await run(`Bearer ${TOKEN}`).expect(200);
+        expect(again.body).toEqual({
+          documents: { due: 0, reminded: 0, emails: 0 },
+          certifications: { expiring: 0, expired: 0, failed: 0 },
+        });
+        expect(ctx.mailer.sent).toHaveLength(2);
+      });
+
+      it('runs the certification job for the UTC date of the given time', async () => {
+        const lin = ctx.subjects.seedInstructor();
+        ctx.subjects.certifications.set(lin.id, [
+          { org: 'csia', track: 'regular', level: 2 },
+        ]);
+        ctx.subjects.uploads.push(
+          certificationUploadRow({
+            instructor_id: lin.id,
+            valid_until: '2031-02-01',
+          }),
+        );
+        const reminders = ctx.app.get(DocumentRemindersService);
+
+        await expect(
+          reminders.run(new Date('2030-12-01T23:30:00Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 0, expired: 0, failed: 0 },
+        });
+        await expect(
+          reminders.run(new Date('2031-01-02T00:30:00Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 1, expired: 0, failed: 0 },
+        });
+        expect(ctx.mailer.sentOf('certification.expiring')).toHaveLength(1);
       });
     });
   });

@@ -95,7 +95,7 @@ export const zhCN: MessageCatalog = {
       greeting: '{name}，您好：',
       greetingNoName: '您好：',
       signoffLead: '祝好，',
-      signoffTeam: 'Serendipity Snow Club 团队',
+      signoffTeam: 'SSnow团队',
       buttonFallback: '如果按钮无法点击，请将下面的链接复制到浏览器中打开：',
       buttonLine: '{label}：{url}',
       codeLabel: '或输入以下验证码：',
@@ -112,45 +112,41 @@ export const zhCN: MessageCatalog = {
         '您可以随时登录教练平台，更新个人信息、证书和照片。',
       ],
       button: '登录',
-      finePrint:
-        '您收到这封邮件，是因为您在 Serendipity Snow Club 有教练资料。',
+      finePrint: '您收到这封邮件，是因为您在 SSnow 有教练资料。',
     },
     rejected: {
       subject: '关于您的教练申请',
-      preheader: '关于您在 Serendipity Snow Club 的教练资料。',
+      preheader: '关于您在 SSnow 的教练资料。',
       heading: '关于您的申请',
       paragraphs: [
-        '感谢您申请加入 Serendipity Snow Club 教练团队，也感谢您花时间认真填写资料。',
+        '感谢您申请加入 SSnow 教练团队，也感谢您花时间认真填写资料。',
         '经过审核，我们暂时无法通过您的教练资料。',
       ],
       reasonLabel: '团队备注：',
       closing:
         '如有疑问，或想补充更多教学经历，直接回复这封邮件就好，我们很乐意和您聊聊。',
-      finePrint:
-        '您收到这封邮件，是因为您申请成为 Serendipity Snow Club 的教练。',
+      finePrint: '您收到这封邮件，是因为您申请成为 SSnow 的教练。',
     },
     deactivated: {
       subject: '您的教练资料已停用',
       preheader: '您的资料将不再显示在我们的网站上。',
       heading: '资料已停用',
       paragraphs: [
-        '您的教练资料已设为停用，将不再显示在 Serendipity Snow Club 网站上。',
+        '您的教练资料已设为停用，将不再显示在 SSnow 网站上。',
         '如果您认为这是误操作，或希望重新启用，直接回复这封邮件告诉我们即可。',
       ],
-      finePrint:
-        '您收到这封邮件，是因为您在 Serendipity Snow Club 有教练资料。',
+      finePrint: '您收到这封邮件，是因为您在 SSnow 有教练资料。',
     },
     reactivated: {
       subject: '您的教练资料已重新启用',
-      preheader: '欢迎回到 Serendipity Snow Club。',
+      preheader: '欢迎回到 SSnow。',
       heading: '欢迎回来',
       paragraphs: [
         '好消息！您的教练资料已重新启用。',
         '不妨现在登录看看，确认个人信息、证书和照片都是最新的。',
       ],
       button: '登录',
-      finePrint:
-        '您收到这封邮件，是因为您在 Serendipity Snow Club 有教练资料。',
+      finePrint: '您收到这封邮件，是因为您在 SSnow 有教练资料。',
     },
     auth: {
       confirmSignup: {
@@ -164,7 +160,7 @@ export const zhCN: MessageCatalog = {
         finePrint: '如果您没有注册过账户，请忽略这封邮件。',
       },
       recovery: {
-        subject: '重置您的 Serendipity Snow Club 密码',
+        subject: '重置您的 SSnow 密码',
         preheader: '为您的账户设置新密码。',
         heading: '重置密码',
         paragraphs: [
@@ -174,9 +170,9 @@ export const zhCN: MessageCatalog = {
         finePrint: '如果这不是您本人的操作，请忽略这封邮件，您的密码不会改变。',
       },
       magicLink: {
-        subject: '您的 Serendipity Snow Club 登录链接',
+        subject: '您的 SSnow 登录链接',
         preheader: '一键登录您的账户。',
-        heading: '登录 Serendipity Snow Club',
+        heading: '登录 SSnow',
         paragraphs: [
           '点击下方按钮即可登录。链接 1 小时内有效，且只能使用一次。',
         ],
@@ -184,11 +180,11 @@ export const zhCN: MessageCatalog = {
         finePrint: '如果您没有申请登录链接，请忽略这封邮件。',
       },
       invite: {
-        subject: '邀请您加入 Serendipity Snow Club',
+        subject: '邀请您加入 SSnow',
         preheader: '设置您的教练平台账户。',
         heading: '诚邀您加入',
         paragraphs: [
-          '我们诚邀您在 Serendipity Snow Club 教练平台创建账户。',
+          '我们诚邀您在 SSnow 教练平台创建账户。',
           '点击下方按钮接受邀请，完成账户设置。',
         ],
         button: '接受邀请',
@@ -199,7 +195,7 @@ export const zhCN: MessageCatalog = {
         preheader: '确认更改账户邮箱。',
         heading: '确认更换邮箱',
         paragraphs: [
-          '我们收到了将您的 Serendipity Snow Club 账户邮箱更改为 {newEmail} 的请求。',
+          '我们收到了将您的 SSnow 账户邮箱更改为 {newEmail} 的请求。',
           '请点击下方按钮确认更改。',
         ],
         button: '确认更改',
@@ -207,7 +203,7 @@ export const zhCN: MessageCatalog = {
           '如果这不是您本人的操作，请立即回复这封邮件，我们会协助您保护账户安全。',
       },
       reauthentication: {
-        subject: '您的 Serendipity Snow Club 验证码',
+        subject: '您的 SSnow 验证码',
         preheader: '您的一次性验证码。',
         heading: '确认是您本人',
         paragraphs: ['请输入以下验证码，确认是您本人操作：'],
@@ -215,32 +211,32 @@ export const zhCN: MessageCatalog = {
           '如果您没有申请验证码，请忽略这封邮件。请勿将验证码告诉任何人。',
       },
       passwordChanged: {
-        subject: '您的 Serendipity Snow Club 密码已更改',
+        subject: '您的 SSnow 密码已更改',
         preheader: '关于您账户的安全提醒。',
         heading: '密码已更改',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户密码刚刚已更改。',
+          '您的 SSnow 账户密码刚刚已更改。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint: '您收到这封安全提醒，是因为您的账户密码发生了变更。',
       },
       emailChanged: {
-        subject: '您的 Serendipity Snow Club 账户邮箱已更改',
+        subject: '您的 SSnow 账户邮箱已更改',
         preheader: '关于您账户的安全提醒。',
         heading: '账户邮箱已更改',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户邮箱已从 {oldEmail} 更改为 {newEmail}。',
+          '您的 SSnow 账户邮箱已从 {oldEmail} 更改为 {newEmail}。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint:
           '您的账户邮箱发生了变更，因此我们将这封安全提醒发送到您之前的邮箱。',
       },
       phoneChanged: {
-        subject: '您的 Serendipity Snow Club 账户手机号已更改',
+        subject: '您的 SSnow 账户手机号已更改',
         preheader: '关于您账户的安全提醒。',
         heading: '手机号已更改',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户手机号刚刚已更改。',
+          '您的 SSnow 账户手机号刚刚已更改。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint: '您收到这封安全提醒，是因为您的账户手机号发生了变更。',
@@ -250,7 +246,7 @@ export const zhCN: MessageCatalog = {
         preheader: '关于您账户的安全提醒。',
         heading: '已新增登录方式',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户已关联新的登录方式（{provider}）。',
+          '您的 SSnow 账户已关联新的登录方式（{provider}）。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint: '您收到这封安全提醒，是因为您账户的登录方式发生了变更。',
@@ -260,7 +256,7 @@ export const zhCN: MessageCatalog = {
         preheader: '关于您账户的安全提醒。',
         heading: '已移除登录方式',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户已移除一种登录方式（{provider}）。',
+          '您的 SSnow 账户已移除一种登录方式（{provider}）。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint: '您收到这封安全提醒，是因为您账户的登录方式发生了变更。',
@@ -270,7 +266,7 @@ export const zhCN: MessageCatalog = {
         preheader: '关于您账户的安全提醒。',
         heading: '已添加两步验证',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户已添加新的两步验证方式（{factorType}）。',
+          '您的 SSnow 账户已添加新的两步验证方式（{factorType}）。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint: '您收到这封安全提醒，是因为您账户的两步验证设置发生了变更。',
@@ -280,18 +276,16 @@ export const zhCN: MessageCatalog = {
         preheader: '关于您账户的安全提醒。',
         heading: '已移除两步验证',
         paragraphs: [
-          '您的 Serendipity Snow Club 账户已移除一种两步验证方式（{factorType}）。',
+          '您的 SSnow 账户已移除一种两步验证方式（{factorType}）。',
           '如果是您本人操作，无需任何处理；如果不是，请立即回复这封邮件，我们会协助您保护账户安全。',
         ],
         finePrint: '您收到这封安全提醒，是因为您账户的两步验证设置发生了变更。',
       },
       generic: {
-        subject: '关于您的 Serendipity Snow Club 账户',
+        subject: '关于您的 SSnow 账户',
         preheader: '有关您账户的最新消息。',
         heading: '关于您的账户',
-        paragraphs: [
-          '我们收到了一项与您的 Serendipity Snow Club 账户相关的请求。',
-        ],
+        paragraphs: ['我们收到了一项与您的 SSnow 账户相关的请求。'],
         linkParagraph:
           '如果是您本人操作，请点击下方按钮继续。链接 1 小时内有效。',
         button: '继续',
@@ -301,11 +295,11 @@ export const zhCN: MessageCatalog = {
     },
     invite: {
       season: {
-        subject: '您的 {season} 雪季 Serendipity Snow Club 教练账户已开通',
+        subject: '您的 {season} 雪季 SSnow 教练账户已开通',
         preheader: '激活账户，设置您自己的密码。',
         heading: '激活您的教练账户',
         paragraphs: [
-          '我们已为您开通 Serendipity Snow Club {season} 雪季的教练账户。',
+          '我们已为您开通 SSnow {season} 雪季的教练账户。',
           '点击下方按钮激活账户，并设置您自己的密码。之后请花几分钟核对一下个人资料、证书和教学地点。',
         ],
         button: '激活我的账户',
@@ -313,9 +307,9 @@ export const zhCN: MessageCatalog = {
           '此链接仅供您本人使用，{validDays} 天内有效。如果链接过期，可以在打开的页面上申请新的链接。',
       },
       reminder: {
-        subject: '提醒：请激活您的 Serendipity Snow Club 教练账户',
+        subject: '提醒：请激活您的 SSnow 教练账户',
         preheader: '您的教练账户还在等您激活。',
-        heading: '您的账户还在等您',
+        heading: '您的账户在等待您的激活',
         paragraphs: [
           '温馨提醒：您 {season} 雪季的教练账户已经开通，但还没有激活。',
           '只需一分钟：点击下方按钮，设置密码即可。',
@@ -334,8 +328,7 @@ export const zhCN: MessageCatalog = {
           '{instructorEmail} 刚刚首次登录教练平台，新的教练资料正在等待审核。',
         ],
         button: '查看资料',
-        finePrint:
-          '您收到这封邮件，是因为您是 Serendipity Snow Club 的管理员。',
+        finePrint: '您收到这封邮件，是因为您是 SSnow 的管理员。',
       },
     },
   },

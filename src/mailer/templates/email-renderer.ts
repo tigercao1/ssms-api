@@ -10,12 +10,12 @@ import type {
 import { renderEmailLayout, type EmailSection } from './email-layout';
 import { EMAIL_TEMPLATES, type TemplateDefinition } from './email-templates';
 
-const BILINGUAL_ORDER: SupportedLanguage[] = ['zh-CN', 'en'];
+const BILINGUAL_ORDER: SupportedLanguage[] = ['en', 'zh-CN'];
 
 /**
  * Renders any {@link EmailTemplate} in `en`, `zh-CN` or `bilingual` through
- * the shared branded layout. Bilingual output is the zh-CN block, a divider,
- * then the en block, with a `"<zh> / <en>"` subject.
+ * the shared branded layout. Bilingual output is the en block, a divider,
+ * then the zh-CN block, with a `"<en> / <zh>"` subject.
  */
 @Injectable()
 export class EmailRenderer {

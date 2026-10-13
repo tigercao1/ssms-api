@@ -31,8 +31,9 @@ await this.mailer.send({
   `metadata`. A failure also writes a `notification.failure` row to
   `audit_log`.
 - `resolveEmailLanguage(preferredLanguage)` returns the instructor's language,
-  or `bilingual` when there is no instructor row (zh-CN block, divider, en
-  block; subject `"<zh> / <en>"`).
+  or `bilingual` when there is no instructor row (en block, divider, zh-CN
+  block; subject `"<en> / <zh>"`). Chinese copy brands the club as SSnow; the
+  footer keeps "Serendipity Snow Club" in both languages.
 
 ## Templates
 

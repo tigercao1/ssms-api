@@ -1,8 +1,8 @@
 import type { SupportedLanguage } from '../i18n';
 
 /**
- * Language an email is rendered in. `bilingual` renders the zh-CN block, a
- * divider, then the en block, with a `"<zh> / <en>"` subject. It is used when
+ * Language an email is rendered in. `bilingual` renders the en block, a
+ * divider, then the zh-CN block, with a `"<en> / <zh>"` subject. It is used when
  * the recipient has no instructor row (and so no `preferred_language`).
  */
 export type EmailLanguage = SupportedLanguage | 'bilingual';

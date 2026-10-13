@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { ResendEmailSender } from './resend-email-sender';
-import type { EmailMessage } from './mailer.types';
+import { MAX_ATTACHMENT_BYTES, type EmailMessage } from './mailer.types';
 
 function configWith(values: Record<string, string | undefined>): ConfigService {
   return {
@@ -74,6 +74,62 @@ describe('ResendEmailSender', () => {
       text: 'Hi',
       reply_to: 'info@ssnow.club',
     });
+  });
+
+  it('sends attachments base64-encoded with their content type', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ id: 'resend-att' }),
+    });
+    global.fetch = fetchMock;
+    const sender = new ResendEmailSender(
+      configWith({ RESEND_API_KEY: 're_secret', MAIL_FROM: 'a@b.com' }),
+    );
+    const content = Buffer.from('%PDF-1.7 signed');
+
+    await sender.send({
+      ...message,
+      attachments: [
+        { filename: 'signed.pdf', content, contentType: 'application/pdf' },
+      ],
+    });
+    await sender.send(message);
+
+    const bodies = (fetchMock.mock.calls as [string, { body: string }][]).map(
+      ([, init]) => JSON.parse(init.body) as Record<string, unknown>,
+    );
+    expect(bodies[0].attachments).toEqual([
+      {
+        filename: 'signed.pdf',
+        content: content.toString('base64'),
+        content_type: 'application/pdf',
+      },
+    ]);
+    expect(bodies[1]).not.toHaveProperty('attachments');
+  });
+
+  it('refuses attachments over 30 MB in total without calling Resend', async () => {
+    const fetchMock = jest.fn();
+    global.fetch = fetchMock;
+    const sender = new ResendEmailSender(
+      configWith({ RESEND_API_KEY: 're_secret', MAIL_FROM: 'a@b.com' }),
+    );
+
+    await expect(
+      sender.send({
+        ...message,
+        attachments: [
+          {
+            filename: 'big.pdf',
+            content: Buffer.alloc(MAX_ATTACHMENT_BYTES + 1),
+            contentType: 'application/pdf',
+          },
+        ],
+      }),
+    ).rejects.toThrow(/over the 31457280-byte limit/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('sends Idempotency-Key only when the message has one', async () => {

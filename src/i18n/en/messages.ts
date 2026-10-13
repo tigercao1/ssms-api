@@ -348,6 +348,44 @@ export const en: MessageCatalog = {
           "You're receiving this because you're an admin of Serendipity Snow Club.",
       },
     },
+    documents: {
+      assigned: {
+        subject: 'Onboarding documents to complete',
+        preheader: 'Please read and sign your onboarding documents.',
+        heading: 'Your onboarding documents',
+        paragraphs: [
+          'Please read and complete these documents in the instructor portal:',
+          'It only takes a few minutes, and you can do it on your phone.',
+        ],
+        button: 'Open my documents',
+        finePrint:
+          "You're receiving this because you're an instructor with Serendipity Snow Club.",
+      },
+      reminder: {
+        subject: 'Reminder: onboarding documents waiting for you',
+        preheader: 'Some onboarding documents are still open.',
+        heading: 'Documents still to complete',
+        paragraphs: [
+          'A quick reminder: these documents are still waiting for you in the instructor portal:',
+          'Please complete them before your first lesson.',
+        ],
+        button: 'Open my documents',
+        finePrint:
+          "You're receiving this because you're an instructor with Serendipity Snow Club. We send at most one reminder a week.",
+      },
+      completed: {
+        subject: 'Your signed copy: {title}',
+        preheader: 'Your signed document is attached.',
+        heading: 'Thanks for signing',
+        paragraphs: [
+          'You signed {title}. Your signed copy is attached to this email as a PDF.',
+        ],
+        fingerprintLabel: 'SHA-256 of the attached PDF:',
+        button: 'Open my documents',
+        finePrint:
+          'Keep this email for your records. The SHA-256 lets anyone check that the attached file has not been changed since you signed it.',
+      },
+    },
   },
 };
 

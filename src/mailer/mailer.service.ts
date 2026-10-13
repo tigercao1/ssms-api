@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import {
+  assertAttachmentsWithinLimit,
+  describeAttachments,
+} from './email-attachments';
 import { EMAIL_SENDER, type EmailSender } from './email-sender.interface';
 import { MailerConfig } from './mailer.config';
 import {
@@ -41,7 +45,9 @@ interface AttemptResult {
  * Every send retries up to 3 times and writes one `email_log` row with the
  * final outcome (`sent`, `skipped` when the sender is not configured, or
  * `failed`). A failure also writes a `notification.failure` row to
- * `audit_log`. In `background` mode {@link send} never rejects; in `sync`
+ * `audit_log`. Attachments over 30 MB in total fail without a send attempt;
+ * each attachment's filename, size and SHA-256 go into the log row's
+ * `metadata.attachments`. In `background` mode {@link send} never rejects; in `sync`
  * mode it throws {@link EmailDeliveryError} when the email was not sent.
  */
 @Injectable()
@@ -102,6 +108,7 @@ export class MailerService {
 
     let rendered: RenderedEmail;
     try {
+      assertAttachmentsWithinLimit(request.attachments);
       rendered = this.renderer.render(
         request.template,
         request.language,
@@ -109,7 +116,7 @@ export class MailerService {
       );
     } catch (err) {
       const error = errorMessage(err);
-      this.logger.error(`Failed to render ${request.template}: ${error}`);
+      this.logger.error(`Failed to prepare ${request.template}: ${error}`);
       const result: AttemptResult = { outcome: 'failed', attempts: 0, error };
       await this.auditFailure(request, result);
       await this.writeLog(request, result);
@@ -136,6 +143,9 @@ export class MailerService {
           to: request.to,
           ...rendered,
           timeoutMs,
+          ...(request.attachments?.length
+            ? { attachments: request.attachments }
+            : {}),
           ...(request.idempotencyKey
             ? { idempotencyKey: request.idempotencyKey }
             : {}),
@@ -181,6 +191,9 @@ export class MailerService {
           mode: request.mode,
           attempts: result.attempts,
           ...(subject ? { subject } : {}),
+          ...(request.attachments?.length
+            ? { attachments: describeAttachments(request.attachments) }
+            : {}),
         },
       });
       if (error) {

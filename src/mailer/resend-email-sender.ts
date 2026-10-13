@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { assertAttachmentsWithinLimit } from './email-attachments';
 import type { EmailSender } from './email-sender.interface';
 import { DEFAULT_REPLY_TO, readOptional } from './mailer.config';
 import type { EmailMessage } from './mailer.types';
@@ -20,6 +21,9 @@ const RESEND_ENDPOINT = 'https://api.resend.com/emails';
  *   - `RESEND_API_KEY`  — provider secret (`re_...`).
  *   - `MAIL_FROM`       — verified sender, e.g. `Serendipity Snow <noreply@contact.ssnow.club>`.
  *   - `MAIL_REPLY_TO`   — Reply-To address (default `info@ssnow.club`).
+ *
+ * Attachments are sent base64-encoded; over 30 MB (before base64) in
+ * total throws before any request is made.
  *
  * Throws on any non-2xx response so MailerService can retry / audit.
  */
@@ -46,6 +50,7 @@ export class ResendEmailSender implements EmailSender {
         'Resend is not configured (RESEND_API_KEY / MAIL_FROM missing).',
       );
     }
+    assertAttachmentsWithinLimit(message.attachments);
 
     const response = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
@@ -64,6 +69,15 @@ export class ResendEmailSender implements EmailSender {
         subject: message.subject,
         html: message.html,
         text: message.text,
+        ...(message.attachments?.length
+          ? {
+              attachments: message.attachments.map((attachment) => ({
+                filename: attachment.filename,
+                content: attachment.content.toString('base64'),
+                content_type: attachment.contentType,
+              })),
+            }
+          : {}),
       }),
     });
 

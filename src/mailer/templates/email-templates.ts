@@ -1,6 +1,15 @@
-import { interpolate, type EmailCopy, type MessageCatalog } from '../../i18n';
+import {
+  interpolate,
+  type EmailCopy,
+  type MessageCatalog,
+  type SupportedLanguage,
+} from '../../i18n';
 import type { Vars } from '../../i18n';
-import type { EmailTemplate, EmailTemplateVars } from '../mailer.types';
+import type {
+  EmailDocumentTitle,
+  EmailTemplate,
+  EmailTemplateVars,
+} from '../mailer.types';
 
 /** One language's worth of an email, as plain strings (escaped at layout time). */
 export interface EmailBlocks {
@@ -11,6 +20,8 @@ export interface EmailBlocks {
   paragraphs: string[];
   code?: { label: string | null; value: string };
   button?: { label: string; url: string };
+  /** A long identifier (e.g. a SHA-256) shown small and monospaced. */
+  fingerprint?: { label: string; value: string };
   finePrint: string;
 }
 
@@ -20,7 +31,11 @@ export interface SampleContext {
 }
 
 export interface TemplateDefinition<T extends EmailTemplate> {
-  build(catalog: MessageCatalog, vars: EmailTemplateVars[T]): EmailBlocks;
+  build(
+    catalog: MessageCatalog,
+    vars: EmailTemplateVars[T],
+    language: SupportedLanguage,
+  ): EmailBlocks;
   sample(context: SampleContext): EmailTemplateVars[T];
 }
 
@@ -69,6 +84,41 @@ function optionalCode(
   const value = code?.trim();
   return value ? { label: catalog.email.layout.codeLabel, value } : undefined;
 }
+
+function documentTitle(
+  document: EmailDocumentTitle,
+  language: SupportedLanguage,
+): string {
+  const zh = document.titleZh?.trim();
+  return language === 'zh-CN' && zh ? zh : document.titleEn;
+}
+
+function documentList(
+  catalog: MessageCatalog,
+  copy: EmailCopy & { button: string },
+  vars: EmailTemplateVars['documents.assigned'],
+  language: SupportedLanguage,
+): EmailBlocks {
+  const blocks = fill(copy, { count: vars.documents.length });
+  const [intro, ...rest] = blocks.paragraphs;
+  return {
+    ...blocks,
+    greeting: greet(catalog, vars.displayName),
+    paragraphs: [
+      intro,
+      ...vars.documents.map((d) => `• ${documentTitle(d, language)}`),
+      ...rest,
+    ],
+    button: { label: copy.button, url: vars.onboardingUrl },
+  };
+}
+
+const SAMPLE_DOCUMENTS: EmailDocumentTitle[] = [
+  { titleEn: 'Instructor agreement', titleZh: '教练协议' },
+  { titleEn: 'Safety policy', titleZh: '安全守则' },
+];
+const SAMPLE_SHA256 =
+  '3b7e1f0c9a4d2e8b6f5a1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f';
 
 const SAMPLE_SUPABASE_URL = 'https://example.supabase.co';
 
@@ -329,6 +379,45 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     sample: ({ portalUrl }) => ({
       instructorEmail: 'lin.wei@example.com',
       reviewUrl: `${portalUrl}/admin/instructors/3f6c2a9e-8d41-4b7a-9c55-2e1f0b7d4a10`,
+    }),
+  },
+  'documents.assigned': {
+    build: (catalog, vars, language) =>
+      documentList(catalog, catalog.email.documents.assigned, vars, language),
+    sample: ({ portalUrl }) => ({
+      displayName: SAMPLE_NAME,
+      documents: SAMPLE_DOCUMENTS,
+      onboardingUrl: `${portalUrl}/onboarding`,
+    }),
+  },
+  'documents.reminder': {
+    build: (catalog, vars, language) =>
+      documentList(catalog, catalog.email.documents.reminder, vars, language),
+    sample: ({ portalUrl }) => ({
+      displayName: SAMPLE_NAME,
+      documents: SAMPLE_DOCUMENTS,
+      onboardingUrl: `${portalUrl}/onboarding`,
+    }),
+  },
+  'documents.completed': {
+    build: (catalog, vars, language) => {
+      const copy = catalog.email.documents.completed;
+      const url = vars.onboardingUrl?.trim();
+      const blocks = fill(copy, {
+        title: documentTitle(vars.document, language),
+      });
+      return {
+        ...blocks,
+        greeting: greet(catalog, vars.displayName),
+        fingerprint: { label: copy.fingerprintLabel, value: vars.sha256 },
+        ...(url ? { button: { label: copy.button, url } } : {}),
+      };
+    },
+    sample: ({ portalUrl }) => ({
+      displayName: SAMPLE_NAME,
+      document: SAMPLE_DOCUMENTS[0],
+      sha256: SAMPLE_SHA256,
+      onboardingUrl: `${portalUrl}/onboarding`,
     }),
   },
 };

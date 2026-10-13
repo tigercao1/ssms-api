@@ -3,7 +3,12 @@ import { MailerConfig } from './mailer.config';
 import { MailerService } from './mailer.service';
 import { EmailRenderer } from './templates/email-renderer';
 import type { EmailSender } from './email-sender.interface';
-import { EmailDeliveryError, type SendEmailRequest } from './mailer.types';
+import { createHash } from 'node:crypto';
+import {
+  EmailDeliveryError,
+  MAX_ATTACHMENT_BYTES,
+  type SendEmailRequest,
+} from './mailer.types';
 
 type Row = Record<string, unknown>;
 
@@ -106,6 +111,100 @@ describe('MailerService', () => {
         attempts: 1,
         subject: expect.any(String) as string,
       },
+    });
+  });
+
+  describe('attachments', () => {
+    const pdf = Buffer.from('%PDF-1.7 signed copy');
+    const attachment = {
+      filename: 'agreement-signed.pdf',
+      content: pdf,
+      contentType: 'application/pdf',
+    };
+
+    it('passes attachments to the sender and logs filename, size and SHA-256', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn().mockResolvedValue({ id: 'msg-a' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      expect(await mailer.send(request({ attachments: [attachment] }))).toBe(
+        'sent',
+      );
+      const [message] = send.mock.calls[0] as [Record<string, unknown>];
+      expect(message.attachments).toEqual([attachment]);
+      expect(inserts.email_log[0]).toMatchObject({
+        status: 'sent',
+        metadata: {
+          attachments: [
+            {
+              filename: 'agreement-signed.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: pdf.length,
+              sha256: createHash('sha256').update(pdf).digest('hex'),
+            },
+          ],
+        },
+      });
+    });
+
+    it('sends no attachments key when there are none', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn().mockResolvedValue({ id: 'msg-b' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      await mailer.send(request({ attachments: [] }));
+      const [message] = send.mock.calls[0] as [Record<string, unknown>];
+      expect(message).not.toHaveProperty('attachments');
+      expect(inserts.email_log[0].metadata).not.toHaveProperty('attachments');
+    });
+
+    it('fails without sending when attachments exceed 30 MB in total', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn();
+      const mailer = service({ isConfigured: () => true, send }, client);
+      const half = Buffer.alloc(MAX_ATTACHMENT_BYTES / 2 + 1);
+
+      const outcome = await mailer.send(
+        request({
+          attachments: [
+            { ...attachment, content: half },
+            { ...attachment, filename: 'b.pdf', content: half },
+          ],
+        }),
+      );
+
+      expect(outcome).toBe('failed');
+      expect(send).not.toHaveBeenCalled();
+      expect(inserts.audit_log).toHaveLength(1);
+      expect(inserts.email_log[0]).toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining(
+          'over the 31457280-byte limit',
+        ) as string,
+        metadata: {
+          attempts: 0,
+          attachments: [
+            expect.objectContaining({ sizeBytes: half.length }),
+            expect.objectContaining({ filename: 'b.pdf' }),
+          ],
+        },
+      });
+    });
+
+    it('accepts attachments of exactly 30 MB', async () => {
+      const { client } = makeSupabase();
+      const send = jest.fn().mockResolvedValue({ id: 'msg-c' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      expect(
+        await mailer.send(
+          request({
+            attachments: [
+              { ...attachment, content: Buffer.alloc(MAX_ATTACHMENT_BYTES) },
+            ],
+          }),
+        ),
+      ).toBe('sent');
     });
   });
 

@@ -209,7 +209,22 @@ describe('SupabaseRosterWriter', () => {
     const writer = new SupabaseRosterWriter(db.asClient());
     await writer.setProfileRelations(
       'ins',
-      [{ org: 'casi', track: 'park', level: 2 }],
+      [
+        {
+          org: 'casi',
+          track: 'park',
+          level: 2,
+          isPartial: false,
+          partialComponents: [],
+        },
+        {
+          org: 'csia',
+          track: 'regular',
+          level: 3,
+          isPartial: true,
+          partialComponents: ['ski'],
+        },
+      ],
       ['loc-1'],
     );
     expect(db.rpcCalls).toEqual([
@@ -225,6 +240,13 @@ describe('SupabaseRosterWriter', () => {
                 level: 2,
                 is_partial: false,
                 partial_components: [],
+              },
+              {
+                org: 'csia',
+                track: 'regular',
+                level: 3,
+                is_partial: true,
+                partial_components: ['ski'],
               },
             ],
             teaching_location_ids: ['loc-1'],

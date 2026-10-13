@@ -5,7 +5,8 @@
 #
 # Usage:
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --csv <export.csv> --report <outside-repo.json>   # dry run
-#   SSMS_ENV=dev ./scripts/import-season-roster.sh --csv <export.csv> --apply
+#   SSMS_ENV=dev ./scripts/import-season-roster.sh --csv <export.csv> --normalize-with-llm --report <outside-repo.json>
+#   SSMS_ENV=dev ./scripts/import-season-roster.sh --csv <export.csv> --apply [--normalize-with-llm]
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --send --only <email>
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --send
 #   SSMS_ENV=dev ./scripts/import-season-roster.sh --remind
@@ -14,6 +15,10 @@
 # A run that dies mid-send leaves invites claimed but not marked sent; later
 # runs skip them and list their ids as needs review. Check Resend for each one,
 # then --release-stale-claims makes the undelivered ones eligible again.
+#
+# --normalize-with-llm sends each row's raw certification and location answers
+# (nothing else) to Gemini (GEMINI_API_KEY, GEMINI_MODEL) for values the rules
+# could not map, and keeps only answers that pass validation.
 #
 # --apply, --send, --remind and --release-stale-claims against prod ask for the
 # project ref first (or need SSMS_CONFIRM_PROD=yes when not interactive).

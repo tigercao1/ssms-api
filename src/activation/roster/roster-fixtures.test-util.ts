@@ -3,6 +3,7 @@ export const ROSTER_HEADER = [
   'Preferred Name',
   'WeChat Name',
   'Highest instructor certification (Select all that apply if certified in both CSIA and CASI) ',
+  'When and where did you receive your highest certification level? (e.g., CASI L3 TBL, 2022; CSIA L2 BM, 2024) ',
   'Preferred teaching locations ',
   'Legal Full Name (as shown on official ID) ',
   'Phone Number ',
@@ -15,6 +16,7 @@ export const ROSTER_HEADER = [
 export interface FixtureRow {
   preferred?: string;
   certs?: string;
+  details?: string;
   locations?: string;
   legal?: string;
   dob?: string;
@@ -35,6 +37,7 @@ export function rosterCsv(rows: FixtureRow[]): string {
         r.preferred ?? '',
         'wx-fake',
         r.certs ?? '',
+        r.details ?? '',
         r.locations ?? '',
         r.legal ?? '',
         '555-0100',

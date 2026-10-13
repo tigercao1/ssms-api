@@ -46,6 +46,11 @@ export const AUDIT_ACTIONS = {
   payRateUpdate: 'pay_rate.update',
   customerSync: 'customer.sync',
   customerCreate: 'customer.create',
+  payrollSettingsUpdate: 'payroll.settings_update',
+  payrollAdjustmentCreate: 'payroll.adjustment_create',
+  payrollAdjustmentDelete: 'payroll.adjustment_delete',
+  payrollFinalize: 'payroll.finalize',
+  payrollReopen: 'payroll.reopen',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -77,6 +82,8 @@ export interface AuditEntry {
     | 'lesson_type'
     | 'pay_rate'
     | 'customer'
+    | 'payroll_period'
+    | 'payroll_settings'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

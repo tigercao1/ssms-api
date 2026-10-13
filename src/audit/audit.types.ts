@@ -46,6 +46,12 @@ export const AUDIT_ACTIONS = {
   payRateUpdate: 'pay_rate.update',
   customerSync: 'customer.sync',
   customerCreate: 'customer.create',
+  bookingClassCreate: 'booking.class_create',
+  bookingClassUpdate: 'booking.class_update',
+  bookingClassCancel: 'booking.class_cancel',
+  bookingClassStatus: 'booking.class_status',
+  bookingClassSyncRetry: 'booking.class_sync_retry',
+  bookingSettingsUpdate: 'booking.settings_update',
   payrollSettingsUpdate: 'payroll.settings_update',
   payrollAdjustmentCreate: 'payroll.adjustment_create',
   payrollAdjustmentDelete: 'payroll.adjustment_delete',
@@ -87,6 +93,8 @@ export interface AuditEntry {
     | 'lesson_type'
     | 'pay_rate'
     | 'customer'
+    | 'class'
+    | 'booking_settings'
     | 'payroll_period'
     | 'payroll_settings'
     | 'class_import'

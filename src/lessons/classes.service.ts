@@ -4,7 +4,12 @@ import {
   ClassesRepository,
   type ClassRow,
 } from './classes.repository';
-import type { Attendance, ClassSource, ClassStatus } from './lessons.types';
+import type {
+  Attendance,
+  ClassSource,
+  ClassStatus,
+  GoogleSyncStatus,
+} from './lessons.types';
 
 export const CLASS_RANGE_INVALID = '`to` must be after `from`';
 
@@ -36,6 +41,10 @@ export interface AdminClass {
   source: ClassSource;
   googleCalendarId: string | null;
   googleEventId: string | null;
+  googleSyncStatus: GoogleSyncStatus;
+  googleSyncError: string | null;
+  googleSyncAttempts: number;
+  googleSyncedAt: string | null;
   notes: string | null;
   participants: AdminClassParticipant[];
   createdAt: string;
@@ -58,7 +67,7 @@ export class ClassesService {
   }
 }
 
-function toAdminClass(row: ClassRow): AdminClass {
+export function toAdminClass(row: ClassRow): AdminClass {
   return {
     id: row.id,
     instructorId: row.instructor_id,
@@ -78,6 +87,10 @@ function toAdminClass(row: ClassRow): AdminClass {
     source: row.source,
     googleCalendarId: row.google_calendar_id,
     googleEventId: row.google_event_id,
+    googleSyncStatus: row.google_sync_status,
+    googleSyncError: row.google_sync_error,
+    googleSyncAttempts: row.google_sync_attempts,
+    googleSyncedAt: row.google_synced_at,
     notes: row.notes,
     participants: (row.participants ?? []).map((p) => ({
       customerId: p.customer_id,

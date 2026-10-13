@@ -508,6 +508,19 @@ describe('GoogleCalendarClient', () => {
       expect(event).toMatchObject({ id: sentId, summary: 'x' });
     });
 
+    it('sends a caller-chosen event id so a retry cannot duplicate the event', async () => {
+      const ctx = build(echo);
+      const event = await ctx.client.insertEvent(
+        'c',
+        { summary: 'x', start, end },
+        { eventId: 'ssmsabc0' },
+      );
+      expect(JSON.parse(ctx.apiCalls()[0].body as string)).toMatchObject({
+        id: 'ssmsabc0',
+      });
+      expect(event.id).toBe('ssmsabc0');
+    });
+
     it('treats a first-attempt duplicate as an error', async () => {
       const ctx = build(() => json({}, 409));
       await expect(

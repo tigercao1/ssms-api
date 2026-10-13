@@ -101,6 +101,7 @@ jobs:
 
       - name: Booking checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/booking_checks.sql
+
       - name: Payroll checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/payroll_checks.sql
 

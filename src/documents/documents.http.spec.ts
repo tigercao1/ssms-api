@@ -15,14 +15,17 @@ import {
   startDocumentsApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/documents-fakes';
+import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { pdfFixture, pdfOfSize } from '../../test/helpers/pdf-fixtures';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { MailerService } from '../mailer/mailer.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
 import { utcToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -50,6 +53,7 @@ async function build(env: Record<string, string> = {}) {
   const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
   const audit = recordingAudit();
+  const mailer = new RecordingMailer();
   const app = await startDocumentsApp(
     Test.createTestingModule({
       controllers: [
@@ -69,10 +73,12 @@ async function build(env: Record<string, string> = {}) {
         { provide: DocumentSubjectsRepository, useValue: subjects },
         { provide: AuditService, useValue: audit },
         { provide: ConfigService, useValue: { get: (k: string) => env[k] } },
+        DocumentNotificationsService,
+        { provide: MailerService, useValue: mailer.asService() },
       ],
     }),
   );
-  return { app, storage, templates, assignments, subjects, audit };
+  return { app, storage, templates, assignments, subjects, audit, mailer };
 }
 
 const field = (

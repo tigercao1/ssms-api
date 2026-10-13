@@ -49,6 +49,8 @@ function toRecipient(record: RecipientRecord): InviteRecipient {
 export abstract class InvitesRepository {
   abstract findByTokenHash(tokenHash: string): Promise<InviteRow | null>;
   abstract findLatestByEmail(email: string): Promise<InviteRecipient | null>;
+  /** The auth user's newest invite, or `null` when they were never invited. */
+  abstract findLatestByAuthUser(authUserId: string): Promise<InviteRow | null>;
   abstract listUnsent(
     season: string,
     email?: string,
@@ -120,6 +122,20 @@ export class SupabaseInvitesRepository extends InvitesRepository {
     }
     const [first] = (data ?? []) as unknown as RecipientRecord[];
     return first ? toRecipient(first) : null;
+  }
+
+  async findLatestByAuthUser(authUserId: string): Promise<InviteRow | null> {
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .select(INVITE_COLUMNS)
+      .eq('auth_user_id', authUserId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) {
+      throw failure('load invite', error.message);
+    }
+    const [first] = (data ?? []) as unknown as InviteRow[];
+    return first ?? null;
   }
 
   async listUnsent(season: string, email?: string): Promise<InviteRecipient[]> {

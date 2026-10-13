@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BioTranslationModule } from '../bio-translation/bio-translation.module';
+import { DocumentsModule } from '../documents/documents.module';
 import { InstructorsModule } from '../instructors/instructors.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { MediaModule } from '../media/media.module';
@@ -24,7 +25,13 @@ import { AdminService } from './admin.service';
  * admin action.
  */
 @Module({
-  imports: [InstructorsModule, MailerModule, MediaModule, BioTranslationModule],
+  imports: [
+    InstructorsModule,
+    MailerModule,
+    MediaModule,
+    BioTranslationModule,
+    DocumentsModule,
+  ],
   controllers: [AdminController, AdminMediaController],
   providers: [
     AdminService,

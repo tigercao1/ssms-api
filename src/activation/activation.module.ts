@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { DocumentsModule } from '../documents/documents.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { MailerService } from '../mailer/mailer.service';
 import { ActivationAuth, SupabaseActivationAuth } from './activation-auth';
@@ -18,7 +19,7 @@ import { MeActivationController } from './me-activation.controller';
  * and {@link InviteDispatcher}.
  */
 @Module({
-  imports: [MailerModule],
+  imports: [MailerModule, DocumentsModule],
   controllers: [ActivationController, MeActivationController],
   providers: [
     ActivationService,

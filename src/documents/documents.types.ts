@@ -189,6 +189,7 @@ export interface DocumentInstructorRow {
   display_name_en: string;
   approval_status: string;
   is_active: boolean;
+  preferred_language: string | null;
 }
 
 /** One `instructor_certifications` row. */

@@ -22,8 +22,10 @@ import {
   renderPage,
 } from '../../test/helpers/pdf-render';
 import { signaturePng } from '../../test/helpers/png-fixtures';
+import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { MailerService } from '../mailer/mailer.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
@@ -31,6 +33,7 @@ import {
   DocumentCompletedHandler,
   type SignedDocument,
 } from './document-completed.handler';
+import { DocumentNotificationsService } from './document-notifications.service';
 import {
   DocumentSigningService,
   SIGNING_CONSENT,
@@ -117,6 +120,8 @@ async function build({ handler = true } = {}) {
         { provide: DocumentSubjectsRepository, useValue: subjects },
         { provide: AuditService, useValue: recordingAudit() },
         { provide: ConfigService, useValue: { get: () => undefined } },
+        DocumentNotificationsService,
+        { provide: MailerService, useValue: new RecordingMailer().asService() },
         ...(handler
           ? [{ provide: DocumentCompletedHandler, useValue: completed }]
           : []),

@@ -231,9 +231,8 @@ function classify(value: string): CertValue {
       : { kind: 'unrecognised' };
   }
   if (clause.carving) {
-    const carvingLevel = level ?? 1;
-    return org === 'casi' && !clause.park && inRange('carving', carvingLevel)
-      ? { kind: 'full', cert: full(org, 'carving', carvingLevel) }
+    return org === 'casi' && !clause.park && inRange('carving', level)
+      ? { kind: 'full', cert: full(org, 'carving', level as number) }
       : { kind: 'unrecognised' };
   }
   const track: CertTrack = clause.park ? 'park' : 'regular';

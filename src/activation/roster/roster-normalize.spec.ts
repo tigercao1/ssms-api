@@ -55,7 +55,7 @@ describe('normalizeCertifications: synonyms', () => {
     ['CASI P1', cert('casi', 'park', 1)],
     ['CASI Park I', cert('casi', 'park', 1)],
     ['C.S.I.A. L-3', null],
-    ['CASI Carving', cert('casi', 'carving', 1)],
+    ['CASI Carving', null],
     ['CASI Carving L2', cert('casi', 'carving', 2)],
   ])('%s', (value, expected) => {
     const result = normalizeCertifications(value);
@@ -353,7 +353,7 @@ describe('normalizeCertifications: highest only per (org, track)', () => {
     const cells = [
       `CSIA L3, ${PARTIAL_FORM_CASI}, Ped&Teaching`,
       `${PARTIAL_FORM_CSIA}, CASI L2, CSIA LV 3 SKI`,
-      'CASI L3, CASI Park 1, CASI Carving',
+      'CASI L3, CASI Park 1, CASI Carving L1',
       'CSIA L1, CSIA L2, CASI L1, CASI L2, CSIA Park 1',
     ];
     for (const cell of cells) {

@@ -1,6 +1,3 @@
-import { createHash } from 'node:crypto';
-import type { Readable } from 'node:stream';
-
 export const MAX_CERTIFICATION_BYTES = 10 * 1024 * 1024;
 
 /** Accepted certification file types and the extension each is stored under. */
@@ -15,8 +12,6 @@ export type CertificationContentType =
 export const CERTIFICATION_CONTENT_TYPES = Object.keys(
   CERTIFICATION_FILE_EXTENSIONS,
 ) as CertificationContentType[];
-
-const SNIFF_BYTES = 12;
 
 const SIGNATURES: Record<CertificationContentType, (head: Buffer) => boolean> =
   {
@@ -50,28 +45,4 @@ export function matchesSignature(
   head: Buffer,
 ): boolean {
   return SIGNATURES[contentType](head);
-}
-
-/** SHA-256, byte count and leading bytes of a stream, read once. */
-export interface StreamDigest {
-  sha256: string;
-  sizeBytes: number;
-  head: Buffer;
-}
-
-export async function digestStream(stream: Readable): Promise<StreamDigest> {
-  const hash = createHash('sha256');
-  const head: Buffer[] = [];
-  let headBytes = 0;
-  let sizeBytes = 0;
-  for await (const chunk of stream) {
-    const bytes = Buffer.from(chunk as Uint8Array);
-    hash.update(bytes);
-    sizeBytes += bytes.length;
-    if (headBytes < SNIFF_BYTES) {
-      head.push(bytes.subarray(0, SNIFF_BYTES - headBytes));
-      headBytes += head[head.length - 1].length;
-    }
-  }
-  return { sha256: hash.digest('hex'), sizeBytes, head: Buffer.concat(head) };
 }

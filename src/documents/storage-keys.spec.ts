@@ -7,8 +7,14 @@ describe('storageKeys', () => {
     expect(storageKeys.instructorDocument('i', 'a')).toBe(
       'subjects/instructor/i/documents/a.pdf',
     );
-    expect(storageKeys.instructorCertification('i', 'u', 'png')).toBe(
-      'subjects/instructor/i/certifications/u.png',
+    expect(storageKeys.instructorCertification('i', 'u', 'h', 'png')).toBe(
+      'subjects/instructor/i/certifications/u-h.png',
+    );
+    expect(storageKeys.instructorCertificationStaging('i', 'u', 'png')).toBe(
+      'subjects/instructor/i/certifications/staging/u.png',
+    );
+    expect(storageKeys.instructorCertificationIntent('i', 'u')).toBe(
+      'subjects/instructor/i/certifications/u.intent.json',
     );
     expect(storageKeys.customerDocument('c', 'a')).toBe(
       'subjects/customer/c/documents/a.pdf',

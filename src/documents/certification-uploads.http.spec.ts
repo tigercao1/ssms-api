@@ -66,6 +66,8 @@ const messageOf = (res: request.Response) =>
   (res.body as { message: string }).message;
 const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
 const PDF = FILE_SAMPLES['application/pdf'];
+const sha256 = (bytes: Buffer) =>
+  createHash('sha256').update(bytes).digest('hex');
 
 async function build() {
   const storage = new InMemoryPrivateStorage();
@@ -150,12 +152,42 @@ describe('certification uploads over HTTP', () => {
     };
   }
 
-  function fileKey(uploadId: string, ext = 'pdf') {
-    return storageKeys.instructorCertification(
+  function stagingKey(uploadId: string, ext = 'pdf') {
+    return storageKeys.instructorCertificationStaging(
       ctx.instructor.id,
       uploadId,
       ext,
     );
+  }
+
+  function finalKey(uploadId: string, bytes: Buffer = PDF, ext = 'pdf') {
+    return storageKeys.instructorCertification(
+      ctx.instructor.id,
+      uploadId,
+      sha256(bytes),
+      ext,
+    );
+  }
+
+  function confirmedObjectKeys() {
+    return [...ctx.storage.objects.keys()].filter(
+      (key) => key.includes('/certifications/') && !key.includes('/staging/'),
+    );
+  }
+
+  function stageFailingRead(
+    key: string,
+    outcome: () => Promise<Buffer | null>,
+  ) {
+    const getBuffer = ctx.storage.getBuffer.bind(ctx.storage) as (
+      key: string,
+      maxBytes: number,
+    ) => Promise<Buffer | null>;
+    jest
+      .spyOn(ctx.storage, 'getBuffer')
+      .mockImplementation((k: string, maxBytes: number) =>
+        k === key ? outcome() : getBuffer(k, maxBytes),
+      );
   }
 
   async function uploadAndConfirm(
@@ -168,7 +200,7 @@ describe('certification uploads over HTTP', () => {
     });
     const type = (overrides.contentType as string) ?? 'application/pdf';
     const ext = { 'application/pdf': 'pdf', 'image/png': 'png' }[type] ?? 'jpg';
-    ctx.storage.seed(fileKey(uploadId, ext), bytes, type);
+    ctx.storage.seed(stagingKey(uploadId, ext), bytes, type);
     const res = await http()
       .post(`/me/certification-uploads/${uploadId}/confirm`)
       .set('Authorization', INSTRUCTOR_AUTH)
@@ -246,16 +278,16 @@ describe('certification uploads over HTTP', () => {
   });
 
   describe('POST /me/certification-uploads/upload-url', () => {
-    it('issues an upload id and a presigned PUT under the instructor key', async () => {
+    it('issues an upload id and a presigned PUT to a staging key under the instructor prefix', async () => {
       const validUntil = today();
       const body = await presign({ validUntil, contentType: 'IMAGE/PNG' });
       expect(body.uploadId).toMatch(/^[0-9a-f-]{36}$/);
       expect(body.uploadUrl).toBe(
-        `memory://PUT/${fileKey(body.uploadId, 'png')}`,
+        `memory://PUT/${stagingKey(body.uploadId, 'png')}`,
       );
       expect(ctx.storage.presigned.at(-1)).toEqual({
         op: 'PUT',
-        key: fileKey(body.uploadId, 'png'),
+        key: stagingKey(body.uploadId, 'png'),
         input: { contentType: 'image/png', contentLength: PDF.length },
       });
       expect(ctx.subjects.uploads).toHaveLength(0);
@@ -317,7 +349,7 @@ describe('certification uploads over HTTP', () => {
   });
 
   describe('POST /me/certification-uploads/:uploadId/confirm', () => {
-    it('hashes the file, records a pending upload and drops the intent', async () => {
+    it('hashes the file, copies it to the final key, records a pending upload and drops the staged objects', async () => {
       const validUntil = addDays(today(), 120);
       const upload = await uploadAndConfirm({ validUntil });
       expect(upload).toMatchObject({
@@ -326,7 +358,7 @@ describe('certification uploads over HTTP', () => {
         track: 'regular',
         contentType: 'application/pdf',
         sizeBytes: PDF.length,
-        sha256: createHash('sha256').update(PDF).digest('hex'),
+        sha256: sha256(PDF),
         reviewStatus: 'pending',
         validUntil,
         current: true,
@@ -334,11 +366,43 @@ describe('certification uploads over HTTP', () => {
       });
       const [row] = ctx.subjects.uploads;
       expect(row.id).toBe(upload.id);
-      expect(row.file_key).toBe(fileKey(upload.id));
+      expect(row.file_key).toBe(finalKey(upload.id));
       expect(ctx.storage.deleted).toEqual([
+        stagingKey(upload.id),
         storageKeys.instructorCertificationIntent(ctx.instructor.id, upload.id),
       ]);
-      expect(ctx.storage.objects.has(fileKey(upload.id))).toBe(true);
+      expect(ctx.storage.objects.get(finalKey(upload.id))).toEqual({
+        body: PDF,
+        contentType: 'application/pdf',
+      });
+      expect(ctx.storage.objects.has(stagingKey(upload.id))).toBe(false);
+    });
+
+    it('keeps the reviewed file when the upload URL is reused after confirm', async () => {
+      const upload = await uploadAndConfirm();
+      const replacement = Buffer.concat([
+        Buffer.from('%PDF-'),
+        Buffer.alloc(PDF.length - 5, 0x42),
+      ]);
+      ctx.storage.seed(stagingKey(upload.id), replacement);
+      const again = await http()
+        .post(`/me/certification-uploads/${upload.id}/confirm`)
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .expect(200);
+      expect(again.body).toEqual(upload);
+      const res = await http()
+        .get(`/admin/certification-uploads/${upload.id}/url`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        url: `memory://GET/${finalKey(upload.id)}`,
+        sha256: sha256(PDF),
+      });
+      expect(ctx.subjects.uploads[0].sha256).toBe(sha256(PDF));
+      expect(ctx.storage.objects.get(finalKey(upload.id))?.body).toEqual(PDF);
+      expect(
+        ctx.storage.presigned.filter((p) => p.op === 'PUT').map((p) => p.key),
+      ).toEqual([stagingKey(upload.id)]);
     });
 
     it('accepts an image and returns the same upload when confirmed twice', async () => {
@@ -351,6 +415,9 @@ describe('certification uploads over HTTP', () => {
         .expect(200);
       expect(again.body).toEqual(upload);
       expect(ctx.subjects.uploads).toHaveLength(1);
+      expect(ctx.subjects.uploads[0].file_key).toBe(
+        finalKey(upload.id, png, 'png'),
+      );
     });
 
     it('400s until the file is uploaded, keeping the intent for a retry', async () => {
@@ -361,7 +428,7 @@ describe('certification uploads over HTTP', () => {
         .expect(400);
       expect(messageOf(res)).toBe(CERTIFICATION_FILE_MISSING);
       expect(ctx.storage.deleted).toEqual([]);
-      ctx.storage.seed(fileKey(uploadId), PDF);
+      ctx.storage.seed(stagingKey(uploadId), PDF);
       await http()
         .post(`/me/certification-uploads/${uploadId}/confirm`)
         .set('Authorization', INSTRUCTOR_AUTH)
@@ -397,7 +464,7 @@ describe('certification uploads over HTTP', () => {
       'rejects %s and deletes the upload',
       async (_name, bytes, type, message) => {
         const { uploadId } = await presign();
-        ctx.storage.seed(fileKey(uploadId), bytes(), type);
+        ctx.storage.seed(stagingKey(uploadId), bytes(), type);
         const res = await http()
           .post(`/me/certification-uploads/${uploadId}/confirm`)
           .set('Authorization', INSTRUCTOR_AUTH)
@@ -405,7 +472,7 @@ describe('certification uploads over HTTP', () => {
         expect(messageOf(res)).toBe(message);
         expect(ctx.storage.deleted).toEqual(
           expect.arrayContaining([
-            fileKey(uploadId),
+            stagingKey(uploadId),
             storageKeys.instructorCertificationIntent(
               ctx.instructor.id,
               uploadId,
@@ -413,28 +480,46 @@ describe('certification uploads over HTTP', () => {
           ]),
         );
         expect(ctx.subjects.uploads).toHaveLength(0);
+        expect(confirmedObjectKeys()).toEqual([]);
       },
     );
 
-    it('rejects a file that grows past the cap while streaming', async () => {
+    it('rejects a file that grows past the cap between HEAD and read', async () => {
       const { uploadId } = await presign();
-      ctx.storage.seed(fileKey(uploadId), PDF);
-      jest
-        .spyOn(ctx.storage, 'getStream')
-        .mockRejectedValueOnce(
-          new ObjectTooLargeError(fileKey(uploadId), MAX_CERTIFICATION_BYTES),
-        );
+      ctx.storage.seed(stagingKey(uploadId), PDF);
+      stageFailingRead(stagingKey(uploadId), () =>
+        Promise.reject(
+          new ObjectTooLargeError(
+            stagingKey(uploadId),
+            MAX_CERTIFICATION_BYTES,
+          ),
+        ),
+      );
       const res = await http()
         .post(`/me/certification-uploads/${uploadId}/confirm`)
         .set('Authorization', INSTRUCTOR_AUTH)
         .expect(400);
       expect(messageOf(res)).toBe(CERTIFICATION_FILE_TOO_LARGE);
+      expect(ctx.storage.deleted).toContain(stagingKey(uploadId));
+    });
+
+    it('surfaces other staged read failures', async () => {
+      const { uploadId } = await presign();
+      ctx.storage.seed(stagingKey(uploadId), PDF);
+      stageFailingRead(stagingKey(uploadId), () =>
+        Promise.reject(new Error('r2 down')),
+      );
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      await http()
+        .post(`/me/certification-uploads/${uploadId}/confirm`)
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .expect(500);
     });
 
     it('400s when the object vanishes between HEAD and read', async () => {
       const { uploadId } = await presign();
-      ctx.storage.seed(fileKey(uploadId), PDF);
-      jest.spyOn(ctx.storage, 'getStream').mockResolvedValueOnce(null);
+      ctx.storage.seed(stagingKey(uploadId), PDF);
+      stageFailingRead(stagingKey(uploadId), () => Promise.resolve(null));
       const res = await http()
         .post(`/me/certification-uploads/${uploadId}/confirm`)
         .set('Authorization', INSTRUCTOR_AUTH)
@@ -463,7 +548,7 @@ describe('certification uploads over HTTP', () => {
         'application/json',
       );
       ctx.storage.seed(
-        storageKeys.instructorCertification(other.id, pendingId, 'pdf'),
+        storageKeys.instructorCertificationStaging(other.id, pendingId, 'pdf'),
         PDF,
       );
       for (const id of [confirmed.id, pendingId, UNKNOWN_ID]) {
@@ -508,7 +593,7 @@ describe('certification uploads over HTTP', () => {
 
     it('treats a concurrent duplicate insert as already confirmed', async () => {
       const { uploadId } = await presign();
-      ctx.storage.seed(fileKey(uploadId), PDF);
+      ctx.storage.seed(stagingKey(uploadId), PDF);
       const insert = ctx.uploads.insert.bind(ctx.uploads) as (
         row: NewCertificationUploadRow,
       ) => Promise<CertificationUploadRow>;
@@ -523,11 +608,34 @@ describe('certification uploads over HTTP', () => {
         .set('Authorization', INSTRUCTOR_AUTH)
         .expect(200);
       expect(ctx.subjects.uploads).toHaveLength(1);
+      expect(ctx.storage.objects.has(finalKey(uploadId))).toBe(true);
+    });
+
+    it('drops its own copy when a concurrent confirm recorded different bytes', async () => {
+      const { uploadId } = await presign();
+      ctx.storage.seed(stagingKey(uploadId), PDF);
+      const winnerKey = finalKey(uploadId, Buffer.from('winner'));
+      const insert = ctx.uploads.insert.bind(ctx.uploads) as (
+        row: NewCertificationUploadRow,
+      ) => Promise<CertificationUploadRow>;
+      jest
+        .spyOn(ctx.uploads, 'insert')
+        .mockImplementationOnce(async (row: NewCertificationUploadRow) => {
+          await insert({ ...row, file_key: winnerKey, sha256: 'winner' });
+          return insert(row);
+        });
+      await http()
+        .post(`/me/certification-uploads/${uploadId}/confirm`)
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .expect(200);
+      expect(ctx.subjects.uploads[0].file_key).toBe(winnerKey);
+      expect(ctx.storage.deleted).toContain(finalKey(uploadId));
+      expect(ctx.storage.objects.has(finalKey(uploadId))).toBe(false);
     });
 
     it('surfaces other insert failures', async () => {
       const { uploadId } = await presign();
-      ctx.storage.seed(fileKey(uploadId), PDF);
+      ctx.storage.seed(stagingKey(uploadId), PDF);
       jest
         .spyOn(ctx.uploads, 'insert')
         .mockRejectedValueOnce(new Error('db down'));
@@ -540,7 +648,7 @@ describe('certification uploads over HTTP', () => {
 
     it('logs and carries on when deleting a rejected file fails', async () => {
       const { uploadId } = await presign();
-      ctx.storage.seed(fileKey(uploadId), PDF, 'image/png');
+      ctx.storage.seed(stagingKey(uploadId), PDF, 'image/png');
       jest.spyOn(ctx.storage, 'delete').mockRejectedValue(new Error('r2 down'));
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
       await http()

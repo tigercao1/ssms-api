@@ -8,12 +8,10 @@ import {
 import {
   CERTIFICATION_FILE_EXTENSIONS,
   type CertificationContentType,
-  digestStream,
   isCertificationContentType,
   MAX_CERTIFICATION_BYTES,
   matchesSignature,
   mediaType,
-  type StreamDigest,
 } from './certification-files';
 import { hasCode, PG_UNIQUE_VIOLATION } from '../database/db-result';
 import {
@@ -39,6 +37,7 @@ import {
   PrivateStorageClient,
 } from './private-storage.client';
 import { storageKeys } from './storage-keys';
+import { sha256Hex } from './template-pdf';
 
 export const VALID_UNTIL_IN_PAST = 'validUntil must be today or later';
 export const NO_MATCHING_CERTIFICATION =
@@ -101,7 +100,7 @@ export class MeCertificationUploadsService {
     private readonly storage: PrivateStorageClient,
   ) {}
 
-  /** Issues an upload id and a presigned PUT under the caller's certification prefix. */
+  /** Issues an upload id and a presigned PUT to a staging key under the caller's certification prefix. */
   async uploadUrl(
     authUserId: string,
     dto: CertificationUploadUrlDto,
@@ -134,15 +133,16 @@ export class MeCertificationUploadsService {
       'application/json',
     );
     const { url, expiresAt } = await this.storage.presignPut(
-      this.fileKey(intent),
+      this.stagingKey(intent),
       { contentType: dto.contentType, contentLength: dto.contentLength },
     );
     return { uploadId: intent.uploadId, uploadUrl: url, expiresAt };
   }
 
   /**
-   * Checks the uploaded file (HEAD size and type, then a capped read that
-   * hashes it and checks its leading bytes) and records the upload. Only the
+   * Checks the staged file (HEAD size and type, then one capped read that is
+   * hashed and checked for its leading bytes), writes those bytes to a final
+   * key that is never presigned for upload, and records the upload. Only the
    * caller's own upload ids resolve; confirming twice returns the same upload.
    */
   async confirm(
@@ -172,83 +172,98 @@ export class MeCertificationUploadsService {
     if (!intent) {
       throw new NotFoundException(CERTIFICATION_UPLOAD_NOT_FOUND);
     }
-    const fileKey = this.fileKey(intent);
-    const head = await this.storage.head(fileKey);
+    const stagingKey = this.stagingKey(intent);
+    const bytes = await this.readStaged(intent, stagingKey, intentKey);
+    const sha256 = sha256Hex(bytes);
+    const fileKey = storageKeys.instructorCertification(
+      intent.instructorId,
+      intent.uploadId,
+      sha256,
+      CERTIFICATION_FILE_EXTENSIONS[intent.contentType],
+    );
+    await this.storage.put(fileKey, bytes, intent.contentType);
+    const inserted = await this.insertOnce({
+      id: uploadId,
+      instructor_id: instructor.id,
+      org: intent.org,
+      track: intent.track,
+      file_key: fileKey,
+      sha256,
+      content_type: intent.contentType,
+      size_bytes: bytes.length,
+      valid_until: intent.validUntil,
+    });
+    if (!inserted) {
+      const winner = await this.uploads.findById(uploadId);
+      if (winner?.file_key !== fileKey) {
+        await this.discard(fileKey);
+      }
+    }
+    await this.discard(stagingKey, intentKey);
+    return this.present(instructor, uploadId, today);
+  }
+
+  private async readStaged(
+    intent: CertificationUploadIntent,
+    stagingKey: string,
+    intentKey: string,
+  ): Promise<Buffer> {
+    const head = await this.storage.head(stagingKey);
     if (!head) {
       throw new BadRequestException(CERTIFICATION_FILE_MISSING);
     }
     if (head.contentLength > MAX_CERTIFICATION_BYTES) {
-      await this.discard(fileKey, intentKey);
+      await this.discard(stagingKey, intentKey);
       throw new BadRequestException(CERTIFICATION_FILE_TOO_LARGE);
     }
     if (
       head.contentLength !== intent.contentLength ||
       mediaType(head.contentType) !== intent.contentType
     ) {
-      await this.discard(fileKey, intentKey);
+      await this.discard(stagingKey, intentKey);
       throw new BadRequestException(CERTIFICATION_FILE_MISMATCH);
     }
-    const digest = await this.digest(fileKey, intentKey);
-    if (
-      digest.sizeBytes !== intent.contentLength ||
-      !matchesSignature(intent.contentType, digest.head)
-    ) {
-      await this.discard(fileKey, intentKey);
-      throw new BadRequestException(CERTIFICATION_FILE_MISMATCH);
-    }
-    await this.insertOnce({
-      id: uploadId,
-      instructor_id: instructor.id,
-      org: intent.org,
-      track: intent.track,
-      file_key: fileKey,
-      sha256: digest.sha256,
-      content_type: intent.contentType,
-      size_bytes: digest.sizeBytes,
-      valid_until: intent.validUntil,
-    });
-    await this.discard(intentKey);
-    return this.present(instructor, uploadId, today);
-  }
-
-  private async insertOnce(row: NewCertificationUploadRow): Promise<void> {
+    let bytes: Buffer | null;
     try {
-      await this.uploads.insert(row);
-    } catch (err) {
-      if (!hasCode(err, PG_UNIQUE_VIOLATION)) {
-        throw err;
-      }
-    }
-  }
-
-  private fileKey(intent: CertificationUploadIntent): string {
-    return storageKeys.instructorCertification(
-      intent.instructorId,
-      intent.uploadId,
-      CERTIFICATION_FILE_EXTENSIONS[intent.contentType],
-    );
-  }
-
-  private async digest(
-    fileKey: string,
-    intentKey: string,
-  ): Promise<StreamDigest> {
-    try {
-      const stream = await this.storage.getStream(
-        fileKey,
-        MAX_CERTIFICATION_BYTES,
-      );
-      if (!stream) {
-        throw new BadRequestException(CERTIFICATION_FILE_MISSING);
-      }
-      return await digestStream(stream);
+      bytes = await this.storage.getBuffer(stagingKey, MAX_CERTIFICATION_BYTES);
     } catch (err) {
       if (err instanceof ObjectTooLargeError) {
-        await this.discard(fileKey, intentKey);
+        await this.discard(stagingKey, intentKey);
         throw new BadRequestException(CERTIFICATION_FILE_TOO_LARGE);
       }
       throw err;
     }
+    if (!bytes) {
+      throw new BadRequestException(CERTIFICATION_FILE_MISSING);
+    }
+    if (
+      bytes.length !== intent.contentLength ||
+      !matchesSignature(intent.contentType, bytes)
+    ) {
+      await this.discard(stagingKey, intentKey);
+      throw new BadRequestException(CERTIFICATION_FILE_MISMATCH);
+    }
+    return bytes;
+  }
+
+  private async insertOnce(row: NewCertificationUploadRow): Promise<boolean> {
+    try {
+      await this.uploads.insert(row);
+      return true;
+    } catch (err) {
+      if (!hasCode(err, PG_UNIQUE_VIOLATION)) {
+        throw err;
+      }
+      return false;
+    }
+  }
+
+  private stagingKey(intent: CertificationUploadIntent): string {
+    return storageKeys.instructorCertificationStaging(
+      intent.instructorId,
+      intent.uploadId,
+      CERTIFICATION_FILE_EXTENSIONS[intent.contentType],
+    );
   }
 
   private async present(

@@ -7,13 +7,21 @@ export const storageKeys = {
   /** Signed, flattened copy of an instructor's assignment. */
   instructorDocument: (instructorId: string, assignmentId: string) =>
     `subjects/instructor/${instructorId}/documents/${assignmentId}.pdf`,
-  /** Uploaded certification proof. */
+  /** Confirmed certification proof, written by the API from checked bytes and never presigned for upload. */
   instructorCertification: (
+    instructorId: string,
+    uploadId: string,
+    sha256: string,
+    extension: string,
+  ) =>
+    `subjects/instructor/${instructorId}/certifications/${uploadId}-${sha256}.${extension}`,
+  /** Raw instructor upload behind the presigned PUT, copied to `instructorCertification` on confirm. */
+  instructorCertificationStaging: (
     instructorId: string,
     uploadId: string,
     extension: string,
   ) =>
-    `subjects/instructor/${instructorId}/certifications/${uploadId}.${extension}`,
+    `subjects/instructor/${instructorId}/certifications/staging/${uploadId}.${extension}`,
   /** What the instructor declared when asking for a certification upload URL, read back on confirm. */
   instructorCertificationIntent: (instructorId: string, uploadId: string) =>
     `subjects/instructor/${instructorId}/certifications/${uploadId}.intent.json`,

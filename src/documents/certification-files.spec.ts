@@ -1,8 +1,5 @@
-import { createHash } from 'node:crypto';
-import { Readable } from 'node:stream';
 import {
   CERTIFICATION_CONTENT_TYPES,
-  digestStream,
   isCertificationContentType,
   matchesSignature,
   mediaType,
@@ -35,22 +32,4 @@ describe('certification files', () => {
       }
     },
   );
-
-  it('hashes and sizes a chunked stream and keeps the leading bytes', async () => {
-    const body = Buffer.concat([
-      FILE_SAMPLES['image/png'],
-      Buffer.alloc(5000, 7),
-    ]);
-    const chunks = [body.subarray(0, 3), body.subarray(3, 9), body.subarray(9)];
-    const digest = await digestStream(Readable.from(chunks));
-    expect(digest.sha256).toBe(createHash('sha256').update(body).digest('hex'));
-    expect(digest.sizeBytes).toBe(body.length);
-    expect(digest.head).toEqual(body.subarray(0, 12));
-  });
-
-  it('digests an empty stream', async () => {
-    const digest = await digestStream(Readable.from([]));
-    expect(digest.sizeBytes).toBe(0);
-    expect(digest.head.length).toBe(0);
-  });
 });

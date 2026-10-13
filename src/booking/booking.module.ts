@@ -12,6 +12,8 @@ import {
 } from './booking.repository';
 import { BookingService } from './booking.service';
 import { BookingSettingsService } from './booking-settings.service';
+import { CalendarSyncService } from './calendar-sync.service';
+import { CalendarSyncWorker } from './calendar-sync.worker';
 
 @Module({
   imports: [GoogleModule],
@@ -23,6 +25,8 @@ import { BookingSettingsService } from './booking-settings.service';
     BookingSettingsService,
     AvailabilityService,
     BookingService,
+    CalendarSyncService,
+    CalendarSyncWorker,
   ],
 })
 export class BookingModule {}

@@ -10,9 +10,15 @@ import {
   type CalendarLinkRow,
   type ClassBooking,
   type ClassRebooking,
+  type EventDeletionRow,
   type SeriesBooking,
+  type SyncCandidateRow,
+  type SyncFinish,
+  type SyncResult,
 } from '../../src/booking/booking.repository';
+import { classEventId } from '../../src/booking/calendar-sync.service';
 import { DatabaseError } from '../../src/database/db-result';
+import { GoogleApiError } from '../../src/google/google.errors';
 import type {
   FreeBusyResult,
   GoogleCalendar,
@@ -64,6 +70,7 @@ export function bookingSupabase(
       'order',
       'limit',
       'update',
+      'delete',
       'maybeSingle',
     ]) {
       b[op] = (...args: unknown[]) => {
@@ -130,30 +137,49 @@ export function fakeBookingGoogle(
         })),
       }),
   );
-  const insertEvent = jest.fn((_calendarId: string, event: GoogleEventInput) =>
-    Promise.resolve({
-      id: nextEventId(),
-      status: 'confirmed',
-      htmlLink: null,
-      summary: event.summary ?? null,
-      start: event.start ?? null,
-      end: event.end ?? null,
-      ssmsClassId: event.ssmsClassId ?? null,
-    }),
+  const events = new Map<string, GoogleEventInput>();
+  const key = (calendarId: string, eventId: string) =>
+    `${calendarId}/${eventId}`;
+  const toEvent = (eventId: string, event: GoogleEventInput) => ({
+    id: eventId,
+    status: 'confirmed',
+    htmlLink: null,
+    summary: event.summary ?? null,
+    start: event.start ?? null,
+    end: event.end ?? null,
+    ssmsClassId: event.ssmsClassId ?? null,
+  });
+  const insertEvent = jest.fn(
+    (
+      calendarId: string,
+      event: GoogleEventInput,
+      options: { eventId?: string } = {},
+    ) => {
+      const eventId = options.eventId ?? nextEventId();
+      if (events.has(key(calendarId, eventId))) {
+        return Promise.reject(
+          new GoogleApiError(409, 'duplicate', 'Event id already exists'),
+        );
+      }
+      events.set(key(calendarId, eventId), event);
+      return Promise.resolve(toEvent(eventId, event));
+    },
   );
   const patchEvent = jest.fn(
-    (_calendarId: string, eventId: string, event: GoogleEventInput) =>
-      Promise.resolve({
-        id: eventId,
-        status: 'confirmed',
-        htmlLink: null,
-        summary: event.summary ?? null,
-        start: event.start ?? null,
-        end: event.end ?? null,
-        ssmsClassId: event.ssmsClassId ?? null,
-      }),
+    (calendarId: string, eventId: string, event: GoogleEventInput) => {
+      const current = events.get(key(calendarId, eventId));
+      if (!current) {
+        return Promise.reject(new GoogleApiError(404, 'notFound', 'Not Found'));
+      }
+      const merged = { ...current, ...event };
+      events.set(key(calendarId, eventId), merged);
+      return Promise.resolve(toEvent(eventId, merged));
+    },
   );
-  const deleteEvent = jest.fn(() => Promise.resolve());
+  const deleteEvent = jest.fn((calendarId: string, eventId: string) => {
+    events.delete(key(calendarId, eventId));
+    return Promise.resolve();
+  });
   return {
     client: {
       isConnected,
@@ -165,6 +191,7 @@ export function fakeBookingGoogle(
     } as unknown as GoogleCalendarClient,
     busy,
     calendarErrors,
+    events,
     isConnected,
     listCalendars,
     freeBusy,
@@ -268,7 +295,11 @@ export class InMemoryBookingRepository extends BookingRepository {
   classes: (ClassRow & { series_id: string | null; customer_ids: string[] })[] =
     [];
   series: SeriesBooking[] = [];
+  deletions: EventDeletionRow[] = [];
   failNext?: DatabaseError;
+  now: () => number = () => Date.parse('2026-12-10T17:00:00.000Z');
+  private tick = 0;
+  private deletionSeq = 0;
 
   getSettings(): Promise<BookingSettingsRow> {
     return Promise.resolve({ ...this.settings });
@@ -380,10 +411,11 @@ export class InMemoryBookingRepository extends BookingRepository {
           ends_at: c.ends_at,
           status: c.status,
           google_calendar_id: c.google_calendar_id,
-          google_event_id: c.google_event_id,
+          google_sync_status: c.google_calendar_id ? 'pending' : 'ok',
           notes: c.notes,
           series_id: series?.id ?? null,
           customer_ids: c.customer_ids,
+          updated_at: this.stamp(),
         }),
       );
     }
@@ -408,10 +440,26 @@ export class InMemoryBookingRepository extends BookingRepository {
     if (!row) {
       throw new DatabaseError('move class', 'P0002', 'not found or cancelled');
     }
+    const calendar = rebooking.google_calendar_id;
+    const drop =
+      row.google_calendar_id !== null && row.google_calendar_id !== calendar;
+    if (drop) {
+      this.queueDeletion(
+        row.google_calendar_id!,
+        row.google_event_id ?? classEventId(row.id, row.google_event_seq),
+        row.id,
+      );
+      row.google_event_id = null;
+      row.google_event_seq += 1;
+    }
     Object.assign(row, rebooking);
+    if (calendar !== null || drop) {
+      this.markPending(row);
+    }
     if (customerIds) {
       row.customer_ids = customerIds;
     }
+    row.updated_at = this.stamp();
     return Promise.resolve();
   }
 
@@ -424,12 +472,179 @@ export class InMemoryBookingRepository extends BookingRepository {
     if (row.status === 'cancelled' && status !== 'cancelled') {
       this.assertFree(row.instructor_id, row.starts_at, row.ends_at, id);
     }
-    row.status = status;
-    if (status === 'cancelled') {
-      row.google_calendar_id = null;
+    if (status === 'cancelled' && row.status !== 'cancelled') {
+      const drop = row.google_calendar_id !== null;
+      if (drop) {
+        this.queueDeletion(
+          row.google_calendar_id!,
+          row.google_event_id ?? classEventId(row.id, row.google_event_seq),
+          row.id,
+        );
+        row.google_event_seq += 1;
+      }
       row.google_event_id = null;
+      this.markPending(row);
+      row.google_sync_status = drop ? 'pending' : 'ok';
+    } else if (row.status === 'cancelled' && status !== 'cancelled') {
+      this.markPending(row);
+      row.google_sync_status = row.google_calendar_id ? 'pending' : 'ok';
+    }
+    row.status = status;
+    row.updated_at = this.stamp();
+    return Promise.resolve();
+  }
+
+  finishSync(
+    id: string,
+    version: string,
+    result: SyncResult,
+  ): Promise<SyncFinish> {
+    this.throwIfFailing();
+    const row = this.classes.find((c) => c.id === id);
+    if (result.eventId !== null) {
+      if (
+        row &&
+        row.status !== 'cancelled' &&
+        row.google_calendar_id === result.calendarId &&
+        (row.google_event_id ?? result.eventId) === result.eventId
+      ) {
+        row.google_event_id = result.eventId;
+      } else {
+        this.queueDeletion(result.calendarId!, result.eventId, row ? id : null);
+      }
+    }
+    if (!row) {
+      return Promise.resolve('missing');
+    }
+    if (row.updated_at !== version) {
+      return Promise.resolve('stale');
+    }
+    if (result.error === null) {
+      row.google_sync_status = 'ok';
+      row.google_sync_error = null;
+      row.google_sync_attempts = 0;
+      row.google_synced_at = new Date(this.now()).toISOString();
+    } else {
+      row.google_sync_status = 'failed';
+      row.google_sync_error = result.error;
+      row.google_sync_attempts += 1;
+    }
+    row.updated_at = this.stamp();
+    return Promise.resolve(result.error === null ? 'ok' : 'failed');
+  }
+
+  classDeletions(classId: string): Promise<EventDeletionRow[]> {
+    return Promise.resolve(
+      this.deletions
+        .filter((d) => d.class_id === classId)
+        .map((d) => ({ ...d })),
+    );
+  }
+
+  openDeletions(
+    maxAttempts: number,
+    limit: number,
+  ): Promise<EventDeletionRow[]> {
+    return Promise.resolve(
+      this.deletions
+        .filter((d) => d.attempts < maxAttempts)
+        .slice(0, limit)
+        .map((d) => ({ ...d })),
+    );
+  }
+
+  stuckDeletions(limit: number): Promise<EventDeletionRow[]> {
+    return Promise.resolve(
+      this.deletions
+        .filter((d) => d.attempts > 0)
+        .slice(0, limit)
+        .map((d) => ({ ...d })),
+    );
+  }
+
+  completeDeletion(id: string): Promise<void> {
+    this.deletions = this.deletions.filter((d) => d.id !== id);
+    return Promise.resolve();
+  }
+
+  failDeletion(
+    row: EventDeletionRow,
+    error: string,
+    at: string,
+  ): Promise<void> {
+    const stored = this.deletions.find((d) => d.id === row.id);
+    if (stored) {
+      stored.attempts = row.attempts + 1;
+      stored.last_error = error;
+      stored.last_attempt_at = at;
     }
     return Promise.resolve();
+  }
+
+  classesToSync(
+    maxAttempts: number,
+    limit: number,
+  ): Promise<SyncCandidateRow[]> {
+    return Promise.resolve(
+      this.classes
+        .filter(
+          (c) =>
+            c.google_sync_status !== 'ok' &&
+            c.google_sync_attempts < maxAttempts,
+        )
+        .sort((a, b) => a.updated_at.localeCompare(b.updated_at))
+        .slice(0, limit)
+        .map((c) => ({
+          id: c.id,
+          google_sync_attempts: c.google_sync_attempts,
+          updated_at: c.updated_at,
+        })),
+    );
+  }
+
+  failedClasses(limit: number): Promise<ClassRow[]> {
+    return Promise.resolve(
+      this.classes
+        .filter((c) => c.google_sync_status === 'failed')
+        .slice(0, limit)
+        .map((c) => this.hydrate(c)),
+    );
+  }
+
+  queueDeletion(
+    calendarId: string,
+    eventId: string,
+    classId: string | null,
+  ): void {
+    if (
+      this.deletions.some(
+        (d) =>
+          d.google_calendar_id === calendarId && d.google_event_id === eventId,
+      )
+    ) {
+      return;
+    }
+    this.deletions.push({
+      id: `del-${++this.deletionSeq}`,
+      google_calendar_id: calendarId,
+      google_event_id: eventId,
+      class_id: classId,
+      attempts: 0,
+      last_error: null,
+      last_attempt_at: null,
+      created_at: new Date(this.now()).toISOString(),
+    });
+  }
+
+  private markPending(row: ClassRow): void {
+    row.google_sync_status = 'pending';
+    row.google_sync_error = null;
+    row.google_sync_attempts = 0;
+  }
+
+  private stamp(): string {
+    const micros = String(++this.tick % 1000).padStart(3, '0');
+    return new Date(this.now()).toISOString().replace('Z', `${micros}+00:00`);
   }
 
   seed(
@@ -449,6 +664,11 @@ export class InMemoryBookingRepository extends BookingRepository {
       source: 'ssms',
       google_calendar_id: null,
       google_event_id: null,
+      google_event_seq: 0,
+      google_sync_status: 'ok',
+      google_sync_error: null,
+      google_sync_attempts: 0,
+      google_synced_at: null,
       notes: null,
       created_at: '2026-10-01T00:00:00.000Z',
       updated_at: '2026-10-01T00:00:00.000Z',

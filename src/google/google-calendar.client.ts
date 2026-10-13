@@ -196,8 +196,9 @@ export class GoogleCalendarClient {
   async insertEvent(
     calendarId: string,
     event: GoogleEventInput,
+    options: { eventId?: string } = {},
   ): Promise<GoogleEvent> {
-    const eventId = newEventId();
+    const eventId = options.eventId ?? newEventId();
     const { status, attempts, body } = await this.api<EventResource>(
       {
         method: 'POST',

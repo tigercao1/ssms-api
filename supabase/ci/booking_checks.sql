@@ -61,6 +61,14 @@ begin
   if (select count(*) from class_participants where customer_id = '33333333-3333-4333-8333-333333333341') <> 2 then
     raise exception 'book_classes did not add participants';
   end if;
+  if (select google_sync_status || '/' || google_calendar_id || '/' || coalesce(google_event_id, '-')
+        from classes where id = '55555555-5555-4555-8555-555555555561') <> 'pending/cal/-' then
+    raise exception 'book_classes did not leave the calendar class pending without an event';
+  end if;
+  if (select google_sync_status || '/' || coalesce(google_calendar_id, '-')
+        from classes where id = '55555555-5555-4555-8555-555555555562') <> 'ok/-' then
+    raise exception 'book_classes marked a class without a calendar for sync';
+  end if;
 
   perform book_classes(null, jsonb_build_array(
     jsonb_build_object('id', '55555555-5555-4555-8555-555555555563', 'instructor_id', i,
@@ -121,11 +129,112 @@ begin
     raise exception 'rebook_class did not replace participants';
   end if;
 
-  perform set_class_status('55555555-5555-4555-8555-555555555561', 'cancelled');
-  if (select status || coalesce(google_event_id, '-') from classes where id = '55555555-5555-4555-8555-555555555561')
-     <> 'cancelled-' then
-    raise exception 'cancelling did not clear the Google event';
+  if (select google_sync_status from classes where id = '55555555-5555-4555-8555-555555555561') <> 'pending' then
+    raise exception 'rebook_class did not mark the calendar class pending';
   end if;
+end
+$$;
+
+do $$
+declare
+  c constant uuid := '55555555-5555-4555-8555-555555555561';
+  i constant uuid := '22222222-2222-4222-8222-222222222231';
+  lt constant uuid := '44444444-4444-4444-8444-444444444451';
+  v timestamptz;
+  r text;
+begin
+  if class_google_event_id('c0000000-0000-4000-8000-000000000001', 2)
+     <> 'ssmsc00000000000400080000000000000012' then
+    raise exception 'class_google_event_id has the wrong shape';
+  end if;
+
+  select updated_at into v from classes where id = c;
+  r := finish_class_google_sync(c, v - interval '1 second', 'cal', 'ev1', null);
+  if r <> 'stale' or (select google_sync_status from classes where id = c) <> 'pending' then
+    raise exception 'a stale sync result changed the sync status';
+  end if;
+  if (select google_event_id from classes where id = c) <> 'ev1' then
+    raise exception 'a stale sync result did not keep the created event id';
+  end if;
+
+  select updated_at into v from classes where id = c;
+  r := finish_class_google_sync(c, v, 'cal', 'ev1', '503:backendError');
+  if r <> 'failed'
+     or (select google_sync_status || '/' || google_sync_attempts || '/' || google_sync_error from classes where id = c)
+        <> 'failed/1/503:backendError' then
+    raise exception 'a failed sync was not recorded';
+  end if;
+
+  select updated_at into v from classes where id = c;
+  r := finish_class_google_sync(c, v, 'cal', 'ev1', null);
+  if r <> 'ok'
+     or (select google_sync_status || '/' || google_sync_attempts || '/' || coalesce(google_sync_error, '-') from classes where id = c)
+        <> 'ok/0/-'
+     or (select google_synced_at from classes where id = c) is null then
+    raise exception 'a successful sync was not recorded';
+  end if;
+
+  perform rebook_class(c,
+    jsonb_build_object('instructor_id', i, 'lesson_type_id', lt,
+      'starts_at', '2026-12-12 09:30-05', 'ends_at', '2026-12-12 10:30-05',
+      'google_calendar_id', 'cal2', 'notes', 'moved'), null);
+  if not exists (select 1 from google_event_deletions
+                  where google_calendar_id = 'cal' and google_event_id = 'ev1' and class_id = c) then
+    raise exception 'moving to another calendar did not queue the old event';
+  end if;
+  if (select google_sync_status || '/' || google_calendar_id || '/' || coalesce(google_event_id, '-') || '/' || google_event_seq
+        from classes where id = c) <> 'pending/cal2/-/1' then
+    raise exception 'moving to another calendar did not reset the event';
+  end if;
+
+  select updated_at into v from classes where id = c;
+  r := finish_class_google_sync(c, v, 'cal', 'late', null);
+  if not exists (select 1 from google_event_deletions where google_calendar_id = 'cal' and google_event_id = 'late')
+     or (select google_event_id from classes where id = c) is not null then
+    raise exception 'an event created on the old calendar was not queued for deletion';
+  end if;
+
+  perform set_class_status(c, 'cancelled');
+  if (select status || '/' || coalesce(google_event_id, '-') || '/' || google_sync_status || '/' || google_event_seq
+        from classes where id = c) <> 'cancelled/-/pending/2' then
+    raise exception 'cancelling did not clear the Google event and mark the class pending';
+  end if;
+  if not exists (select 1 from google_event_deletions
+                  where google_calendar_id = 'cal2' and google_event_id = class_google_event_id(c, 1)) then
+    raise exception 'cancelling did not queue the possibly created event';
+  end if;
+
+  select updated_at into v from classes where id = c;
+  r := finish_class_google_sync(c, v, 'cal2', 'oncancelled', null);
+  if not exists (select 1 from google_event_deletions where google_event_id = 'oncancelled' and class_id = c)
+     or (select google_sync_status from classes where id = c) <> 'ok' then
+    raise exception 'an event created for a cancelled class was not queued for deletion';
+  end if;
+
+  r := finish_class_google_sync('55555555-5555-4555-8555-555555555598', now(), 'cal', 'orphan', null);
+  if r <> 'missing'
+     or not exists (select 1 from google_event_deletions where google_event_id = 'orphan' and class_id is null) then
+    raise exception 'an event for a missing class was not queued for deletion';
+  end if;
+
+  perform book_classes(null, jsonb_build_array(
+    jsonb_build_object('id', '55555555-5555-4555-8555-555555555568', 'instructor_id', i,
+      'lesson_type_id', lt, 'starts_at', '2026-12-14 09:00-05', 'ends_at', '2026-12-14 10:00-05',
+      'google_calendar_id', 'cal3')));
+  perform set_class_status('55555555-5555-4555-8555-555555555568', 'cancelled');
+  perform set_class_status('55555555-5555-4555-8555-555555555568', 'scheduled');
+  if (select status || '/' || google_sync_status || '/' || google_calendar_id || '/' || google_event_seq
+        from classes where id = '55555555-5555-4555-8555-555555555568') <> 'scheduled/pending/cal3/1' then
+    raise exception 'restoring a calendar class did not mark it pending for a new event';
+  end if;
+end
+$$;
+
+do $$
+declare
+  i constant uuid := '22222222-2222-4222-8222-222222222231';
+  lt constant uuid := '44444444-4444-4444-8444-444444444451';
+begin
 
   begin
     perform rebook_class('55555555-5555-4555-8555-555555555561',
@@ -163,7 +272,7 @@ declare
   f text;
   r text;
 begin
-  foreach t in array array['class_series', 'booking_settings'] loop
+  foreach t in array array['class_series', 'booking_settings', 'google_event_deletions'] loop
     if not exists (
       select 1 from pg_class
        where oid = ('public.' || t)::regclass and relrowsecurity and relforcerowsecurity
@@ -176,7 +285,8 @@ begin
       end if;
     end loop;
   end loop;
-  foreach f in array array['book_classes(jsonb, jsonb)', 'rebook_class(uuid, jsonb, jsonb)', 'set_class_status(uuid, text)'] loop
+  foreach f in array array['book_classes(jsonb, jsonb)', 'rebook_class(uuid, jsonb, jsonb)', 'set_class_status(uuid, text)',
+                           'class_google_event_id(uuid, int)', 'finish_class_google_sync(uuid, timestamptz, text, text, text)'] loop
     foreach r in array array['anon', 'authenticated'] loop
       if has_function_privilege(r, 'public.' || f, 'execute') then
         raise exception '% can execute %', r, f;

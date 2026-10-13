@@ -50,6 +50,7 @@ export const AUDIT_ACTIONS = {
   bookingClassUpdate: 'booking.class_update',
   bookingClassCancel: 'booking.class_cancel',
   bookingClassStatus: 'booking.class_status',
+  bookingClassSyncRetry: 'booking.class_sync_retry',
   bookingSettingsUpdate: 'booking.settings_update',
   payrollSettingsUpdate: 'payroll.settings_update',
   payrollAdjustmentCreate: 'payroll.adjustment_create',

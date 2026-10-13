@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import {
@@ -31,7 +32,7 @@ import {
   GoogleNotConnectedError,
 } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
-import type { AdminClass } from '../lessons/classes.service';
+import type { GoogleEventInput } from '../google/google.types';
 import { GOOGLE_NOT_CONNECTED } from '../google/google-error.filter';
 import { type Availability, AvailabilityService } from './availability.service';
 import {
@@ -45,7 +46,6 @@ import {
   CLASS_CANCELLED,
   CUSTOMER_NOT_FOUND,
   FUTURE_STATUS,
-  GOOGLE_WRITE_FAILED,
   INSTRUCTOR_BUSY,
   INSTRUCTOR_NOT_BOOKABLE,
   INSTRUCTOR_NOT_FOUND,
@@ -55,7 +55,18 @@ import {
   PAST_REPEAT,
   type BookingConflict,
   BookingService,
+  type SyncIssues,
 } from './booking.service';
+import {
+  type BookedClass,
+  CalendarSyncService,
+  classEventId,
+} from './calendar-sync.service';
+import {
+  CALENDAR_SYNC_FLAG,
+  CalendarSyncWorker,
+  MAX_CALENDAR_SYNC_ATTEMPTS,
+} from './calendar-sync.worker';
 import {
   BookingSettingsService,
   SETTINGS_OVERRIDE_INVALID,
@@ -71,6 +82,8 @@ async function build(google = fakeBookingGoogle()) {
   const repo = new InMemoryBookingRepository();
   const audit = recordingAudit();
   const clock = { value: NOW, now: () => clock.value };
+  repo.now = clock.now;
+  const env: Record<string, string> = {};
   const app = await startAdminApp(
     Test.createTestingModule({
       controllers: [BookingController],
@@ -79,18 +92,28 @@ async function build(google = fakeBookingGoogle()) {
         AvailabilityService,
         BookingSettingsService,
         BookingCalendarsService,
+        CalendarSyncService,
+        CalendarSyncWorker,
         { provide: BookingRepository, useValue: repo },
         { provide: BOOKING_CLOCK, useValue: clock },
         { provide: GoogleCalendarClient, useValue: google.client },
         { provide: AuditService, useValue: audit },
+        {
+          provide: ConfigService,
+          useValue: { get: (key: string) => env[key] },
+        },
       ],
     }),
   );
-  return { app, repo, audit, google, clock };
+  const reconciler = () => {
+    env[CALENDAR_SYNC_FLAG] = 'true';
+    return app.get(CalendarSyncWorker);
+  };
+  return { app, repo, audit, google, clock, env, reconciler };
 }
 
-const one = (res: request.Response) => res.body as AdminClass;
-const many = (res: request.Response) => res.body as AdminClass[];
+const one = (res: request.Response) => res.body as BookedClass;
+const many = (res: request.Response) => res.body as BookedClass[];
 const avail = (res: request.Response) => res.body as Availability;
 const err = (res: request.Response) =>
   res.body as { message: string; conflicts: BookingConflict[] };
@@ -134,6 +157,8 @@ describe('booking admin HTTP', () => {
         (r) => r.post(`/admin/booking/classes/${UNKNOWN_ID}/status`).send({}),
       ],
       ['GET last', (r) => r.get(`/admin/booking/customers/${UNKNOWN_ID}/last`)],
+      ['POST sync', (r) => r.post(`/admin/booking/classes/${UNKNOWN_ID}/sync`)],
+      ['GET sync issues', (r) => r.get('/admin/booking/sync-issues')],
     ];
 
     it.each(routes)('%s → 401 without a token', async (_name, send) => {
@@ -558,14 +583,20 @@ describe('booking admin HTTP', () => {
         locationName: 'Blue Mountain',
         notes: 'bring poles',
         googleCalendarId: AMY_CAL,
+        googleEventId: classEventId(created.id, 0),
+        googleSyncStatus: 'ok',
+        googleSyncedAt: new Date(NOW).toISOString(),
+        calendarSync: 'ok',
+        calendarSyncError: null,
       });
-      expect(created.googleEventId).toEqual(expect.any(String));
       expect(
         created.participants.map((p: { customerId: string }) => p.customerId),
       ).toEqual([MEI_ID, LEO_ID]);
       expect(ctx.google.insertEvent).toHaveBeenCalledTimes(1);
-      const [calendarId, event] = ctx.google.insertEvent.mock.calls[0];
+      const [calendarId, event, options] = ctx.google.insertEvent.mock.calls[0];
       expect(calendarId).toBe(AMY_CAL);
+      expect(options).toEqual({ eventId: classEventId(created.id, 0) });
+      expect(ctx.google.events.size).toBe(1);
       expect(event).toEqual({
         summary: 'Private 1h · Mei, Leo',
         description:
@@ -679,48 +710,111 @@ describe('booking admin HTTP', () => {
       expect(ctx.google.insertEvent).not.toHaveBeenCalled();
     });
 
-    it('rolls back earlier Google events and returns 502 when Google fails', async () => {
+    it('saves the class as failed when Google refuses the event, and the reconciler fixes it', async () => {
+      ctx.google.insertEvent.mockRejectedValueOnce(
+        new GoogleApiError(503, 'backendError', 'down'),
+      );
+      const res = await post(booking()).expect(201);
+      const [created] = many(res);
+      expect(created).toMatchObject({
+        status: 'scheduled',
+        googleCalendarId: AMY_CAL,
+        googleEventId: null,
+        googleSyncStatus: 'failed',
+        googleSyncAttempts: 1,
+        calendarSync: 'failed',
+        calendarSyncError: '503:backendError',
+      });
+      expect(ctx.repo.classes).toHaveLength(1);
+      expect(ctx.audit.entries).toHaveLength(1);
+
+      const reconciler = ctx.reconciler();
+      expect(await reconciler.tick()).toEqual({ classes: 0, deletions: 0 });
+      ctx.clock.value += 2 * 60_000;
+      expect(await reconciler.tick()).toEqual({ classes: 1, deletions: 0 });
+      expect(ctx.repo.classes[0]).toMatchObject({
+        google_sync_status: 'ok',
+        google_sync_attempts: 0,
+        google_event_id: classEventId(created.id, 0),
+      });
+      expect(ctx.google.events.size).toBe(1);
+    });
+
+    it('patches instead of duplicating when an insert timed out after Google created the event', async () => {
+      ctx.google.insertEvent.mockImplementationOnce(
+        (calendarId: string, event: GoogleEventInput, options) => {
+          ctx.google.events.set(`${calendarId}/${options!.eventId!}`, event);
+          return Promise.reject(
+            new GoogleApiError(undefined, undefined, 'timed out'),
+          );
+        },
+      );
+      const [created] = many(await post(booking()).expect(201));
+      expect(created).toMatchObject({
+        calendarSync: 'failed',
+        calendarSyncError: 'network',
+      });
+
+      const res = await http()
+        .post(`/admin/booking/classes/${created.id}/sync`)
+        .set('Authorization', admin)
+        .expect(200);
+      const eventId = classEventId(created.id, 0);
+      expect(one(res)).toMatchObject({
+        googleEventId: eventId,
+        calendarSync: 'ok',
+        calendarSyncError: null,
+      });
+      expect(ctx.google.insertEvent.mock.calls.map((c) => c[2])).toEqual([
+        { eventId },
+        { eventId },
+      ]);
+      expect(ctx.google.patchEvent).toHaveBeenCalledWith(
+        AMY_CAL,
+        eventId,
+        expect.objectContaining({ summary: 'Private 1h · Mei' }),
+      );
+      expect([...ctx.google.events.keys()]).toEqual([`${AMY_CAL}/${eventId}`]);
+      expect(ctx.audit.entries[1]).toMatchObject({
+        action: 'booking.class_sync_retry',
+        targetId: created.id,
+        metadata: { from: 'failed', attempts: 1, result: 'ok', error: null },
+      });
+    });
+
+    it('saves every occurrence of a series and flags only the ones Google refused', async () => {
       ctx.google.insertEvent
-        .mockResolvedValueOnce({
-          id: 'first',
-          status: null,
-          htmlLink: null,
-          summary: null,
-          start: null,
-          end: null,
-          ssmsClassId: null,
-        })
+        .mockImplementationOnce(ctx.google.insertEvent.getMockImplementation()!)
         .mockRejectedValueOnce(new GoogleApiError(403, 'forbidden', 'nope'));
       const res = await post(
-        booking({ repeat: { weekly: true, count: 2 } }),
-      ).expect(502);
-      expect(res.body).toMatchObject({
-        message: GOOGLE_WRITE_FAILED,
-        googleStatus: 403,
-        googleReason: 'forbidden',
-      });
-      expect(ctx.google.deleteEvent).toHaveBeenCalledWith(AMY_CAL, 'first');
-      expect(ctx.repo.classes).toEqual([]);
-      expect(ctx.audit.entries).toEqual([]);
+        booking({ repeat: { weekly: true, count: 3 } }),
+      ).expect(201);
+      expect(
+        many(res).map((c) => [c.calendarSync, c.calendarSyncError]),
+      ).toEqual([
+        ['ok', null],
+        ['failed', '403:forbidden'],
+        ['ok', null],
+      ]);
+      expect(ctx.repo.classes).toHaveLength(3);
+      expect(ctx.google.events.size).toBe(2);
+      expect(ctx.audit.entries).toHaveLength(1);
     });
 
-    it('deletes the new Google events when the database refuses the booking', async () => {
-      ctx.repo.failNext = new DatabaseError('book classes', 'SB409', 'raced');
-      const res = await post(booking()).expect(409);
-      expect(err(res).message).toBe(INSTRUCTOR_BUSY);
-      const eventId = (
-        (await ctx.google.insertEvent.mock.results[0].value) as { id: string }
-      ).id;
-      expect(ctx.google.deleteEvent).toHaveBeenCalledWith(AMY_CAL, eventId);
-    });
-
-    it('still reports the database error when cleaning up Google fails', async () => {
-      ctx.repo.failNext = new DatabaseError('book classes', '23503', 'fk');
-      ctx.google.deleteEvent.mockRejectedValueOnce(
-        new GoogleApiError(500, 'backendError', 'down'),
-      );
-      await post(booking()).expect(400);
-    });
+    it.each([
+      ['SB409', 409],
+      ['23503', 400],
+    ])(
+      'never writes to Google when the booking RPC fails with %s',
+      async (code, statusCode) => {
+        ctx.repo.failNext = new DatabaseError('book classes', code, 'refused');
+        await post(booking()).expect(statusCode);
+        expect(ctx.google.insertEvent).not.toHaveBeenCalled();
+        expect(ctx.google.patchEvent).not.toHaveBeenCalled();
+        expect(ctx.google.deleteEvent).not.toHaveBeenCalled();
+        expect(ctx.repo.classes).toEqual([]);
+      },
+    );
 
     it('needs a confirmed, writable calendar to write the event', async () => {
       for (const instructorId of [CAL_ID, DEV_ID]) {
@@ -734,8 +828,10 @@ describe('booking admin HTTP', () => {
         booking({ instructorId: CAL_ID, addToCalendar: false }),
       ).expect(201);
       expect(many(res)[0]).toMatchObject({
+        googleCalendarId: null,
         googleEventId: null,
         status: 'scheduled',
+        calendarSync: 'ok',
       });
       expect(ctx.google.insertEvent).not.toHaveBeenCalled();
     });
@@ -857,8 +953,9 @@ describe('booking admin HTTP', () => {
         .set('Authorization', admin)
         .send(body);
 
-    const withEvent = () =>
-      ctx.repo.add({
+    const withEvent = () => {
+      ctx.google.events.set(`${AMY_CAL}/evA`, { summary: 'old' });
+      return ctx.repo.add({
         id: CLASS_A,
         starts_at: '2026-12-12T15:00:00.000Z',
         ends_at: '2026-12-12T16:00:00.000Z',
@@ -866,6 +963,7 @@ describe('booking admin HTTP', () => {
         google_event_id: 'evA',
         customer_ids: [MEI_ID],
       });
+    };
 
     it('moves a booked lesson and patches its Google event, ignoring its own busy block', async () => {
       withEvent();
@@ -881,6 +979,7 @@ describe('booking admin HTTP', () => {
         endsAt: '2026-12-12T16:30:00.000Z',
         notes: 'moved',
         googleEventId: 'evA',
+        calendarSync: 'ok',
       });
       expect(ctx.google.patchEvent).toHaveBeenCalledWith(
         AMY_CAL,
@@ -939,19 +1038,54 @@ describe('booking admin HTTP', () => {
     it('moves the Google event when the instructor changes', async () => {
       withEvent();
       const res = await patch(CLASS_A, { instructorId: BEN_ID }).expect(200);
+      const eventId = classEventId(CLASS_A, 1);
       expect(res.body).toMatchObject({
         instructorId: BEN_ID,
         googleCalendarId: BEN_CAL,
+        googleEventId: eventId,
+        calendarSync: 'ok',
       });
-      expect(one(res).googleEventId).not.toBe('evA');
-      expect(ctx.google.insertEvent).toHaveBeenCalledWith(
-        BEN_CAL,
-        expect.anything(),
-      );
       expect(ctx.google.deleteEvent).toHaveBeenCalledWith(AMY_CAL, 'evA');
+      expect([...ctx.google.events.keys()]).toEqual([`${BEN_CAL}/${eventId}`]);
+      expect(ctx.repo.deletions).toEqual([]);
       expect(ctx.audit.entries[0].metadata).toMatchObject({
         googleEvent: 'moved',
       });
+    });
+
+    it('queues the old event when its deletion fails and the reconciler retries it', async () => {
+      withEvent();
+      ctx.google.deleteEvent.mockRejectedValueOnce(
+        new GoogleApiError(500, 'backendError', 'down'),
+      );
+      const res = await patch(CLASS_A, { instructorId: BEN_ID }).expect(200);
+      expect(one(res)).toMatchObject({
+        instructorId: BEN_ID,
+        googleEventId: classEventId(CLASS_A, 1),
+        calendarSync: 'failed',
+        calendarSyncError: '500:backendError',
+      });
+      expect(ctx.repo.deletions).toEqual([
+        expect.objectContaining({
+          google_calendar_id: AMY_CAL,
+          google_event_id: 'evA',
+          class_id: CLASS_A,
+          attempts: 1,
+          last_error: '500:backendError',
+        }),
+      ]);
+      expect(ctx.google.events.size).toBe(2);
+
+      ctx.clock.value += 2 * 60_000;
+      expect(await ctx.reconciler().tick()).toEqual({
+        classes: 1,
+        deletions: 0,
+      });
+      expect(ctx.repo.deletions).toEqual([]);
+      expect([...ctx.google.events.keys()]).toEqual([
+        `${BEN_CAL}/${classEventId(CLASS_A, 1)}`,
+      ]);
+      expect(ctx.repo.classes[0].google_sync_status).toBe('ok');
     });
 
     it('needs a writable calendar to move the event to a new instructor', async () => {
@@ -1003,48 +1137,46 @@ describe('booking admin HTTP', () => {
       expect(one(res).endsAt).toBe('2025-12-21T17:00:00.000Z');
     });
 
-    it('returns 502 and leaves the class alone when Google refuses the patch', async () => {
+    it('saves the move and flags the class when Google refuses the patch', async () => {
       withEvent();
       ctx.google.patchEvent.mockRejectedValueOnce(
-        new GoogleApiError(404, 'notFound', 'gone'),
+        new GoogleApiError(500, 'backendError', 'down'),
       );
       const res = await patch(CLASS_A, {
         startsAt: '2026-12-12T17:00:00.000Z',
-      }).expect(502);
-      expect(res.body).toMatchObject({ googleStatus: 404 });
-      expect(ctx.repo.classes[0].starts_at).toBe('2026-12-12T15:00:00.000Z');
-    });
-
-    it('restores the Google event when the database refuses the move', async () => {
-      withEvent();
-      ctx.repo.failNext = new DatabaseError('move class', 'SB409', 'raced');
-      await patch(CLASS_A, { startsAt: '2026-12-12T17:00:00.000Z' }).expect(
-        409,
-      );
-      expect(ctx.google.patchEvent).toHaveBeenCalledTimes(2);
-      expect(ctx.google.patchEvent.mock.calls[1][2]).toMatchObject({
-        start: {
-          dateTime: '2026-12-12T15:00:00.000Z',
-          timeZone: 'America/Toronto',
-        },
+      }).expect(200);
+      expect(one(res)).toMatchObject({
+        startsAt: '2026-12-12T17:00:00.000Z',
+        googleEventId: 'evA',
+        calendarSync: 'failed',
+        calendarSyncError: '500:backendError',
       });
+      expect(ctx.repo.classes[0].starts_at).toBe('2026-12-12T17:00:00.000Z');
     });
 
-    it('deletes the new event when the database refuses an instructor change', async () => {
-      withEvent();
-      ctx.repo.failNext = new DatabaseError(
-        'move class',
-        'P0002',
-        'cancelled meanwhile',
-      );
-      const res = await patch(CLASS_A, { instructorId: BEN_ID }).expect(409);
-      expect(err(res).message).toBe(CLASS_CANCELLED);
-      const newEvent = (
-        (await ctx.google.insertEvent.mock.results[0].value) as { id: string }
-      ).id;
-      expect(ctx.google.deleteEvent).toHaveBeenCalledWith(BEN_CAL, newEvent);
-      expect(ctx.google.deleteEvent).not.toHaveBeenCalledWith(AMY_CAL, 'evA');
-    });
+    it.each([
+      ['SB409', INSTRUCTOR_BUSY],
+      ['P0002', CLASS_CANCELLED],
+    ])(
+      'never writes to Google when the move RPC fails with %s',
+      async (code, message) => {
+        withEvent();
+        ctx.repo.failNext = new DatabaseError('move class', code, 'raced');
+        const res = await patch(CLASS_A, {
+          instructorId: BEN_ID,
+          startsAt: '2026-12-12T17:00:00.000Z',
+        }).expect(409);
+        expect(err(res).message).toBe(message);
+        expect(ctx.google.insertEvent).not.toHaveBeenCalled();
+        expect(ctx.google.patchEvent).not.toHaveBeenCalled();
+        expect(ctx.google.deleteEvent).not.toHaveBeenCalled();
+        expect(ctx.repo.deletions).toEqual([]);
+        expect(ctx.repo.classes[0]).toMatchObject({
+          instructor_id: AMY_ID,
+          google_event_id: 'evA',
+        });
+      },
+    );
 
     it('refuses cancelled, unknown and empty updates', async () => {
       ctx.repo.add({
@@ -1086,7 +1218,8 @@ describe('booking admin HTTP', () => {
         .set('Authorization', admin)
         .send({ status: value });
 
-    it('cancels a class and deletes its Google event', async () => {
+    const withEvent = () => {
+      ctx.google.events.set(`${AMY_CAL}/evA`, { summary: 'old' });
       ctx.repo.add({
         id: CLASS_A,
         starts_at: '2026-12-12T15:00:00.000Z',
@@ -1094,12 +1227,19 @@ describe('booking admin HTTP', () => {
         google_calendar_id: AMY_CAL,
         google_event_id: 'evA',
       });
+    };
+
+    it('cancels a class and deletes its Google event', async () => {
+      withEvent();
       const res = await cancel(CLASS_A).expect(200);
       expect(res.body).toMatchObject({
         status: 'cancelled',
         googleEventId: null,
+        calendarSync: 'ok',
       });
       expect(ctx.google.deleteEvent).toHaveBeenCalledWith(AMY_CAL, 'evA');
+      expect(ctx.google.events.size).toBe(0);
+      expect(ctx.repo.deletions).toEqual([]);
       expect(ctx.audit.entries).toHaveLength(1);
       expect(ctx.audit.entries[0]).toMatchObject({
         action: 'booking.class_cancel',
@@ -1111,19 +1251,60 @@ describe('booking admin HTTP', () => {
       });
     });
 
-    it('keeps the class when Google fails to delete the event', async () => {
-      ctx.repo.add({
-        id: CLASS_A,
-        starts_at: '2026-12-12T15:00:00.000Z',
-        ends_at: '2026-12-12T16:00:00.000Z',
-        google_calendar_id: AMY_CAL,
-        google_event_id: 'evA',
-      });
+    it('cancels in SSMS even when Google fails to delete the event, then retries the deletion', async () => {
+      withEvent();
       ctx.google.deleteEvent.mockRejectedValueOnce(
         new GoogleApiError(500, 'backendError', 'down'),
       );
-      await cancel(CLASS_A).expect(502);
-      expect(ctx.repo.classes[0].status).toBe('scheduled');
+      const res = await cancel(CLASS_A).expect(200);
+      expect(one(res)).toMatchObject({
+        status: 'cancelled',
+        googleEventId: null,
+        calendarSync: 'failed',
+        calendarSyncError: '500:backendError',
+      });
+      expect(ctx.repo.deletions).toEqual([
+        expect.objectContaining({ google_event_id: 'evA', attempts: 1 }),
+      ]);
+
+      ctx.clock.value += 2 * 60_000;
+      expect(await ctx.reconciler().tick()).toEqual({
+        classes: 1,
+        deletions: 0,
+      });
+      expect(ctx.repo.deletions).toEqual([]);
+      expect(ctx.google.events.size).toBe(0);
+      expect(ctx.repo.classes[0]).toMatchObject({
+        status: 'cancelled',
+        google_sync_status: 'ok',
+      });
+    });
+
+    it('puts a restored lesson back on its calendar with a fresh event id', async () => {
+      withEvent();
+      await cancel(CLASS_A).expect(200);
+      const res = await status(CLASS_A, 'scheduled').expect(200);
+      const eventId = classEventId(CLASS_A, 1);
+      expect(one(res)).toMatchObject({
+        status: 'scheduled',
+        googleCalendarId: AMY_CAL,
+        googleEventId: eventId,
+        calendarSync: 'ok',
+      });
+      expect([...ctx.google.events.keys()]).toEqual([`${AMY_CAL}/${eventId}`]);
+    });
+
+    it('leaves Google alone when a status change does not need it', async () => {
+      withEvent();
+      const res = await status(CLASS_A, 'completed').expect(200);
+      expect(one(res)).toMatchObject({
+        status: 'completed',
+        googleEventId: 'evA',
+        calendarSync: 'ok',
+      });
+      expect(ctx.google.insertEvent).not.toHaveBeenCalled();
+      expect(ctx.google.patchEvent).not.toHaveBeenCalled();
+      expect(ctx.google.deleteEvent).not.toHaveBeenCalled();
     });
 
     it('cancels a class without a Google event and is idempotent', async () => {
@@ -1184,6 +1365,187 @@ describe('booking admin HTTP', () => {
     it('validates the status', async () => {
       await status(CLASS_A, 'cancelled').expect(400);
       await status(UNKNOWN_ID, 'completed').expect(404);
+    });
+  });
+
+  describe('calendar sync', () => {
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    const failed = (id: string, attempts: number, startsAt: string) =>
+      ctx.repo.add({
+        id,
+        starts_at: startsAt,
+        ends_at: new Date(Date.parse(startsAt) + 3_600_000).toISOString(),
+        google_calendar_id: AMY_CAL,
+        google_sync_status: 'failed',
+        google_sync_error: '503:backendError',
+        google_sync_attempts: attempts,
+        updated_at: '2026-12-01T00:00:00.000Z',
+      });
+
+    it('stops retrying a class once it reaches the attempts cap', async () => {
+      failed(CLASS_A, MAX_CALENDAR_SYNC_ATTEMPTS, '2026-12-12T15:00:00.000Z');
+      failed(
+        CLASS_B,
+        MAX_CALENDAR_SYNC_ATTEMPTS - 1,
+        '2026-12-13T15:00:00.000Z',
+      );
+      expect(await ctx.reconciler().tick()).toEqual({
+        classes: 1,
+        deletions: 0,
+      });
+      expect(ctx.google.insertEvent).toHaveBeenCalledTimes(1);
+      expect(ctx.google.insertEvent.mock.calls[0][2]).toEqual({
+        eventId: classEventId(CLASS_B, 0),
+      });
+      expect(ctx.repo.classes.map((c) => [c.id, c.google_sync_status])).toEqual(
+        [
+          [CLASS_A, 'failed'],
+          [CLASS_B, 'ok'],
+        ],
+      );
+    });
+
+    it('skips quietly while Google is not connected', async () => {
+      failed(CLASS_A, 1, '2026-12-12T15:00:00.000Z');
+      ctx.repo.queueDeletion(AMY_CAL, 'orphan', null);
+      ctx.clock.value += 10 * 60_000;
+      ctx.google.isConnected.mockResolvedValue(false);
+      expect(await ctx.reconciler().tick()).toEqual({
+        classes: 0,
+        deletions: 0,
+      });
+      expect(ctx.google.insertEvent).not.toHaveBeenCalled();
+      expect(ctx.google.deleteEvent).not.toHaveBeenCalled();
+      expect(ctx.repo.classes[0].google_sync_attempts).toBe(1);
+      expect(ctx.repo.deletions[0].attempts).toBe(0);
+    });
+
+    it('does nothing unless the reconciler flag is on', async () => {
+      failed(CLASS_A, 1, '2026-12-12T15:00:00.000Z');
+      expect(await ctx.app.get(CalendarSyncWorker).tick()).toEqual({
+        classes: 0,
+        deletions: 0,
+      });
+      expect(ctx.google.isConnected).not.toHaveBeenCalled();
+    });
+
+    it('deletes queued events with backoff and treats a vanished event as done', async () => {
+      ctx.repo.queueDeletion(AMY_CAL, 'orphan', null);
+      const reconciler = ctx.reconciler();
+      expect(await reconciler.tick()).toEqual({ classes: 0, deletions: 0 });
+      ctx.clock.value += 60_000;
+      ctx.google.deleteEvent.mockRejectedValueOnce(
+        new GoogleApiError(500, 'backendError', 'down'),
+      );
+      expect(await reconciler.tick()).toEqual({ classes: 0, deletions: 1 });
+      expect(ctx.repo.deletions[0]).toMatchObject({
+        attempts: 1,
+        last_error: '500:backendError',
+      });
+      expect(await reconciler.tick()).toEqual({ classes: 0, deletions: 0 });
+      ctx.clock.value += 2 * 60_000;
+      expect(await reconciler.tick()).toEqual({ classes: 0, deletions: 1 });
+      expect(ctx.repo.deletions).toEqual([]);
+    });
+
+    it('records a disconnected account as a failed sync without calling Google', async () => {
+      ctx.google.isConnected.mockResolvedValue(false);
+      const res = await http()
+        .post('/admin/booking/classes')
+        .set('Authorization', admin)
+        .send(
+          booking({
+            startsAt: '2026-12-01T15:00:00.000Z',
+            addToCalendar: true,
+          }),
+        )
+        .expect(201);
+      expect(many(res)[0]).toMatchObject({
+        googleCalendarId: AMY_CAL,
+        calendarSync: 'failed',
+        calendarSyncError: 'not_connected',
+      });
+      expect(ctx.google.insertEvent).not.toHaveBeenCalled();
+    });
+
+    it('lists failed classes and stuck deletions', async () => {
+      failed(CLASS_A, 3, '2026-12-12T15:00:00.000Z');
+      ctx.repo.add({
+        id: CLASS_B,
+        starts_at: '2026-12-13T15:00:00.000Z',
+        ends_at: '2026-12-13T16:00:00.000Z',
+      });
+      ctx.repo.queueDeletion(AMY_CAL, 'fresh', null);
+      ctx.repo.queueDeletion(AMY_CAL, 'stuck', CLASS_A);
+      ctx.repo.deletions[1].attempts = 4;
+      ctx.repo.deletions[1].last_error = '403:forbidden';
+      const res = await http()
+        .get('/admin/booking/sync-issues')
+        .set('Authorization', admin)
+        .expect(200);
+      const issues = res.body as SyncIssues;
+      expect(issues.classes.map((c) => [c.id, c.calendarSyncError])).toEqual([
+        [CLASS_A, '503:backendError'],
+      ]);
+      expect(issues.deletions).toEqual([
+        expect.objectContaining({
+          googleCalendarId: AMY_CAL,
+          googleEventId: 'stuck',
+          classId: CLASS_A,
+          attempts: 4,
+          lastError: '403:forbidden',
+          lastAttemptAt: null,
+          createdAt: new Date(NOW).toISOString(),
+        }),
+      ]);
+    });
+
+    it('retries a capped class on demand and audits the retry', async () => {
+      failed(CLASS_A, MAX_CALENDAR_SYNC_ATTEMPTS, '2026-12-12T15:00:00.000Z');
+      const res = await http()
+        .post(`/admin/booking/classes/${CLASS_A}/sync`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(one(res)).toMatchObject({
+        googleEventId: classEventId(CLASS_A, 0),
+        googleSyncStatus: 'ok',
+        googleSyncAttempts: 0,
+        calendarSync: 'ok',
+      });
+      expect(ctx.audit.entries).toEqual([
+        expect.objectContaining({
+          action: 'booking.class_sync_retry',
+          targetType: 'class',
+          targetId: CLASS_A,
+        }),
+      ]);
+      await http()
+        .post(`/admin/booking/classes/${UNKNOWN_ID}/sync`)
+        .set('Authorization', admin)
+        .expect(404);
+    });
+
+    it('keeps a class failed when a manual retry fails again', async () => {
+      failed(CLASS_A, 2, '2026-12-12T15:00:00.000Z');
+      ctx.google.insertEvent.mockRejectedValueOnce(
+        new GoogleApiError(403, 'forbidden', 'nope'),
+      );
+      const res = await http()
+        .post(`/admin/booking/classes/${CLASS_A}/sync`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(one(res)).toMatchObject({
+        googleSyncAttempts: 3,
+        calendarSync: 'failed',
+        calendarSyncError: '403:forbidden',
+      });
+      expect(ctx.audit.entries[0].metadata).toMatchObject({
+        result: 'failed',
+        error: '403:forbidden',
+      });
     });
   });
 

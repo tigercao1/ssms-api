@@ -5,36 +5,34 @@ import {
   ConflictException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { DatabaseError, PG_FOREIGN_KEY_VIOLATION } from '../database/db-result';
 import { GoogleApiError } from '../google/google.errors';
-import type { FreeBusyResult, GoogleEventInput } from '../google/google.types';
-import { GoogleCalendarClient } from '../google/google-calendar.client';
+import type { FreeBusyResult } from '../google/google.types';
 import type { ClassRow } from '../lessons/classes.repository';
-import { type AdminClass, toAdminClass } from '../lessons/classes.service';
 import { type Interval, overlapsAny } from './availability.service';
 import {
   BOOKING_CLOCK,
   type BookingClock,
   BookingCalendarsService,
 } from './booking-calendars.service';
-import {
-  addDays,
-  localParts,
-  SCHOOL_TIME_ZONE,
-  zonedInstant,
-} from './booking-time';
+import { addDays, localParts, zonedInstant } from './booking-time';
 import {
   type BookingCustomerRow,
   type BookingInstructorRow,
   type BookingLessonTypeRow,
   BookingRepository,
   type ClassBooking,
+  type EventDeletionRow,
 } from './booking.repository';
+import {
+  type BookedClass,
+  CalendarSyncService,
+  toBookedClass,
+} from './calendar-sync.service';
 import type {
   BookableStatus,
   CreateBookingDto,
@@ -62,7 +60,7 @@ export const BOOKING_CONFLICT_CODE = 'SB409';
 export const PG_NO_DATA_FOUND = 'P0002';
 
 const MINUTE_MS = 60_000;
-const DEFAULT_LESSON_NAME = 'Lesson';
+const SYNC_ISSUES_LIMIT = 200;
 
 export interface BookingConflict {
   occurrence: number;
@@ -87,34 +85,33 @@ export interface LastClass {
   locationId: string | null;
 }
 
+export interface EventDeletionIssue {
+  id: string;
+  googleCalendarId: string;
+  googleEventId: string;
+  classId: string | null;
+  attempts: number;
+  lastError: string | null;
+  lastAttemptAt: string | null;
+  createdAt: string;
+}
+
+export interface SyncIssues {
+  classes: BookedClass[];
+  deletions: EventDeletionIssue[];
+}
+
 interface Occurrence {
   start: Date;
   end: Date;
 }
 
-interface EventView {
-  classId: string;
-  lessonTypeName: string | null;
-  customers: Pick<BookingCustomerRow, 'first_name' | 'last_name' | 'phone'>[];
-  notes: string | null;
-  locationName: string | null;
-  start: Date;
-  end: Date;
-}
-
-interface CalendarEvent {
-  calendarId: string;
-  eventId: string;
-}
-
 @Injectable()
 export class BookingService {
-  private readonly logger = new Logger(BookingService.name);
-
   constructor(
     private readonly repo: BookingRepository,
     private readonly calendars: BookingCalendarsService,
-    private readonly google: GoogleCalendarClient,
+    private readonly sync: CalendarSyncService,
     private readonly audit: AuditService,
     @Inject(BOOKING_CLOCK) private readonly clock: BookingClock,
   ) {}
@@ -122,7 +119,7 @@ export class BookingService {
   async create(
     dto: CreateBookingDto,
     actor: AuditActor,
-  ): Promise<AdminClass[]> {
+  ): Promise<BookedClass[]> {
     const start = new Date(dto.startsAt);
     const past = start.getTime() < this.clock.now();
     if (past && dto.repeat) {
@@ -180,37 +177,11 @@ export class BookingService {
       starts_at: o.start.toISOString(),
       ends_at: o.end.toISOString(),
       status,
-      google_calendar_id: null,
-      google_event_id: null,
+      google_calendar_id: addToCalendar ? calendarId : null,
       notes,
       created_by: actor.userId ?? null,
       customer_ids: customers.map((c) => c.id),
     }));
-    const inserted: CalendarEvent[] = [];
-    if (addToCalendar && calendarId) {
-      try {
-        for (const booking of bookings) {
-          const event = await this.google.insertEvent(
-            calendarId,
-            eventInput({
-              classId: booking.id,
-              lessonTypeName: lessonType.name_en,
-              customers,
-              notes,
-              locationName: location?.name ?? null,
-              start: new Date(booking.starts_at),
-              end: new Date(booking.ends_at),
-            }),
-          );
-          booking.google_calendar_id = calendarId;
-          booking.google_event_id = event.id;
-          inserted.push({ calendarId, eventId: event.id });
-        }
-      } catch (err) {
-        await this.deleteEvents(inserted);
-        throw googleHttp(err);
-      }
-    }
     try {
       await this.repo.bookClasses(
         seriesId
@@ -223,7 +194,6 @@ export class BookingService {
         bookings,
       );
     } catch (err) {
-      await this.deleteEvents(inserted);
       throw databaseHttp(err);
     }
     await this.audit.record({
@@ -240,19 +210,19 @@ export class BookingService {
         startsAt: bookings.map((b) => b.starts_at),
         status,
         past,
-        addToCalendar: inserted.length > 0,
+        addToCalendar: Boolean(addToCalendar && calendarId),
       },
     });
-    return (await this.repo.findClasses(bookings.map((b) => b.id))).map(
-      toAdminClass,
-    );
+    const ids = bookings.map((b) => b.id);
+    await this.sync.syncPending(ids);
+    return (await this.repo.findClasses(ids)).map(toBookedClass);
   }
 
   async update(
     id: string,
     dto: UpdateBookingDto,
     actor: AuditActor,
-  ): Promise<AdminClass> {
+  ): Promise<BookedClass> {
     if (Object.values(dto).every((v) => v === undefined)) {
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
@@ -288,13 +258,15 @@ export class BookingService {
       end: new Date(start.getTime() + durationMs),
     };
     const past = next.start.getTime() < this.clock.now();
-    const currentEvent = eventOf(current);
+    const currentCalendar = current.google_calendar_id;
     const calendarId = await this.confirmedCalendar(instructorId);
-    if (currentEvent && instructorChanged) {
+    if (currentCalendar && instructorChanged) {
       await this.requireWritable(calendarId);
     }
+    const targetCalendar =
+      currentCalendar && instructorChanged ? calendarId : currentCalendar;
     const ownBlock =
-      currentEvent && currentEvent.calendarId === calendarId
+      current.google_event_id && currentCalendar === calendarId
         ? toInterval(previous)
         : null;
     const conflicts = await this.conflicts(
@@ -309,39 +281,6 @@ export class BookingService {
 
     const notes =
       dto.notes === undefined ? current.notes : dto.notes?.trim() || null;
-    const before = viewOf(current);
-    const after: EventView = {
-      classId: id,
-      lessonTypeName: lessonType?.name_en ?? before.lessonTypeName,
-      customers: customers ?? before.customers,
-      notes,
-      locationName: before.locationName,
-      start: next.start,
-      end: next.end,
-    };
-    let moved: CalendarEvent | null = null;
-    let patched = false;
-    if (currentEvent) {
-      try {
-        if (instructorChanged && calendarId) {
-          const event = await this.google.insertEvent(
-            calendarId,
-            eventInput(after),
-          );
-          moved = { calendarId, eventId: event.id };
-        } else {
-          await this.google.patchEvent(
-            currentEvent.calendarId,
-            currentEvent.eventId,
-            eventInput(after),
-          );
-          patched = true;
-        }
-      } catch (err) {
-        throw googleHttp(err);
-      }
-    }
-    const event = moved ?? currentEvent;
     try {
       await this.repo.rebookClass(
         id,
@@ -350,23 +289,13 @@ export class BookingService {
           lesson_type_id: lessonType?.id ?? current.lesson_type_id,
           starts_at: next.start.toISOString(),
           ends_at: next.end.toISOString(),
-          google_calendar_id: event?.calendarId ?? null,
-          google_event_id: event?.eventId ?? null,
+          google_calendar_id: targetCalendar,
           notes,
         },
         customers ? customers.map((c) => c.id) : null,
       );
     } catch (err) {
-      if (moved) {
-        await this.deleteEvents([moved]);
-      }
-      if (patched && currentEvent) {
-        await this.restoreEvent(currentEvent, before);
-      }
       throw databaseHttp(err);
-    }
-    if (moved && currentEvent) {
-      await this.deleteEvents([currentEvent]);
     }
     await this.audit.record({
       action: AUDIT_ACTIONS.bookingClassUpdate,
@@ -391,24 +320,20 @@ export class BookingService {
             : (current.participants ?? []).map((p) => p.customer_id),
         },
         notesChanged: notes !== current.notes,
-        googleEvent: moved ? 'moved' : patched ? 'patched' : 'none',
+        googleEvent: !targetCalendar
+          ? 'none'
+          : targetCalendar === currentCalendar
+            ? 'patched'
+            : 'moved',
       },
     });
-    return toAdminClass(await this.loadClass(id));
+    return this.synced(id);
   }
 
-  async cancel(id: string, actor: AuditActor): Promise<AdminClass> {
+  async cancel(id: string, actor: AuditActor): Promise<BookedClass> {
     const current = await this.loadClass(id);
     if (current.status === 'cancelled') {
-      return toAdminClass(current);
-    }
-    const event = eventOf(current);
-    if (event) {
-      try {
-        await this.google.deleteEvent(event.calendarId, event.eventId);
-      } catch (err) {
-        throw googleHttp(err);
-      }
+      return toBookedClass(current);
     }
     try {
       await this.repo.setClassStatus(id, 'cancelled');
@@ -424,20 +349,20 @@ export class BookingService {
         from: current.status,
         startsAt: current.starts_at,
         instructorId: current.instructor_id,
-        googleEventDeleted: Boolean(event),
+        googleEventDeleted: Boolean(current.google_calendar_id),
       },
     });
-    return toAdminClass(await this.loadClass(id));
+    return this.synced(id);
   }
 
   async setStatus(
     id: string,
     status: BookableStatus,
     actor: AuditActor,
-  ): Promise<AdminClass> {
+  ): Promise<BookedClass> {
     const current = await this.loadClass(id);
     if (current.status === status) {
-      return toAdminClass(current);
+      return toBookedClass(current);
     }
     try {
       await this.repo.setClassStatus(id, status);
@@ -451,7 +376,36 @@ export class BookingService {
       targetId: id,
       metadata: { from: current.status, to: status },
     });
-    return toAdminClass(await this.loadClass(id));
+    return this.synced(id);
+  }
+
+  async retrySync(id: string, actor: AuditActor): Promise<BookedClass> {
+    const current = await this.loadClass(id);
+    const outcome = await this.sync.syncClass(id);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.bookingClassSyncRetry,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'class',
+      targetId: id,
+      metadata: {
+        from: current.google_sync_status,
+        attempts: current.google_sync_attempts,
+        result: outcome?.calendarSync ?? 'failed',
+        error: outcome?.error ?? null,
+      },
+    });
+    return toBookedClass(await this.loadClass(id));
+  }
+
+  async syncIssues(): Promise<SyncIssues> {
+    const [classes, deletions] = await Promise.all([
+      this.repo.failedClasses(SYNC_ISSUES_LIMIT),
+      this.repo.stuckDeletions(SYNC_ISSUES_LIMIT),
+    ]);
+    return {
+      classes: classes.map(toBookedClass),
+      deletions: deletions.map(toDeletionIssue),
+    };
   }
 
   async lastFor(customerId: string): Promise<{ last: LastClass | null }> {
@@ -479,6 +433,11 @@ export class BookingService {
         locationId: row.location_id,
       },
     };
+  }
+
+  private async synced(id: string): Promise<BookedClass> {
+    await this.sync.syncPending([id]);
+    return toBookedClass(await this.loadClass(id));
   }
 
   private async loadClass(id: string): Promise<ClassRow> {
@@ -608,35 +567,6 @@ export class BookingService {
       );
     });
   }
-
-  private async deleteEvents(events: CalendarEvent[]): Promise<void> {
-    for (const event of events) {
-      try {
-        await this.google.deleteEvent(event.calendarId, event.eventId);
-      } catch (err) {
-        this.logger.error(
-          `Failed to delete Google event ${event.eventId}: ${(err as Error).message}`,
-        );
-      }
-    }
-  }
-
-  private async restoreEvent(
-    event: CalendarEvent,
-    view: EventView,
-  ): Promise<void> {
-    try {
-      await this.google.patchEvent(
-        event.calendarId,
-        event.eventId,
-        eventInput(view),
-      );
-    } catch (err) {
-      this.logger.error(
-        `Failed to restore Google event ${event.eventId}: ${(err as Error).message}`,
-      );
-    }
-  }
 }
 
 export function weekly(
@@ -652,55 +582,8 @@ export function weekly(
   });
 }
 
-export function eventInput(view: EventView): GoogleEventInput {
-  const name = view.lessonTypeName ?? DEFAULT_LESSON_NAME;
-  const firstNames = view.customers
-    .map((c) => c.first_name?.trim() || c.last_name?.trim() || '')
-    .filter((n) => n.length > 0);
-  const people = view.customers.map((c) =>
-    [fullName(c), c.phone?.trim()].filter((p) => p).join(' · '),
-  );
-  return {
-    summary:
-      firstNames.length > 0 ? `${name} · ${firstNames.join(', ')}` : name,
-    description: [name, ...people, view.notes]
-      .filter((line): line is string => Boolean(line))
-      .join('\n'),
-    location: view.locationName ?? undefined,
-    start: { dateTime: view.start.toISOString(), timeZone: SCHOOL_TIME_ZONE },
-    end: { dateTime: view.end.toISOString(), timeZone: SCHOOL_TIME_ZONE },
-    ssmsClassId: view.classId,
-  };
-}
-
-function fullName(c: Pick<BookingCustomerRow, 'first_name' | 'last_name'>) {
-  return [c.first_name?.trim(), c.last_name?.trim()].filter((p) => p).join(' ');
-}
-
 function isBookable(instructor: BookingInstructorRow): boolean {
   return instructor.is_active && instructor.approval_status === 'approved';
-}
-
-function eventOf(row: ClassRow): CalendarEvent | null {
-  return row.google_calendar_id && row.google_event_id
-    ? { calendarId: row.google_calendar_id, eventId: row.google_event_id }
-    : null;
-}
-
-function viewOf(row: ClassRow): EventView {
-  return {
-    classId: row.id,
-    lessonTypeName: row.lesson_type?.name_en ?? null,
-    customers: (row.participants ?? []).map((p) => ({
-      first_name: p.customer?.first_name ?? null,
-      last_name: p.customer?.last_name ?? null,
-      phone: p.customer?.phone ?? null,
-    })),
-    notes: row.notes,
-    locationName: row.location?.name ?? null,
-    start: new Date(row.starts_at),
-    end: new Date(row.ends_at),
-  };
 }
 
 function toInterval(o: Occurrence): Interval {
@@ -757,4 +640,17 @@ function databaseHttp(err: unknown): unknown {
     default:
       return err;
   }
+}
+
+function toDeletionIssue(row: EventDeletionRow): EventDeletionIssue {
+  return {
+    id: row.id,
+    googleCalendarId: row.google_calendar_id,
+    googleEventId: row.google_event_id,
+    classId: row.class_id,
+    attempts: row.attempts,
+    lastError: row.last_error,
+    lastAttemptAt: row.last_attempt_at,
+    createdAt: row.created_at,
+  };
 }

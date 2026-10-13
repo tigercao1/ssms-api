@@ -146,7 +146,6 @@ describe('SupabaseBookingRepository', () => {
         starts_at: 'a',
         ends_at: 'b',
         google_calendar_id: null,
-        google_event_id: null,
         notes: null,
       },
       null,
@@ -158,6 +157,96 @@ describe('SupabaseBookingRepository', () => {
       'set_class_status',
     ]);
     expect(rpcs[2].args).toEqual({ p_class_id: ID, p_status: 'completed' });
+  });
+
+  it('records a sync result through the finishing function', async () => {
+    const { client, rpcs } = bookingSupabase({
+      'rpc:finish_class_google_sync': { data: 'stale', error: null },
+    });
+    await expect(
+      new SupabaseBookingRepository(client).finishSync(ID, 'v1', {
+        calendarId: 'cal',
+        eventId: 'ev',
+        error: null,
+      }),
+    ).resolves.toBe('stale');
+    expect(rpcs[0].args).toEqual({
+      p_class_id: ID,
+      p_version: 'v1',
+      p_calendar_id: 'cal',
+      p_event_id: 'ev',
+      p_error: null,
+    });
+  });
+
+  it('reads and settles queued event deletions', async () => {
+    const row = {
+      id: 'd1',
+      google_calendar_id: 'cal',
+      google_event_id: 'ev',
+      class_id: ID,
+      attempts: 2,
+      last_error: null,
+      last_attempt_at: null,
+      created_at: 'c',
+    };
+    const { client, queries } = bookingSupabase({
+      google_event_deletions: { data: [row], error: null },
+    });
+    const repo = new SupabaseBookingRepository(client);
+    await expect(repo.classDeletions(ID)).resolves.toEqual([row]);
+    await expect(repo.openDeletions(10, 50)).resolves.toEqual([row]);
+    await expect(repo.stuckDeletions(20)).resolves.toEqual([row]);
+    await repo.completeDeletion('d1');
+    await repo.failDeletion(row, '500', 'at');
+    expect(queries.map((q) => q.table)).toEqual(
+      Array(5).fill('google_event_deletions'),
+    );
+    expect(queries[0].ops).toContainEqual(['eq', 'class_id', ID]);
+    expect(queries[1].ops).toEqual(
+      expect.arrayContaining([
+        ['lt', 'attempts', 10],
+        ['limit', 50],
+      ]),
+    );
+    expect(queries[2].ops).toContainEqual(['gt', 'attempts', 0]);
+    expect(queries[3].ops).toEqual([['delete'], ['eq', 'id', 'd1']]);
+    expect(queries[4].ops).toEqual([
+      ['update', { attempts: 3, last_error: '500', last_attempt_at: 'at' }],
+      ['eq', 'id', 'd1'],
+    ]);
+  });
+
+  it('finds classes waiting for a calendar sync and failed ones', async () => {
+    const { client, queries } = bookingSupabase({
+      classes: { data: [{ id: ID }], error: null },
+    });
+    const repo = new SupabaseBookingRepository(client);
+    await expect(repo.classesToSync(10, 200)).resolves.toEqual([{ id: ID }]);
+    await expect(repo.failedClasses(5)).resolves.toEqual([{ id: ID }]);
+    expect(queries[0].ops).toEqual(
+      expect.arrayContaining([
+        ['in', 'google_sync_status', ['pending', 'failed']],
+        ['lt', 'google_sync_attempts', 10],
+        ['limit', 200],
+      ]),
+    );
+    expect(queries[1].ops).toEqual(
+      expect.arrayContaining([
+        ['eq', 'google_sync_status', 'failed'],
+        ['limit', 5],
+      ]),
+    );
+  });
+
+  it('returns empty lists when the database has no rows', async () => {
+    const { client } = bookingSupabase();
+    const repo = new SupabaseBookingRepository(client);
+    await expect(repo.classDeletions(ID)).resolves.toEqual([]);
+    await expect(repo.openDeletions(10, 50)).resolves.toEqual([]);
+    await expect(repo.stuckDeletions(20)).resolves.toEqual([]);
+    await expect(repo.classesToSync(10, 200)).resolves.toEqual([]);
+    await expect(repo.failedClasses(5)).resolves.toEqual([]);
   });
 
   it('keeps the database error code for the service to map', async () => {

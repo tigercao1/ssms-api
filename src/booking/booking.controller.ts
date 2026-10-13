@@ -20,13 +20,17 @@ import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { toActor } from '../audit/admin-actor';
 import { GoogleErrorFilter } from '../google/google-error.filter';
-import type { AdminClass } from '../lessons/classes.service';
 import { type Availability, AvailabilityService } from './availability.service';
 import {
   type BookingSettings,
   BookingSettingsService,
 } from './booking-settings.service';
-import { BookingService, type LastClass } from './booking.service';
+import {
+  BookingService,
+  type LastClass,
+  type SyncIssues,
+} from './booking.service';
+import type { BookedClass } from './calendar-sync.service';
 import {
   AvailabilityQueryDto,
   BookingSettingsDto,
@@ -74,7 +78,7 @@ export class BookingController {
     @Body() dto: CreateBookingDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<AdminClass[]> {
+  ): Promise<BookedClass[]> {
     return this.booking.create(dto, toActor(user, userAgent));
   }
 
@@ -84,7 +88,7 @@ export class BookingController {
     @Body() dto: UpdateBookingDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<AdminClass> {
+  ): Promise<BookedClass> {
     return this.booking.update(id, dto, toActor(user, userAgent));
   }
 
@@ -94,7 +98,7 @@ export class BookingController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<AdminClass> {
+  ): Promise<BookedClass> {
     return this.booking.cancel(id, toActor(user, userAgent));
   }
 
@@ -105,8 +109,23 @@ export class BookingController {
     @Body() dto: SetClassStatusDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<AdminClass> {
+  ): Promise<BookedClass> {
     return this.booking.setStatus(id, dto.status, toActor(user, userAgent));
+  }
+
+  @Post('classes/:id/sync')
+  @HttpCode(HttpStatus.OK)
+  retrySync(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<BookedClass> {
+    return this.booking.retrySync(id, toActor(user, userAgent));
+  }
+
+  @Get('sync-issues')
+  syncIssues(): Promise<SyncIssues> {
+    return this.booking.syncIssues();
   }
 
   @Get('customers/:id/last')

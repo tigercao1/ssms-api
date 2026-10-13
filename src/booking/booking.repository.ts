@@ -10,6 +10,9 @@ import {
 import type { ClassStatus } from '../lessons/lessons.types';
 
 export const BOOKING_SETTINGS_TABLE = 'booking_settings';
+export const EVENT_DELETIONS_TABLE = 'google_event_deletions';
+const DELETION_COLUMNS =
+  'id, google_calendar_id, google_event_id, class_id, attempts, last_error, last_attempt_at, created_at';
 const SETTINGS_COLUMNS =
   'day_start_time, day_end_time, slot_minutes, weekday_overrides, updated_at';
 const INSTRUCTOR_COLUMNS =
@@ -80,7 +83,6 @@ export interface ClassBooking {
   ends_at: string;
   status: ClassStatus;
   google_calendar_id: string | null;
-  google_event_id: string | null;
   notes: string | null;
   created_by: string | null;
   customer_ids: string[];
@@ -98,9 +100,33 @@ export interface ClassRebooking {
   starts_at: string;
   ends_at: string;
   google_calendar_id: string | null;
-  google_event_id: string | null;
   notes: string | null;
 }
+
+export interface EventDeletionRow {
+  id: string;
+  google_calendar_id: string;
+  google_event_id: string;
+  class_id: string | null;
+  attempts: number;
+  last_error: string | null;
+  last_attempt_at: string | null;
+  created_at: string;
+}
+
+export interface SyncCandidateRow {
+  id: string;
+  google_sync_attempts: number;
+  updated_at: string;
+}
+
+export interface SyncResult {
+  calendarId: string | null;
+  eventId: string | null;
+  error: string | null;
+}
+
+export type SyncFinish = 'ok' | 'failed' | 'stale' | 'missing';
 
 export abstract class BookingRepository {
   abstract getSettings(): Promise<BookingSettingsRow>;
@@ -132,6 +158,28 @@ export abstract class BookingRepository {
     customerIds: string[] | null,
   ): Promise<void>;
   abstract setClassStatus(id: string, status: ClassStatus): Promise<void>;
+  abstract finishSync(
+    id: string,
+    version: string,
+    result: SyncResult,
+  ): Promise<SyncFinish>;
+  abstract classDeletions(classId: string): Promise<EventDeletionRow[]>;
+  abstract openDeletions(
+    maxAttempts: number,
+    limit: number,
+  ): Promise<EventDeletionRow[]>;
+  abstract stuckDeletions(limit: number): Promise<EventDeletionRow[]>;
+  abstract completeDeletion(id: string): Promise<void>;
+  abstract failDeletion(
+    row: EventDeletionRow,
+    error: string,
+    at: string,
+  ): Promise<void>;
+  abstract classesToSync(
+    maxAttempts: number,
+    limit: number,
+  ): Promise<SyncCandidateRow[]>;
+  abstract failedClasses(limit: number): Promise<ClassRow[]>;
 }
 
 @Injectable()
@@ -307,5 +355,111 @@ export class SupabaseBookingRepository extends BookingRepository {
       p_status: status,
     })) as DbResult<null>;
     check(error, 'set class status');
+  }
+
+  async finishSync(
+    id: string,
+    version: string,
+    result: SyncResult,
+  ): Promise<SyncFinish> {
+    const { data, error } = (await this.supabase.rpc(
+      'finish_class_google_sync',
+      {
+        p_class_id: id,
+        p_version: version,
+        p_calendar_id: result.calendarId,
+        p_event_id: result.eventId,
+        p_error: result.error,
+      },
+    )) as DbResult<SyncFinish>;
+    check(error, 'finish calendar sync');
+    return data as SyncFinish;
+  }
+
+  async classDeletions(classId: string): Promise<EventDeletionRow[]> {
+    const { data, error } = (await this.supabase
+      .from(EVENT_DELETIONS_TABLE)
+      .select(DELETION_COLUMNS)
+      .eq('class_id', classId)
+      .order('created_at', { ascending: true })) as DbResult<
+      EventDeletionRow[]
+    >;
+    check(error, 'list class event deletions');
+    return data ?? [];
+  }
+
+  async openDeletions(
+    maxAttempts: number,
+    limit: number,
+  ): Promise<EventDeletionRow[]> {
+    const { data, error } = (await this.supabase
+      .from(EVENT_DELETIONS_TABLE)
+      .select(DELETION_COLUMNS)
+      .lt('attempts', maxAttempts)
+      .order('created_at', { ascending: true })
+      .limit(limit)) as DbResult<EventDeletionRow[]>;
+    check(error, 'list event deletions');
+    return data ?? [];
+  }
+
+  async stuckDeletions(limit: number): Promise<EventDeletionRow[]> {
+    const { data, error } = (await this.supabase
+      .from(EVENT_DELETIONS_TABLE)
+      .select(DELETION_COLUMNS)
+      .gt('attempts', 0)
+      .order('created_at', { ascending: true })
+      .limit(limit)) as DbResult<EventDeletionRow[]>;
+    check(error, 'list stuck event deletions');
+    return data ?? [];
+  }
+
+  async completeDeletion(id: string): Promise<void> {
+    const { error } = (await this.supabase
+      .from(EVENT_DELETIONS_TABLE)
+      .delete()
+      .eq('id', id)) as DbResult<null>;
+    check(error, 'complete event deletion');
+  }
+
+  async failDeletion(
+    row: EventDeletionRow,
+    message: string,
+    at: string,
+  ): Promise<void> {
+    const { error } = (await this.supabase
+      .from(EVENT_DELETIONS_TABLE)
+      .update({
+        attempts: row.attempts + 1,
+        last_error: message,
+        last_attempt_at: at,
+      })
+      .eq('id', row.id)) as DbResult<null>;
+    check(error, 'record event deletion failure');
+  }
+
+  async classesToSync(
+    maxAttempts: number,
+    limit: number,
+  ): Promise<SyncCandidateRow[]> {
+    const { data, error } = (await this.supabase
+      .from(CLASSES_TABLE)
+      .select('id, google_sync_attempts, updated_at')
+      .in('google_sync_status', ['pending', 'failed'])
+      .lt('google_sync_attempts', maxAttempts)
+      .order('updated_at', { ascending: true })
+      .limit(limit)) as DbResult<SyncCandidateRow[]>;
+    check(error, 'list classes to sync');
+    return data ?? [];
+  }
+
+  async failedClasses(limit: number): Promise<ClassRow[]> {
+    const { data, error } = (await this.supabase
+      .from(CLASSES_TABLE)
+      .select(CLASS_COLUMNS)
+      .eq('google_sync_status', 'failed')
+      .order('starts_at', { ascending: true })
+      .limit(limit)) as unknown as DbResult<ClassRow[]>;
+    check(error, 'list classes with failed calendar sync');
+    return data ?? [];
   }
 }

@@ -21,6 +21,7 @@ import { GoogleModule } from './google/google.module';
 import { ActivationModule } from './activation/activation.module';
 import { LessonsModule } from './lessons/lessons.module';
 import { CustomersModule } from './customers/customers.module';
+import { PayrollModule } from './payroll/payroll.module';
 import { ClassImportModule } from './class-import/class-import.module';
 
 @Module({
@@ -55,6 +56,7 @@ import { ClassImportModule } from './class-import/class-import.module';
     ActivationModule,
     LessonsModule,
     CustomersModule,
+    PayrollModule,
     ClassImportModule,
     AuthHooksModule,
   ],

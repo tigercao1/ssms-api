@@ -58,7 +58,7 @@ export class ClassesService {
   }
 }
 
-function toAdminClass(row: ClassRow): AdminClass {
+export function toAdminClass(row: ClassRow): AdminClass {
   return {
     id: row.id,
     instructorId: row.instructor_id,

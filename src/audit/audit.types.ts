@@ -46,6 +46,11 @@ export const AUDIT_ACTIONS = {
   payRateUpdate: 'pay_rate.update',
   customerSync: 'customer.sync',
   customerCreate: 'customer.create',
+  bookingClassCreate: 'booking.class_create',
+  bookingClassUpdate: 'booking.class_update',
+  bookingClassCancel: 'booking.class_cancel',
+  bookingClassStatus: 'booking.class_status',
+  bookingSettingsUpdate: 'booking.settings_update',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -77,6 +82,8 @@ export interface AuditEntry {
     | 'lesson_type'
     | 'pay_rate'
     | 'customer'
+    | 'class'
+    | 'booking_settings'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

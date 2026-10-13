@@ -335,6 +335,37 @@ export const en: MessageCatalog = {
           'This is a fresh link, valid for {validDays} days. If it expires, you can ask for a new one on the page it opens.',
       },
     },
+    certification: {
+      labels: {
+        regular: '{org} Level {level}',
+        park: '{org} Park Level {level}',
+        carving: '{org} Carving Level {level}',
+      },
+      expiring: {
+        subject: 'Your {certification} certification expires on {validUntil}',
+        preheader: 'Upload your renewed certification to stay cleared to teach.',
+        heading: 'Your certification is about to expire',
+        paragraphs: [
+          'The {certification} proof on your instructor profile is valid until {validUntil}.',
+          'Once you have renewed your membership, upload the new proof in the instructor portal so we can keep scheduling you.',
+        ],
+        button: 'Upload renewed certification',
+        finePrint:
+          "If you've already uploaded your renewed certification, you can ignore this email.",
+      },
+      expired: {
+        subject: 'Your {certification} certification has expired',
+        preheader: 'Upload your renewed certification to keep teaching.',
+        heading: 'Your certification has expired',
+        paragraphs: [
+          'The {certification} proof on your instructor profile was valid until {validUntil} and has now expired.',
+          'Please renew your membership and upload the new proof in the instructor portal.',
+        ],
+        button: 'Upload new certification',
+        finePrint:
+          "If you've already uploaded your renewed certification, you can ignore this email.",
+      },
+    },
     admin: {
       instructorPending: {
         subject: 'New instructor waiting for review: {instructorEmail}',

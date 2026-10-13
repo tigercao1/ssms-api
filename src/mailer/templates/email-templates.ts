@@ -1,5 +1,6 @@
 import {
   interpolate,
+  type EmailButtonCopy,
   type EmailCopy,
   type MessageCatalog,
   type SupportedLanguage,
@@ -119,6 +120,38 @@ const SAMPLE_DOCUMENTS: EmailDocumentTitle[] = [
 ];
 const SAMPLE_SHA256 =
   '3b7e1f0c9a4d2e8b6f5a1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f';
+
+type CertificationExpiryVars =
+  EmailTemplateVars['certification.expiring'];
+
+function certificationExpiryBlocks(
+  catalog: MessageCatalog,
+  copy: EmailButtonCopy,
+  vars: CertificationExpiryVars,
+): EmailBlocks {
+  const certification = interpolate(
+    catalog.email.certification.labels[vars.track],
+    { org: vars.org.toUpperCase(), level: vars.level },
+  );
+  return {
+    ...fill(copy, { ...vars, certification }),
+    greeting: greet(catalog, vars.displayName),
+    button: { label: copy.button, url: vars.uploadUrl },
+  };
+}
+
+function sampleCertificationExpiry({
+  portalUrl,
+}: SampleContext): CertificationExpiryVars {
+  return {
+    displayName: SAMPLE_NAME,
+    org: 'csia',
+    track: 'regular',
+    level: 2,
+    validUntil: '2026-11-30',
+    uploadUrl: `${portalUrl}/onboarding`,
+  };
+}
 
 const SAMPLE_SUPABASE_URL = 'https://example.supabase.co';
 
@@ -366,6 +399,24 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
       activateUrl: `${portalUrl}/activate?t=sample-token`,
       validDays: SAMPLE_VALID_DAYS,
     }),
+  },
+  'certification.expiring': {
+    build: (catalog, vars) =>
+      certificationExpiryBlocks(
+        catalog,
+        catalog.email.certification.expiring,
+        vars,
+      ),
+    sample: sampleCertificationExpiry,
+  },
+  'certification.expired': {
+    build: (catalog, vars) =>
+      certificationExpiryBlocks(
+        catalog,
+        catalog.email.certification.expired,
+        vars,
+      ),
+    sample: sampleCertificationExpiry,
   },
   'admin.instructor_pending': {
     build: (catalog, vars) => {

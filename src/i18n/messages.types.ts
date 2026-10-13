@@ -158,6 +158,12 @@ export interface EmailMessages {
     season: EmailButtonCopy;
     reminder: EmailButtonCopy;
   };
+  certification: {
+    /** Certification name per track; uses `{org}` and `{level}`. */
+    labels: { regular: string; park: string; carving: string };
+    expiring: EmailButtonCopy;
+    expired: EmailButtonCopy;
+  };
   admin: {
     instructorPending: EmailButtonCopy;
   };

@@ -319,6 +319,35 @@ export const zhCN: MessageCatalog = {
           '这是一条新的激活链接，{validDays} 天内有效。如果链接过期，可以在打开的页面上申请新的链接。',
       },
     },
+    certification: {
+      labels: {
+        regular: '{org} {level} 级',
+        park: '{org} 公园 {level} 级',
+        carving: '{org} 刻滑 {level} 级',
+      },
+      expiring: {
+        subject: '您的 {certification} 证书将于 {validUntil} 到期',
+        preheader: '请上传续期后的证书，以便继续安排教学。',
+        heading: '您的证书即将到期',
+        paragraphs: [
+          '您教练资料中的 {certification} 证书有效期至 {validUntil}。',
+          '续费会员后，请在教练平台上传新的证书，以便我们继续为您安排课程。',
+        ],
+        button: '上传续期证书',
+        finePrint: '如果您已经上传了续期后的证书，请忽略这封邮件。',
+      },
+      expired: {
+        subject: '您的 {certification} 证书已过期',
+        preheader: '请上传续期后的证书，以便继续教学。',
+        heading: '您的证书已过期',
+        paragraphs: [
+          '您教练资料中的 {certification} 证书有效期至 {validUntil}，现已过期。',
+          '请续费会员，并在教练平台上传新的证书。',
+        ],
+        button: '上传新证书',
+        finePrint: '如果您已经上传了续期后的证书，请忽略这封邮件。',
+      },
+    },
     admin: {
       instructorPending: {
         subject: '新教练待审核：{instructorEmail}',

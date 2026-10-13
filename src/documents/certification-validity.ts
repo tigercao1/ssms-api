@@ -98,3 +98,68 @@ export function currentUploads<T extends KeyedCertificationUpload>(
   }
   return current;
 }
+
+/** The two expiry emails an upload can get, once each. */
+export type ExpiryReminder = 'expiring' | 'expired';
+
+/** Days after `validUntil` during which a missed `expired` email is still sent. */
+export const EXPIRED_REMINDER_GRACE_DAYS = 7;
+
+/** The fields of an upload the expiry reminder rule reads. */
+export interface ExpiryReminderStatus extends CertificationUploadStatus {
+  expiryReminderSentAt: string | null;
+}
+
+/** `date` (YYYY-MM-DD) moved by `days` (may be negative). */
+export function addDays(date: string, days: number): string {
+  return new Date((dayNumber(date) + days) * MS_PER_DAY)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * Which expiry email `expiry_reminder_sent_at` records, read against the
+ * upload's current `validUntil`: sent after `validUntil` → `expired`; sent
+ * within {@link EXPIRING_WITHIN_DAYS} days before it (inclusive) → `expiring`;
+ * unset, or sent before that window (the date was moved later) → none.
+ */
+export function expiryReminderSent(
+  sentAt: string | null,
+  validUntil: string,
+): ExpiryReminder | null {
+  if (!sentAt) {
+    return null;
+  }
+  const sentDaysAfter = daysBetween(validUntil, utcToday(new Date(sentAt)));
+  if (sentDaysAfter > 0) {
+    return 'expired';
+  }
+  return sentDaysAfter >= -EXPIRING_WITHIN_DAYS ? 'expiring' : null;
+}
+
+/**
+ * The expiry email due for a current upload on `today`, if any. `expiring`
+ * while `validUntil` is 0–{@link EXPIRING_WITHIN_DAYS} days away and nothing
+ * was sent; `expired` from the day after `validUntil` (for up to
+ * {@link EXPIRED_REMINDER_GRACE_DAYS} days, so a missed run catches up) unless
+ * it was already sent. Rejected uploads get neither.
+ */
+export function expiryReminderDue(
+  upload: ExpiryReminderStatus,
+  today: string,
+): ExpiryReminder | null {
+  if (upload.reviewStatus === 'rejected') {
+    return null;
+  }
+  const daysLeft = daysBetween(today, upload.validUntil);
+  const sent = expiryReminderSent(
+    upload.expiryReminderSentAt,
+    upload.validUntil,
+  );
+  if (daysLeft < 0) {
+    return daysLeft >= -EXPIRED_REMINDER_GRACE_DAYS && sent !== 'expired'
+      ? 'expired'
+      : null;
+  }
+  return daysLeft <= EXPIRING_WITHIN_DAYS && sent === null ? 'expiring' : null;
+}

@@ -99,6 +99,9 @@ jobs:
       - name: Booking foundation checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/booking_foundation_checks.sql
 
+      - name: Payroll checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/payroll_checks.sql
+
       # Mirrors what the post-merge job does to dev and prod: the base branch's
       # migrations are already applied, and only this PR's new files run.
       - name: Apply on top of base branch (PRs only)

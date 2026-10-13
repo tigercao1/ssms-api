@@ -43,13 +43,19 @@ describe('i18n catalogs', () => {
     }
   });
 
-  it('brands every email subject and sign-off as Serendipity Snow Club', () => {
+  it('brands English copy as Serendipity Snow Club and Chinese copy as SSnow', () => {
     for (const lang of ['en', 'zh-CN'] as const) {
       const { layout } = catalogs[lang].email;
-      expect(layout.signoffTeam).toContain('Serendipity Snow Club');
+      expect(layout.footerClub).toBe('Serendipity Snow Club');
       expect(layout.footerQuestions).toContain('info@ssnow.club');
     }
-    expect(zhCN.email.layout.signoffTeam).toBe('Serendipity Snow Club 团队');
+    expect(en.email.layout.signoffTeam).toContain('Serendipity Snow Club');
+    expect(zhCN.email.layout.signoffTeam).toBe('SSnow团队');
+    const zhCopy = JSON.stringify({
+      ...zhCN.email,
+      layout: { ...zhCN.email.layout, footerClub: '' },
+    });
+    expect(zhCopy).not.toContain('Serendipity');
   });
 
   it('keeps every email paragraph list the same length in both languages', () => {

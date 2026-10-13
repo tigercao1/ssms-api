@@ -74,20 +74,20 @@ describe('EmailRenderer', () => {
       },
     );
 
-    it('renders a bilingual email as zh-CN, divider, then en', () => {
+    it('renders a bilingual email as en, divider, then zh-CN', () => {
       const zh = renderer.renderSample(template, 'zh-CN');
       const english = renderer.renderSample(template, 'en');
       const both = renderer.renderSample(template, 'bilingual');
 
-      expect(both.subject).toBe(`${zh.subject} / ${english.subject}`);
+      expect(both.subject).toBe(`${english.subject} / ${zh.subject}`);
       const zhAt = both.html.indexOf(zhCN.email.layout.signoffTeam);
       const enAt = both.html.indexOf(en.email.layout.signoffTeam);
-      expect(zhAt).toBeGreaterThan(-1);
-      expect(enAt).toBeGreaterThan(zhAt);
+      expect(enAt).toBeGreaterThan(-1);
+      expect(zhAt).toBeGreaterThan(enAt);
       expect(both.html).toContain('lang="zh-CN"');
       expect(both.html).toContain('lang="en"');
-      expect(both.text.indexOf(zhCN.email.layout.footerQuestions)).toBeLessThan(
-        both.text.indexOf(en.email.layout.footerQuestions),
+      expect(both.text.indexOf(en.email.layout.footerQuestions)).toBeLessThan(
+        both.text.indexOf(zhCN.email.layout.footerQuestions),
       );
       expect(both.text).toContain('------------------------------');
     });

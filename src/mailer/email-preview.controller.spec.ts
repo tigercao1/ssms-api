@@ -95,7 +95,7 @@ describe('/admin/email-previews', () => {
     expect(approved.subjects).toEqual({
       en: en.email.approved.subject,
       'zh-CN': zhCN.email.approved.subject,
-      bilingual: `${zhCN.email.approved.subject} / ${en.email.approved.subject}`,
+      bilingual: `${en.email.approved.subject} / ${zhCN.email.approved.subject}`,
     });
     expect(approved.previewPaths['zh-CN']).toBe(
       '/admin/email-previews/approved?lang=zh-CN',

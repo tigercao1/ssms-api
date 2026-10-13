@@ -210,7 +210,7 @@ describe('POST /hooks/auth/send-email (HTTP)', () => {
     const res = await post(h.server, body, sign(body));
 
     expect(res.status).toBe(200);
-    expect(h.sent[0].subject).toBe('您的 Serendipity Snow Club 验证码');
+    expect(h.sent[0].subject).toBe('您的 SSnow 验证码');
     expect(h.sent[0].text).toContain('305805');
   });
 

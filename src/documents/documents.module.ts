@@ -10,6 +10,8 @@ import {
   SupabaseDocumentAssignmentsRepository,
 } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentCompletedEmailHandler } from './document-completed-email.handler';
+import { DocumentCompletedHandler } from './document-completed.handler';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentOnboardingService } from './document-onboarding.service';
 import { DocumentRemindersAuthGuard } from './document-reminders-auth.guard';
@@ -61,6 +63,10 @@ import {
     DocumentAssignmentsService,
     MeDocumentsService,
     DocumentSigningService,
+    {
+      provide: DocumentCompletedHandler,
+      useClass: DocumentCompletedEmailHandler,
+    },
     DocumentNotificationsService,
     DocumentOnboardingService,
     DocumentRemindersService,

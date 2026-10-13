@@ -2,9 +2,16 @@ import { Module } from '@nestjs/common';
 import { RolesGuard } from '../admin/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { MailerModule } from '../mailer/mailer.module';
+import { AdminCertificationUploadsController } from './admin-certification-uploads.controller';
+import { AdminCertificationUploadsService } from './admin-certification-uploads.service';
 import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
+import { CertificationExpiryService } from './certification-expiry.service';
+import {
+  CertificationUploadsRepository,
+  SupabaseCertificationUploadsRepository,
+} from './certification-uploads.repository';
 import {
   DocumentAssignmentsRepository,
   SupabaseDocumentAssignmentsRepository,
@@ -27,6 +34,8 @@ import {
 } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
 import { InternalDocumentsController } from './internal-documents.controller';
+import { MeCertificationUploadsController } from './me-certification-uploads.controller';
+import { MeCertificationUploadsService } from './me-certification-uploads.service';
 import { MeDocumentsController } from './me-documents.controller';
 import { MeDocumentsService } from './me-documents.service';
 import { PdfWorkQueue } from './pdf-work-queue';
@@ -43,6 +52,8 @@ import {
     MeDocumentsController,
     AdminDocumentRemindersController,
     InternalDocumentsController,
+    MeCertificationUploadsController,
+    AdminCertificationUploadsController,
   ],
   providers: [
     { provide: PrivateStorageClient, useClass: R2PrivateStorageClient },
@@ -73,6 +84,13 @@ import {
     DocumentRemindersAuthGuard,
     SupabaseAuthGuard,
     RolesGuard,
+    {
+      provide: CertificationUploadsRepository,
+      useClass: SupabaseCertificationUploadsRepository,
+    },
+    MeCertificationUploadsService,
+    AdminCertificationUploadsService,
+    CertificationExpiryService,
   ],
   exports: [
     PrivateStorageClient,
@@ -83,6 +101,7 @@ import {
     DocumentAssignmentsService,
     DocumentNotificationsService,
     DocumentOnboardingService,
+    CertificationExpiryService,
   ],
 })
 export class DocumentsModule {}

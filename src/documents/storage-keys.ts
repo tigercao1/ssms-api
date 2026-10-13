@@ -14,6 +14,9 @@ export const storageKeys = {
     extension: string,
   ) =>
     `subjects/instructor/${instructorId}/certifications/${uploadId}.${extension}`,
+  /** What the instructor declared when asking for a certification upload URL, read back on confirm. */
+  instructorCertificationIntent: (instructorId: string, uploadId: string) =>
+    `subjects/instructor/${instructorId}/certifications/${uploadId}.intent.json`,
   /** Signed copy of a customer's assignment. */
   customerDocument: (customerId: string, assignmentId: string) =>
     `subjects/customer/${customerId}/documents/${assignmentId}.pdf`,

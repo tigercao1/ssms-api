@@ -284,6 +284,18 @@ export interface CertUpload {
   updatedAt: string;
 }
 
+/** `POST /me/certification-uploads/upload-url`: PUT the file to `uploadUrl`, then confirm `uploadId`. */
+export interface CertificationUploadUrl extends UploadUrl {
+  uploadId: string;
+}
+
+/** Presigned GET of an uploaded certification file. */
+export interface CertificationFileUrl {
+  url: string;
+  expiresAt: string;
+  sha256: string;
+}
+
 export interface AssignmentResult {
   created: number;
   skipped: number;

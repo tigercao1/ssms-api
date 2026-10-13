@@ -51,6 +51,11 @@ export const AUDIT_ACTIONS = {
   payrollAdjustmentDelete: 'payroll.adjustment_delete',
   payrollFinalize: 'payroll.finalize',
   payrollReopen: 'payroll.reopen',
+  classImportCreate: 'class_import.create',
+  classImportRowUpdate: 'class_import.row_update',
+  classImportEventMapUpdate: 'class_import.event_map_update',
+  classImportCommit: 'class_import.commit',
+  classImportDiscard: 'class_import.discard',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -84,6 +89,7 @@ export interface AuditEntry {
     | 'customer'
     | 'payroll_period'
     | 'payroll_settings'
+    | 'class_import'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

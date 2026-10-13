@@ -8,8 +8,11 @@ import type { RosterRawValues } from './roster-csv';
 import {
   ALLOWED_LOCATION_KEYS,
   PARTIAL_COMPONENTS,
+  trainerDisciplineFor,
   validateCertification,
+  validateTrainerStatus,
   type RosterCertification,
+  type RosterTrainerStatus,
 } from './roster-normalize';
 
 export const LLM_MIN_CONFIDENCE = 0.8;
@@ -35,6 +38,11 @@ export interface LlmCertification {
   certification: RosterCertification;
 }
 
+export interface LlmTrainerStatus {
+  value: string;
+  trainerStatus: RosterTrainerStatus;
+}
+
 export interface LlmLocation {
   value: string;
   key: string;
@@ -42,6 +50,7 @@ export interface LlmLocation {
 
 export interface LlmValidationResult {
   certifications: LlmCertification[];
+  trainerStatus: LlmTrainerStatus[];
   locations: LlmLocation[];
   rejected: { value: string; reason: string }[];
 }
@@ -69,14 +78,15 @@ export function buildNormalizationInstruction(
     'Interpret ONLY the values in "unresolvedCertifications" and "unresolvedLocations"; use the other fields as context.',
     'Certification rules:',
     '- org is "csia" (ski) or "casi" (snowboard).',
-    '- track is "regular" (levels 1-4), "park" (levels 1-2, never partial) or "carving" (CASI only, levels 1-4, never partial).',
+    '- track is "regular" (levels 1-4), "park" (levels 1-2, never partial) or "carving" (CASI only, level 1 only, never partial). Carving with no stated level is level 1.',
     `- A partial regular certification has isPartial true and at least one partialComponents entry from: csia ${JSON.stringify(PARTIAL_COMPONENTS.csia)}, casi ${JSON.stringify(PARTIAL_COMPONENTS.casi)}. Pedagogy/teaching is "teach" for CSIA and "teaching" for CASI; skiing is "ski" (CSIA); riding is "riding" (CASI).`,
     '- A full certification has isPartial false and partialComponents [].',
     '- A fragment that only names a component (for example "Teaching") describes the partial certification named elsewhere in the same answer; return that partial certification with the component.',
-    '- If a value does not clearly describe one certification, return certification null.',
+    '- "TD" or "Trainer Development" means the person completed trainer development: return certification null and trainer {"discipline":"ski|snowboard","rookieSessionCompleted":true,"trainerExamPassed":false,"trainerLevel":1}. The discipline is "ski" for CSIA and "snowboard" for CASI, from the org named in the value itself, else the only org named in "certifications". If neither settles it, return trainer null.',
+    '- If a value does not clearly describe one certification or trainer development, return certification null and trainer null.',
     `Location rules: key must be one of ${JSON.stringify(allowedLocationKeys)} or null. Return null for any place that is not one of these resorts.`,
     'Respond with JSON only, no markdown, exactly in this shape:',
-    '{"certifications":[{"value":"<an unresolvedCertifications entry>","certification":{"org":"csia|casi","track":"regular|park|carving","level":1,"isPartial":false,"partialComponents":[]} or null,"confidence":0.0,"reason":"<under 20 words>"}],"locations":[{"value":"<an unresolvedLocations entry>","key":"<allowed key>" or null,"confidence":0.0,"reason":"<under 20 words>"}]}',
+    '{"certifications":[{"value":"<an unresolvedCertifications entry>","certification":{"org":"csia|casi","track":"regular|park|carving","level":1,"isPartial":false,"partialComponents":[]} or null,"trainer":{"discipline":"ski|snowboard","rookieSessionCompleted":true,"trainerExamPassed":false,"trainerLevel":1} or null,"confidence":0.0,"reason":"<under 20 words>"}],"locations":[{"value":"<an unresolvedLocations entry>","key":"<allowed key>" or null,"confidence":0.0,"reason":"<under 20 words>"}]}',
     'confidence is a number from 0 to 1 for how sure you are of that one interpretation.',
   ].join('\n');
 }
@@ -100,8 +110,9 @@ function itemProblem(item: Record<string, unknown>): string | null {
 
 /**
  * Accepts only items that answer one of the requested values, clear the
- * confidence bar and satisfy the migration 010 certification constraints or
- * name an allowed location key. Everything else stays unresolved.
+ * confidence bar and satisfy the migration 010 certification constraints, the
+ * trainer-development rule of {@link validateTrainerStatus}, or name an
+ * allowed location key. Everything else stays unresolved.
  */
 export function validateLlmResult(
   output: unknown,
@@ -110,6 +121,7 @@ export function validateLlmResult(
 ): LlmValidationResult {
   const result: LlmValidationResult = {
     certifications: [],
+    trainerStatus: [],
     locations: [],
     rejected: [],
   };
@@ -138,18 +150,32 @@ export function validateLlmResult(
     }
     seen.add(`c:${value}`);
     const problem = itemProblem(item);
+    const hasTrainer = item.trainer !== undefined && item.trainer !== null;
     const cert =
       item.certification === null
         ? null
         : validateCertification(item.certification);
+    const trainer = hasTrainer
+      ? validateTrainerStatus(
+          item.trainer,
+          trainerDisciplineFor(value, request.certifications),
+        )
+      : null;
     if (problem) {
       result.rejected.push({ value, reason: problem });
-    } else if (item.certification === null) {
+    } else if (item.certification === null && !hasTrainer) {
       result.rejected.push({ value, reason: 'no certification' });
-    } else if (!cert) {
+    } else if (item.certification !== null && !cert) {
       result.rejected.push({ value, reason: 'violates certification rules' });
+    } else if (hasTrainer && !trainer) {
+      result.rejected.push({ value, reason: 'violates trainer rules' });
     } else {
-      result.certifications.push({ value, certification: cert });
+      if (cert) {
+        result.certifications.push({ value, certification: cert });
+      }
+      if (trainer) {
+        result.trainerStatus.push({ value, trainerStatus: trainer });
+      }
     }
   }
   for (const item of items('locations')) {

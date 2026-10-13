@@ -1,6 +1,7 @@
 export type CertOrg = 'csia' | 'casi';
 export type CertTrack = 'regular' | 'park' | 'carving';
 export type ValueSource = 'rule' | 'llm';
+export type TrainerDiscipline = 'ski' | 'snowboard';
 
 export interface RosterCertification {
   org: CertOrg;
@@ -14,8 +15,21 @@ export interface ProposedCertification extends RosterCertification {
   source: ValueSource;
 }
 
+/** An `instructor_trainer_status` row; trainer development gives trainer level 1. */
+export interface RosterTrainerStatus {
+  discipline: TrainerDiscipline;
+  rookieSessionCompleted: true;
+  trainerExamPassed: false;
+  trainerLevel: 1;
+}
+
+export interface ProposedTrainerStatus extends RosterTrainerStatus {
+  source: ValueSource;
+}
+
 export interface CertificationNormalization {
   certifications: ProposedCertification[];
+  trainerStatus: ProposedTrainerStatus[];
   unresolved: string[];
   /** True when any value needed more than the canonical `CSIA L3` / `CASI Park 1` form. */
   normalized: boolean;
@@ -36,11 +50,16 @@ export const PARTIAL_COMPONENTS: Record<CertOrg, readonly string[]> = {
   casi: ['instructor_training', 'riding', 'teaching'],
 };
 
-/** Allowed levels per track: migration 010 for regular and park, the profile DTO cap for carving. */
+/** Allowed levels per track: migration 010 for regular and park; CASI carving has a single level. */
 export const LEVEL_RANGE: Record<CertTrack, readonly [number, number]> = {
   regular: [1, 4],
   park: [1, 2],
-  carving: [1, 4],
+  carving: [1, 1],
+};
+
+export const TRAINER_DISCIPLINE: Record<CertOrg, TrainerDiscipline> = {
+  csia: 'ski',
+  casi: 'snowboard',
 };
 
 export const LOCATION_KEYS: Record<string, string> = {
@@ -99,6 +118,7 @@ const LEVEL_WORDS = new Set(['l', 'lv', 'lvl', 'lev', 'level']);
 const PARK_WORDS = new Set(['park', 'p']);
 const CARVING_WORDS = new Set(['carving', 'carve']);
 const PARTIAL_WORDS = new Set(['partial', 'partially']);
+const TRAINER_DEVELOPMENT = 'td';
 const FILLER_WORDS = new Set(['please', 'specify', 'in', 'other', 'and']);
 const ROMAN: Record<string, number> = { i: 1, ii: 2, iii: 3, iv: 4 };
 const CANONICAL_CERT = /^(CSIA|CASI)(L[1-4]|PARK[12])$/;
@@ -109,12 +129,14 @@ interface Clause {
   park: boolean;
   carving: boolean;
   partial: boolean;
+  trainerDevelopment: boolean;
   components: Set<GenericComponent>;
   unknown: string[];
 }
 
 type CertValue =
   | { kind: 'full'; cert: RosterCertification }
+  | { kind: 'trainer' }
   | { kind: 'partial'; org: CertOrg; level: number }
   | { kind: 'fragment'; clause: Clause }
   | { kind: 'unrecognised' };
@@ -137,6 +159,7 @@ function tokenize(value: string): string[] {
   return value
     .toLowerCase()
     .replace(/instructor\s*training/g, ' instructortraining ')
+    .replace(/\b(?:trainer\s*development|t\s*d)\b/g, ' td ')
     .replace(/\b(csia|casi)/g, ' $1 ')
     .replace(/(\d+)/g, ' $1 ')
     .split(/[^a-z0-9]+/)
@@ -158,6 +181,7 @@ function parseClause(tokens: string[]): Clause {
     park: false,
     carving: false,
     partial: false,
+    trainerDevelopment: false,
     components: new Set(),
     unknown: [],
   };
@@ -189,6 +213,8 @@ function parseClause(tokens: string[]): Clause {
       clause.carving = true;
     } else if (PARTIAL_WORDS.has(token)) {
       clause.partial = true;
+    } else if (token === TRAINER_DEVELOPMENT) {
+      clause.trainerDevelopment = true;
     } else if (COMPONENT_WORDS[token] !== undefined) {
       clause.components.add(COMPONENT_WORDS[token]);
     } else if (!FILLER_WORDS.has(token)) {
@@ -217,6 +243,15 @@ function classify(value: string): CertValue {
   if (clause.unknown.length > 0) {
     return { kind: 'unrecognised' };
   }
+  if (clause.trainerDevelopment) {
+    const onlyOrg =
+      level === undefined &&
+      !clause.park &&
+      !clause.carving &&
+      !clause.partial &&
+      clause.components.size === 0;
+    return onlyOrg ? { kind: 'trainer' } : { kind: 'unrecognised' };
+  }
   if (clause.components.size > 0) {
     return clause.park || clause.carving
       ? { kind: 'unrecognised' }
@@ -231,8 +266,9 @@ function classify(value: string): CertValue {
       : { kind: 'unrecognised' };
   }
   if (clause.carving) {
-    return org === 'casi' && !clause.park && inRange('carving', level)
-      ? { kind: 'full', cert: full(org, 'carving', level as number) }
+    const carvingLevel = level ?? LEVEL_RANGE.carving[0];
+    return org === 'casi' && !clause.park && inRange('carving', carvingLevel)
+      ? { kind: 'full', cert: full(org, 'carving', carvingLevel) }
       : { kind: 'unrecognised' };
   }
   const track: CertTrack = clause.park ? 'park' : 'regular';
@@ -329,6 +365,51 @@ function outranks(
   return null;
 }
 
+function statedOrgs(values: string[]): Set<CertOrg> {
+  return new Set(
+    values
+      .flatMap((v) => tokenize(v))
+      .filter((t): t is CertOrg => CERT_ORGS.includes(t as CertOrg)),
+  );
+}
+
+/**
+ * The discipline a trainer-development `value` in the certification `cell`
+ * stands for: the org named in the value itself, else the cell's only stated
+ * org. Null when neither settles it.
+ */
+export function trainerDisciplineFor(
+  value: string,
+  cell: string,
+): TrainerDiscipline | null {
+  const valueOrgs = statedOrgs([value]);
+  const orgs = valueOrgs.size > 0 ? valueOrgs : statedOrgs(splitList(cell));
+  return orgs.size === 1 ? TRAINER_DISCIPLINE[[...orgs][0]] : null;
+}
+
+function trainerStatusFor(discipline: TrainerDiscipline): RosterTrainerStatus {
+  return {
+    discipline,
+    rookieSessionCompleted: true,
+    trainerExamPassed: false,
+    trainerLevel: 1,
+  };
+}
+
+/** One entry per discipline; a rule-derived entry is kept over an LLM one. */
+export function mergeTrainerStatus(
+  statuses: ProposedTrainerStatus[],
+): ProposedTrainerStatus[] {
+  const best = new Map<TrainerDiscipline, ProposedTrainerStatus>();
+  for (const status of statuses) {
+    const current = best.get(status.discipline);
+    if (!current || (current.source === 'llm' && status.source === 'rule')) {
+      best.set(status.discipline, status);
+    }
+  }
+  return [...best.values()];
+}
+
 /** Highest-only per (org, track); the precedence is specified in roster-normalize.spec.ts. */
 export function keepHighest(
   certs: ProposedCertification[],
@@ -371,6 +452,7 @@ export function normalizeCertifications(
   const certs: ProposedCertification[] = [];
   const markers: Marker[] = [];
   const fragments: { value: string; clause: Clause }[] = [];
+  const trainerStatus: ProposedTrainerStatus[] = [];
   const unresolved: string[] = [];
   let normalized = false;
   for (const value of values) {
@@ -380,6 +462,13 @@ export function normalizeCertifications(
     const parsed = classify(value);
     if (parsed.kind === 'full') {
       certs.push({ ...parsed.cert, source: 'rule' });
+    } else if (parsed.kind === 'trainer') {
+      const discipline = trainerDisciplineFor(value, cell);
+      if (discipline === null) {
+        unresolved.push(value);
+      } else {
+        trainerStatus.push({ ...trainerStatusFor(discipline), source: 'rule' });
+      }
     } else if (parsed.kind === 'partial') {
       markerFor(markers, parsed.org, parsed.level).values.push(value);
     } else if (parsed.kind === 'fragment') {
@@ -422,6 +511,7 @@ export function normalizeCertifications(
   }
   return {
     certifications: keepHighest(certs),
+    trainerStatus: mergeTrainerStatus(trainerStatus),
     unresolved: values.filter((v) => unresolved.includes(v)),
     normalized,
   };
@@ -508,6 +598,42 @@ export function validateCertification(
   return isPartial
     ? partialOrFull(certOrg, level, components)
     : full(certOrg, certTrack, level);
+}
+
+/**
+ * Returns `value` as a trainer-development status when it is exactly trainer
+ * level 1 after the rookie session (migration 011) in `allowedDiscipline`.
+ */
+export function validateTrainerStatus(
+  value: unknown,
+  allowedDiscipline: TrainerDiscipline | null,
+): RosterTrainerStatus | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const {
+    discipline,
+    rookieSessionCompleted,
+    trainerExamPassed,
+    trainerLevel,
+  } = value;
+  return allowedDiscipline !== null &&
+    discipline === allowedDiscipline &&
+    rookieSessionCompleted === true &&
+    trainerExamPassed === false &&
+    trainerLevel === 1
+    ? trainerStatusFor(allowedDiscipline)
+    : null;
+}
+
+const DISCIPLINE_LABEL: Record<TrainerDiscipline, string> = {
+  ski: 'Ski',
+  snowboard: 'Snowboard',
+};
+
+/** `Ski Trainer Level 1 (trainer development)` for the review report. */
+export function describeTrainerStatus(status: RosterTrainerStatus): string {
+  return `${DISCIPLINE_LABEL[status.discipline]} Trainer Level ${status.trainerLevel} (trainer development)`;
 }
 
 const ORG_LABEL: Record<CertOrg, string> = { csia: 'CSIA', casi: 'CASI' };

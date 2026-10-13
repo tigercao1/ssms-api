@@ -1,10 +1,14 @@
 import {
   ALLOWED_LOCATION_KEYS,
   describeCertification,
+  describeTrainerStatus,
   keepHighest,
+  mergeTrainerStatus,
   normalizeCertifications,
   normalizeLocations,
+  trainerDisciplineFor,
   validateCertification,
+  validateTrainerStatus,
   type ProposedCertification,
   type RosterCertification,
 } from './roster-normalize';
@@ -41,6 +45,7 @@ describe('normalizeCertifications: canonical values', () => {
     expect(normalizeCertifications(value)).toEqual({
       certifications: [expected],
       unresolved: [],
+      trainerStatus: [],
       normalized: false,
     });
   });
@@ -55,8 +60,9 @@ describe('normalizeCertifications: synonyms', () => {
     ['CASI P1', cert('casi', 'park', 1)],
     ['CASI Park I', cert('casi', 'park', 1)],
     ['C.S.I.A. L-3', null],
-    ['CASI Carving', null],
-    ['CASI Carving L2', cert('casi', 'carving', 2)],
+    ['CASI Carving', cert('casi', 'carving', 1)],
+    ['casi carve', cert('casi', 'carving', 1)],
+    ['CASI Carving L1', cert('casi', 'carving', 1)],
   ])('%s', (value, expected) => {
     const result = normalizeCertifications(value);
     expect(result.normalized).toBe(true);
@@ -69,7 +75,8 @@ describe('normalizeCertifications: synonyms', () => {
     'CASI Park 3',
     'CSIA Carving',
     'CASI Park Carving 1',
-    'Td',
+    'CASI Carving L2',
+    'CASI Carving Level 4',
     'None',
     'CSIA',
     'L3',
@@ -90,6 +97,7 @@ describe('normalizeCertifications: synonyms', () => {
     expect(normalizeCertifications('')).toEqual({
       certifications: [],
       unresolved: [],
+      trainerStatus: [],
       normalized: false,
     });
   });
@@ -108,6 +116,7 @@ describe('normalizeCertifications: partials from the same row', () => {
         cert('casi', 'regular', 3, ['teaching']),
       ],
       unresolved: [],
+      trainerStatus: [],
       normalized: true,
     });
   });
@@ -185,6 +194,7 @@ describe('normalizeCertifications: partials from the same row', () => {
     expect(normalizeCertifications('CSIA L2, CSIA LV 3 SKI')).toEqual({
       certifications: [cert('csia', 'regular', 3, ['ski'])],
       unresolved: [],
+      trainerStatus: [],
       normalized: true,
     });
   });
@@ -198,14 +208,7 @@ describe('normalizeCertifications: partials from the same row', () => {
     ).toEqual({
       certifications: [cert('csia', 'regular', 1), cert('casi', 'park', 1)],
       unresolved: [PARTIAL_FORM_CASI],
-      normalized: true,
-    });
-  });
-
-  it('"Td" next to a full cert stays unresolved', () => {
-    expect(normalizeCertifications('CSIA L3, Td', 'Csia l3 dg 2025')).toEqual({
-      certifications: [cert('csia', 'regular', 3)],
-      unresolved: ['Td'],
+      trainerStatus: [],
       normalized: true,
     });
   });
@@ -238,6 +241,7 @@ describe('normalizeCertifications: partials from the same row', () => {
     ).toEqual({
       certifications: [],
       unresolved: [PARTIAL_FORM_CSIA, PARTIAL_FORM_CASI, 'Teaching'],
+      trainerStatus: [],
       normalized: true,
     });
   });
@@ -290,6 +294,7 @@ describe('normalizeCertifications: highest only per (org, track)', () => {
         cert('casi', 'park', 2),
       ],
       unresolved: ['Other thing'],
+      trainerStatus: [],
       normalized: true,
     });
   });
@@ -353,7 +358,7 @@ describe('normalizeCertifications: highest only per (org, track)', () => {
     const cells = [
       `CSIA L3, ${PARTIAL_FORM_CASI}, Ped&Teaching`,
       `${PARTIAL_FORM_CSIA}, CASI L2, CSIA LV 3 SKI`,
-      'CASI L3, CASI Park 1, CASI Carving L1',
+      'CASI L3, CASI Park 1, CASI Carving',
       'CSIA L1, CSIA L2, CASI L1, CASI L2, CSIA Park 1',
     ];
     for (const cell of cells) {
@@ -420,6 +425,146 @@ describe('normalizeLocations', () => {
   });
 });
 
+function trainer(
+  discipline: 'ski' | 'snowboard',
+  source: 'rule' | 'llm' = 'rule',
+) {
+  return {
+    discipline,
+    rookieSessionCompleted: true as const,
+    trainerExamPassed: false as const,
+    trainerLevel: 1 as const,
+    source,
+  };
+}
+
+describe('normalizeCertifications: trainer development', () => {
+  it.each([
+    ['CSIA L3, Td', [cert('csia', 'regular', 3)], [trainer('ski')]],
+    ['CASI L2, TD', [cert('casi', 'regular', 2)], [trainer('snowboard')]],
+    ['CASI TD, CSIA L2', [cert('csia', 'regular', 2)], [trainer('snowboard')]],
+    [
+      'CSIA L1, Trainer  Development',
+      [cert('csia', 'regular', 1)],
+      [trainer('ski')],
+    ],
+    ['CASI L1, t d', [cert('casi', 'regular', 1)], [trainer('snowboard')]],
+    ['CSIA TD', [], [trainer('ski')]],
+    [
+      'CSIA L2, CASI L1, CSIA TD, CASI trainerdevelopment',
+      [cert('csia', 'regular', 2), cert('casi', 'regular', 1)],
+      [trainer('ski'), trainer('snowboard')],
+    ],
+    ['CSIA L3, TD, Td', [cert('csia', 'regular', 3)], [trainer('ski')]],
+  ])('%s', (cell, certifications, trainerStatus) => {
+    expect(normalizeCertifications(cell)).toEqual({
+      certifications,
+      trainerStatus,
+      unresolved: [],
+      normalized: true,
+    });
+  });
+
+  it.each([
+    ['Td', [], ['Td']],
+    [
+      'CSIA L2, CASI L1, TD',
+      [cert('csia', 'regular', 2), cert('casi', 'regular', 1)],
+      ['TD'],
+    ],
+    ['CSIA L3 TD', [], ['CSIA L3 TD']],
+    ['CASI L2, Park TD', [cert('casi', 'regular', 2)], ['Park TD']],
+    ['CSIA L2, CSIA CASI TD', [cert('csia', 'regular', 2)], ['CSIA CASI TD']],
+  ])(
+    'leaves the trainer value in %s unresolved',
+    (cell, certifications, unresolved) => {
+      expect(normalizeCertifications(cell)).toEqual({
+        certifications,
+        trainerStatus: [],
+        unresolved,
+        normalized: true,
+      });
+    },
+  );
+
+  it('takes the org from an unresolved value in the same cell', () => {
+    expect(normalizeCertifications(`${PARTIAL_FORM_CASI}, Td`)).toEqual({
+      certifications: [],
+      trainerStatus: [trainer('snowboard')],
+      unresolved: [PARTIAL_FORM_CASI],
+      normalized: true,
+    });
+  });
+
+  it('ignores trainer development in the details text', () => {
+    expect(normalizeCertifications('CSIA L3', 'TD at Blue 2024')).toEqual({
+      certifications: [cert('csia', 'regular', 3)],
+      trainerStatus: [],
+      unresolved: [],
+      normalized: false,
+    });
+  });
+});
+
+describe('trainerDisciplineFor', () => {
+  it.each([
+    ['Td', 'CSIA L3, Td', 'ski'],
+    ['CASI TD', 'CASI TD, CSIA L2', 'snowboard'],
+    ['TD', 'CSIA L2, CASI L1, TD', null],
+    ['Td', 'Td', null],
+    ['CSIA CASI TD', 'CSIA CASI TD', null],
+  ])('%s in %s → %s', (value, cell, expected) => {
+    expect(trainerDisciplineFor(value, cell)).toBe(expected);
+  });
+});
+
+describe('mergeTrainerStatus', () => {
+  it('keeps one entry per discipline, the rule-derived one over the LLM one', () => {
+    expect(
+      mergeTrainerStatus([
+        trainer('ski', 'llm'),
+        trainer('snowboard', 'llm'),
+        trainer('ski'),
+        trainer('snowboard', 'llm'),
+      ]),
+    ).toEqual([trainer('ski'), trainer('snowboard', 'llm')]);
+    expect(mergeTrainerStatus([trainer('ski'), trainer('ski', 'llm')])).toEqual(
+      [trainer('ski')],
+    );
+  });
+});
+
+describe('describeTrainerStatus', () => {
+  it.each([
+    [trainer('ski'), 'Ski Trainer Level 1 (trainer development)'],
+    [trainer('snowboard'), 'Snowboard Trainer Level 1 (trainer development)'],
+  ])('%j → %s', (value, label) => {
+    expect(describeTrainerStatus(value)).toBe(label);
+  });
+});
+
+describe('validateTrainerStatus', () => {
+  const { source, ...ok } = trainer('ski');
+  void source;
+
+  it('accepts trainer level 1 after the rookie session in the allowed discipline', () => {
+    expect(validateTrainerStatus(ok, 'ski')).toEqual(ok);
+  });
+
+  it.each([
+    ['not an object', 'TD', 'ski'],
+    ['no allowed discipline', ok, null],
+    ['other discipline', ok, 'snowboard'],
+    ['unknown discipline', { ...ok, discipline: 'telemark' }, 'ski'],
+    ['rookie session missing', { ...ok, rookieSessionCompleted: false }, 'ski'],
+    ['trainer exam passed', { ...ok, trainerExamPassed: true }, 'ski'],
+    ['trainer level 2', { ...ok, trainerLevel: 2 }, 'ski'],
+    ['trainer level null', { ...ok, trainerLevel: null }, 'ski'],
+  ] as const)('rejects %s', (_label, value, allowed) => {
+    expect(validateTrainerStatus(value, allowed)).toBeNull();
+  });
+});
+
 describe('validateCertification', () => {
   const ok: RosterCertification = cert('csia', 'regular', 3, ['ski']);
   const strip = ({ source, ...rest }: ProposedCertification) => {
@@ -470,7 +615,7 @@ describe('validateCertification', () => {
         partialComponents: ['riding'],
       },
     ],
-    ['carving level 5', strip(cert('casi', 'carving', 5))],
+    ['carving level 2', strip(cert('casi', 'carving', 2))],
     ['partial without components', { ...ok, partialComponents: [] }],
     ['full with components', { ...ok, isPartial: false }],
     [

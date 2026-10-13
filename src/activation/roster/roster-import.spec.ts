@@ -410,7 +410,7 @@ describe('runRosterCli --apply', () => {
       ],
     ]);
     expect(h.writer.setProfileRelations.mock.calls).toEqual([
-      ['ins-for-auth-new-1', [full('csia', 'regular', 3)], ['loc-msl']],
+      ['ins-for-auth-new-1', [full('csia', 'regular', 3)], ['loc-msl'], []],
     ]);
     expect(h.writer.insertInvite.mock.calls).toEqual([
       [
@@ -471,6 +471,7 @@ describe('runRosterCli --apply', () => {
       'ins-for-auth-casey',
       [full('casi', 'park', 1)],
       [],
+      [],
     ]);
   });
 
@@ -514,6 +515,7 @@ describe('runRosterCli --apply', () => {
       expect(h.writer.setProfileRelations.mock.calls).toContainEqual([
         'ins-casey',
         [full('casi', 'park', 1)],
+        [],
         [],
       ]);
       expect(status).toBe('repaired');
@@ -884,7 +886,7 @@ const NORMALIZE_CSV = rosterCsv([
   {
     preferred: 'Sky',
     email: 'sky@example.test',
-    certs: `${PARTIAL_CSIA}, Td`,
+    certs: `${PARTIAL_CSIA}, Trainer course`,
     details: 'CSIA L3 hill 2026',
     locations: 'MSL, Ottawa Region',
   },
@@ -926,7 +928,7 @@ const SKY_ANSWERS = (request: RosterLlmRequest) =>
             reason: 'details mention ski',
           },
           {
-            value: 'Td',
+            value: 'Trainer course',
             certification: {
               org: 'csia',
               track: 'park',
@@ -991,13 +993,17 @@ describe('runRosterCli normalisation review', () => {
         { certification: 'CSIA Level 3', source: 'rule' },
         { certification: 'CASI Level 3 Partial [teaching]', source: 'rule' },
       ],
+      trainerStatus: [],
       locations: [{ key: 'teaching_location.blue_mountain', source: 'rule' }],
       llmProposals: [],
       unresolved: [
         { kind: 'location', value: 'Shanghai', note: NO_REFERENCE_ROW },
       ],
     });
-    expect(report.rows[1].unmappedCertifications).toEqual([PARTIAL_CSIA, 'Td']);
+    expect(report.rows[1].unmappedCertifications).toEqual([
+      PARTIAL_CSIA,
+      'Trainer course',
+    ]);
     expect(report.rows[2].review).toBeUndefined();
     expect(report.counts).toMatchObject({
       rowsNeedingReview: 2,
@@ -1012,7 +1018,7 @@ describe('runRosterCli normalisation review', () => {
     expect(h.logs).toContain(
       `    location "Shanghai" (unresolved: ${NO_REFERENCE_ROW})`,
     );
-    expect(h.logs).toContain('    certification "Td" (unresolved)');
+    expect(h.logs).toContain('    certification "Trainer course" (unresolved)');
     expect(h.logs.some((l) => l.includes('robin@') && l.includes('line'))).toBe(
       false,
     );
@@ -1040,10 +1046,10 @@ describe('runRosterCli normalisation review', () => {
       ],
       [
         {
-          certifications: `${PARTIAL_CSIA}, Td`,
+          certifications: `${PARTIAL_CSIA}, Trainer course`,
           certificationDetails: 'CSIA L3 hill 2026',
           locations: 'MSL, Ottawa Region',
-          unresolvedCertifications: [PARTIAL_CSIA, 'Td'],
+          unresolvedCertifications: [PARTIAL_CSIA, 'Trainer course'],
           unresolvedLocations: ['Ottawa Region'],
         },
       ],
@@ -1081,7 +1087,7 @@ describe('runRosterCli normalisation review', () => {
       unresolved: [
         {
           kind: 'certification',
-          value: 'Td',
+          value: 'Trainer course',
           note: 'LLM: violates certification rules',
         },
         {
@@ -1104,7 +1110,7 @@ describe('runRosterCli normalisation review', () => {
     expect(
       h.logs.some((l) =>
         l.startsWith(
-          'LLM-derived values --apply would write (only with --normalize-with-llm, re-derived and re-validated in that run): 1 certification(s), 0 location(s).',
+          'LLM-derived values --apply would write (only with --normalize-with-llm, re-derived and re-validated in that run): 1 certification(s), 0 trainer status(es), 0 location(s).',
         ),
       ),
     ).toBe(true);
@@ -1151,7 +1157,10 @@ describe('runRosterCli normalisation review', () => {
       'roster.csv',
       '--normalize-with-llm',
     ])) as ImportReport;
-    expect(report.rows[1].unmappedCertifications).toEqual([PARTIAL_CSIA, 'Td']);
+    expect(report.rows[1].unmappedCertifications).toEqual([
+      PARTIAL_CSIA,
+      'Trainer course',
+    ]);
     expect(report.rows[1].review?.unresolved[0]).toEqual({
       kind: 'certification',
       value: PARTIAL_CSIA,
@@ -1203,12 +1212,13 @@ describe('runRosterCli normalisation review', () => {
           },
         ],
         ['loc-bm'],
+        [],
       ],
-      ['ins-for-auth-new-2', [], ['loc-msl']],
-      ['ins-for-auth-new-3', [full('csia', 'regular', 2)], ['loc-bm']],
+      ['ins-for-auth-new-2', [], ['loc-msl'], []],
+      ['ins-for-auth-new-3', [full('csia', 'regular', 2)], ['loc-bm'], []],
     ]);
     expect(h.logs).toContain(
-      'LLM-derived values written by this run: 0 certification(s), 0 location(s). Unresolved values were not written.',
+      'LLM-derived values written by this run: 0 certification(s), 0 trainer status(es), 0 location(s). Unresolved values were not written.',
     );
   });
 
@@ -1235,9 +1245,238 @@ describe('runRosterCli normalisation review', () => {
         },
       ],
       ['loc-msl'],
+      [],
     ]);
     expect(h.logs).toContain(
-      'LLM-derived values written by this run: 1 certification(s), 0 location(s). Unresolved values were not written.',
+      'LLM-derived values written by this run: 1 certification(s), 0 trainer status(es), 0 location(s). Unresolved values were not written.',
+    );
+  });
+});
+
+function trainer(discipline: string, source = 'rule') {
+  return {
+    discipline,
+    rookieSessionCompleted: true,
+    trainerExamPassed: false,
+    trainerLevel: 1,
+    source,
+  };
+}
+
+const TRAINER_CSV = rosterCsv([
+  { email: 'uma@example.test', certs: 'CSIA L3, Td' },
+  { email: 'val@example.test', certs: 'CASI L2, TD' },
+  { email: 'wren@example.test', certs: 'CSIA L2, CASI L1, TD' },
+  { email: 'xia@example.test', certs: 'Td' },
+  { email: 'yuri@example.test', certs: 'CASI TD, CSIA L2' },
+  { email: 'zed@example.test', certs: 'CASI trainer development' },
+]);
+
+function trainerHarness(users: Map<string, ExistingAuthUser> = new Map()) {
+  const h = harness(users);
+  (h.deps.readFile as jest.Mock).mockResolvedValue(TRAINER_CSV);
+  return h;
+}
+
+describe('runRosterCli trainer development', () => {
+  it('shows resolved and unresolved TD values in the dry-run review', async () => {
+    const h = trainerHarness();
+    const report = (await runRosterCli(h.deps, [
+      '--csv',
+      'roster.csv',
+    ])) as ImportReport;
+    expect(
+      report.rows.map((r) => [
+        r.email,
+        r.review?.trainerStatus,
+        r.unmappedCertifications,
+      ]),
+    ).toEqual([
+      [
+        'uma@example.test',
+        [
+          {
+            trainer: 'Ski Trainer Level 1 (trainer development)',
+            source: 'rule',
+          },
+        ],
+        [],
+      ],
+      [
+        'val@example.test',
+        [
+          {
+            trainer: 'Snowboard Trainer Level 1 (trainer development)',
+            source: 'rule',
+          },
+        ],
+        [],
+      ],
+      ['wren@example.test', [], ['TD']],
+      ['xia@example.test', [], ['Td']],
+      [
+        'yuri@example.test',
+        [
+          {
+            trainer: 'Snowboard Trainer Level 1 (trainer development)',
+            source: 'rule',
+          },
+        ],
+        [],
+      ],
+      [
+        'zed@example.test',
+        [
+          {
+            trainer: 'Snowboard Trainer Level 1 (trainer development)',
+            source: 'rule',
+          },
+        ],
+        [],
+      ],
+    ]);
+    expect(report.rows.map((r) => r.trainerStatus)).toEqual([1, 1, 0, 0, 1, 1]);
+    expect(h.logs).toContain(
+      '    trainer Ski Trainer Level 1 (trainer development) (rule)',
+    );
+    expect(h.logs).toContain('    certification "TD" (unresolved)');
+    expect(h.logs).toContain('    certification "Td" (unresolved)');
+    expect(h.factories.writer).not.toHaveBeenCalled();
+  });
+
+  it('--apply passes trainer status only for rows with a resolved TD', async () => {
+    const h = trainerHarness();
+    await runRosterCli(h.deps, ['--apply', '--csv', 'roster.csv']);
+    expect(h.writer.setProfileRelations.mock.calls).toEqual([
+      [
+        'ins-for-auth-new-1',
+        [full('csia', 'regular', 3)],
+        [],
+        [trainer('ski')],
+      ],
+      [
+        'ins-for-auth-new-2',
+        [full('casi', 'regular', 2)],
+        [],
+        [trainer('snowboard')],
+      ],
+      [
+        'ins-for-auth-new-3',
+        [full('csia', 'regular', 2), full('casi', 'regular', 1)],
+        [],
+        [],
+      ],
+      [
+        'ins-for-auth-new-5',
+        [full('csia', 'regular', 2)],
+        [],
+        [trainer('snowboard')],
+      ],
+      ['ins-for-auth-new-6', [], [], [trainer('snowboard')]],
+    ]);
+  });
+
+  describe('rerun for a user with only a trainer status to write', () => {
+    const zed = new Map([
+      ['zed@example.test', { id: 'auth-zed', importedSeason: SEASON }],
+    ]);
+
+    async function rerun(hasRelations: boolean) {
+      const h = trainerHarness(zed);
+      h.writer.findInstructorId.mockImplementation((id: string) =>
+        Promise.resolve(id === 'auth-zed' ? 'ins-zed' : null),
+      );
+      h.writer.hasProfileRelations.mockResolvedValue(hasRelations);
+      h.writer.insertInvite.mockImplementation((i) =>
+        Promise.resolve(i.auth_user_id !== 'auth-zed'),
+      );
+      const report = (await runRosterCli(h.deps, [
+        '--apply',
+        '--csv',
+        'roster.csv',
+      ])) as ImportReport;
+      const row = report.rows.find((r) => r.email === 'zed@example.test');
+      return { h, row };
+    }
+
+    it('checks for existing relations and writes the trainer status the crashed run never wrote', async () => {
+      const { h, row } = await rerun(false);
+      expect(h.writer.hasProfileRelations.mock.calls).toContainEqual([
+        'ins-zed',
+      ]);
+      expect(h.writer.setProfileRelations.mock.calls).toContainEqual([
+        'ins-zed',
+        [],
+        [],
+        [trainer('snowboard')],
+      ]);
+      expect(row).toMatchObject({ status: 'repaired', relationsWritten: true });
+    });
+
+    it('leaves existing relations untouched', async () => {
+      const { h, row } = await rerun(true);
+      expect(
+        h.writer.setProfileRelations.mock.calls.map(([id]) => id),
+      ).not.toContain('ins-zed');
+      expect(row).toMatchObject({
+        status: 'already_imported',
+        relationsWritten: false,
+      });
+    });
+  });
+
+  it('accepts a validated LLM trainer status and writes it with --apply', async () => {
+    const h = normalizeHarness((request) =>
+      request.unresolvedCertifications.includes('Trainer course')
+        ? {
+            certifications: [
+              {
+                value: 'Trainer course',
+                certification: null,
+                trainer: {
+                  discipline: 'ski',
+                  rookieSessionCompleted: true,
+                  trainerExamPassed: false,
+                  trainerLevel: 1,
+                },
+                confidence: 0.9,
+                reason: 'trainer development',
+              },
+            ],
+            locations: [],
+          }
+        : { certifications: [], locations: [] },
+    );
+    const report = (await runRosterCli(h.deps, [
+      '--apply',
+      '--csv',
+      'roster.csv',
+      '--normalize-with-llm',
+    ])) as ImportReport;
+    expect(report.rows[1]).toMatchObject({
+      trainerStatus: 1,
+      llmTrainerStatus: 1,
+      unmappedCertifications: [PARTIAL_CSIA],
+    });
+    expect(report.rows[1].review).toMatchObject({
+      trainerStatus: [
+        { trainer: 'Ski Trainer Level 1 (trainer development)', source: 'llm' },
+      ],
+      llmProposals: [
+        {
+          value: 'Trainer course',
+          proposal: 'Ski Trainer Level 1 (trainer development)',
+        },
+      ],
+    });
+    expect(h.writer.setProfileRelations.mock.calls[1]).toEqual([
+      'ins-for-auth-new-2',
+      [],
+      ['loc-msl'],
+      [trainer('ski', 'llm')],
+    ]);
+    expect(h.logs).toContain(
+      'LLM-derived values written by this run: 0 certification(s), 1 trainer status(es), 0 location(s). Unresolved values were not written.',
     );
   });
 });

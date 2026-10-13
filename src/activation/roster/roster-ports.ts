@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { NewInvite } from '../activation.types';
-import type { RosterCertification } from './roster-normalize';
+import type {
+  RosterCertification,
+  RosterTrainerStatus,
+} from './roster-normalize';
 
 export const IMPORT_SEASON_CLAIM = 'roster_import_season';
 const USERS_PAGE_SIZE = 1000;
@@ -30,10 +33,12 @@ export interface RosterWriter {
   findInstructorId(authUserId: string): Promise<string | null>;
   insertInstructor(instructor: NewRosterInstructor): Promise<string>;
   hasProfileRelations(instructorId: string): Promise<boolean>;
+  /** Sends `trainer_status` only when `trainerStatus` is non-empty, so existing trainer rows are never cleared. */
   setProfileRelations(
     instructorId: string,
     certifications: RosterCertification[],
     teachingLocationIds: string[],
+    trainerStatus: RosterTrainerStatus[],
   ): Promise<void>;
   /** Creates the invite unless one exists for (instructor, season); true when created. */
   insertInvite(invite: NewInvite): Promise<boolean>;
@@ -150,13 +155,17 @@ export class SupabaseRosterWriter implements RosterWriter {
     for (const table of [
       'instructor_certifications',
       'instructors_teaching_locations',
+      'instructor_trainer_status',
     ]) {
       const { count, error } = await this.supabase
         .from(table)
         .select('instructor_id', { count: 'exact', head: true })
         .eq('instructor_id', instructorId);
       if (error) {
-        throw fail('load certifications and locations', error.message);
+        throw fail(
+          'load certifications, locations and trainer status',
+          error.message,
+        );
       }
       if ((count ?? 0) > 0) {
         return true;
@@ -169,6 +178,7 @@ export class SupabaseRosterWriter implements RosterWriter {
     instructorId: string,
     certifications: RosterCertification[],
     teachingLocationIds: string[],
+    trainerStatus: RosterTrainerStatus[],
   ): Promise<void> {
     const { error } = await this.supabase.rpc('update_instructor_profile', {
       p_instructor_id: instructorId,
@@ -181,6 +191,14 @@ export class SupabaseRosterWriter implements RosterWriter {
           partial_components: c.partialComponents,
         })),
         teaching_location_ids: teachingLocationIds,
+        ...(trainerStatus.length > 0 && {
+          trainer_status: trainerStatus.map((t) => ({
+            discipline: t.discipline,
+            rookie_session_completed: t.rookieSessionCompleted,
+            trainer_exam_passed: t.trainerExamPassed,
+            trainer_level: t.trainerLevel,
+          })),
+        }),
       },
     });
     if (error) {

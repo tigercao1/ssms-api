@@ -3,6 +3,7 @@ import {
   normalizeCertifications,
   normalizeLocations,
   type ProposedCertification,
+  type ProposedTrainerStatus,
 } from './roster-normalize';
 
 export type DisplayNameSource = 'preferred' | 'legal_first_token' | 'none';
@@ -17,6 +18,7 @@ export interface RosterEntry {
   dateOfBirth: string | null;
   dateOfBirthStatus: DateOfBirthStatus;
   certifications: ProposedCertification[];
+  trainerStatus: ProposedTrainerStatus[];
   unmappedCertifications: string[];
   locationKeys: string[];
   llmLocationKeys: string[];
@@ -193,6 +195,7 @@ export function parseRosterCsv(
       dateOfBirth: dob.value,
       dateOfBirthStatus: dob.status,
       certifications: certs.certifications,
+      trainerStatus: certs.trainerStatus,
       unmappedCertifications: certs.unresolved,
       locationKeys: locations.keys,
       llmLocationKeys: [],

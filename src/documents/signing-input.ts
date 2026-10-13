@@ -29,7 +29,7 @@ export interface SigningBody {
   signatures?: Record<string, unknown>;
 }
 
-/** Values used when a field is left blank and has a prefill. */
+/** Server-side values stamped into prefilled fields, whatever the client sent. */
 export interface SigningPrefills {
   email: string;
   dateSigned: string;
@@ -119,7 +119,7 @@ function prefillFor(
   field: TemplateFieldRow,
   signerName: string,
   prefills: SigningPrefills,
-): string {
+): string | null {
   switch (field.prefill) {
     case 'full_name':
       return signerName;
@@ -128,7 +128,7 @@ function prefillFor(
     case 'date_signed':
       return prefills.dateSigned;
     default:
-      return field.type === 'full_name' ? signerName : '';
+      return null;
   }
 }
 
@@ -138,10 +138,14 @@ function parseText(
   signerName: string,
   prefills: SigningPrefills,
 ): string {
+  const prefilled = prefillFor(field, signerName, prefills);
+  if (prefilled !== null) {
+    return prefilled;
+  }
   if (raw !== undefined && raw !== null && typeof raw !== 'string') {
     throw new SigningInputError(`Field ${label(field)} must be text`);
   }
-  const value = raw?.trim() || prefillFor(field, signerName, prefills);
+  const value = raw?.trim() || (field.type === 'full_name' ? signerName : '');
   if ([...value].length > MAX_FIELD_VALUE_LENGTH) {
     throw new SigningInputError(
       `Field ${label(field)} is longer than ${MAX_FIELD_VALUE_LENGTH} characters`,
@@ -158,8 +162,10 @@ function parseText(
 /**
  * Checks a `sign` body against the template's fields: a signer name, every
  * required field present, values of the right type, signature PNGs at most
- * {@link MAX_SIGNATURE_PNG_BYTES}, and no values for unknown fields. Blank
- * text fields take their prefill. Throws {@link SigningInputError}.
+ * {@link MAX_SIGNATURE_PNG_BYTES}, and no values for unknown fields.
+ * Prefilled fields always get the server's value (`full_name` = signer name,
+ * `email` and `date_signed` from {@link SigningPrefills}); any client value
+ * for them is ignored. Throws {@link SigningInputError}.
  */
 export function parseSigningInput(
   fields: readonly TemplateFieldRow[],

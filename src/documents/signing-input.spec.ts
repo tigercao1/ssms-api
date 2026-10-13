@@ -33,6 +33,7 @@ const FIELDS = [
   field('email', 'text', { prefill: 'email', required: false }),
   field('when', 'date', { prefill: 'date_signed' }),
   field('note', 'text', { required: false }),
+  field('due', 'date', { required: false }),
   field('agree', 'checkbox'),
   field('optIn', 'checkbox', { required: false }),
 ];
@@ -68,10 +69,10 @@ describe('parseSigningInput', () => {
     expect(input.signatures).not.toHaveProperty('ini');
   });
 
-  it('prefers sent values, accepts data URLs and typed signatures', () => {
+  it('keeps sent values for plain fields, accepts data URLs and typed signatures', () => {
     const input = parse({
       ...valid,
-      values: { agree: true, name: ' 王小明 ', when: '2026-01-31', note: 'hi' },
+      values: { agree: true, name: ' 王小明 ', due: '2026-01-31', note: 'hi' },
       signatures: {
         sig: { mode: 'drawn', png: `data:image/png;base64,${PNG}` },
         ini: { mode: 'typed', text: ' AW ' },
@@ -79,10 +80,33 @@ describe('parseSigningInput', () => {
     });
     expect(input.values).toMatchObject({
       name: '王小明',
-      when: '2026-01-31',
+      due: '2026-01-31',
       note: 'hi',
     });
     expect(input.signatures.ini).toEqual({ mode: 'typed', text: 'AW' });
+  });
+
+  it('stamps server values into prefilled fields and ignores client values for them', () => {
+    const input = parse(
+      {
+        ...valid,
+        values: {
+          agree: true,
+          when: '1999-01-01',
+          email: 'spoof@example.com',
+          sameName: 'Someone Else',
+        },
+      },
+      [
+        ...FIELDS,
+        field('sameName', 'text', { prefill: 'full_name', required: false }),
+      ],
+    );
+    expect(input.values).toMatchObject({
+      when: '2026-10-12',
+      email: 'alice@example.com',
+      sameName: 'Alice Wang',
+    });
   });
 
   it.each<[string, SigningBody, RegExp]>([
@@ -110,12 +134,12 @@ describe('parseSigningInput', () => {
     ],
     [
       'bad date',
-      { ...valid, values: { agree: true, when: '2026-02-30' } },
+      { ...valid, values: { agree: true, due: '2026-02-30' } },
       /YYYY-MM-DD/,
     ],
     [
       'loose date',
-      { ...valid, values: { agree: true, when: 'Oct 12' } },
+      { ...valid, values: { agree: true, due: 'Oct 12' } },
       /YYYY-MM-DD/,
     ],
     [

@@ -55,7 +55,7 @@ export const NO_SIGNED_COPY = 'This document has no signed copy';
 export const TEMPLATE_PDF_UNAVAILABLE =
   'The document PDF is not available; ask an admin to upload it again';
 
-/** Fixed consent wording, printed on the audit page of every signed copy. */
+/** Fixed consent wording: returned to the signer by `open` and printed on the audit page. */
 export const SIGNING_CONSENT = {
   en: 'I agree to sign this document electronically. My electronic signature has the same effect as my handwritten signature.',
   zh: '我同意以电子方式签署本文件。我的电子签名与手写签名具有同等效力。',
@@ -64,6 +64,18 @@ export const SIGNING_CONSENT = {
 const OPEN_STATUSES: DocumentAssignmentRow['status'][] = ['assigned', 'viewed'];
 const USER_AGENT_MAX_LENGTH = 512;
 const FILENAME_UNSAFE = /[\\/:*?"<>|\p{Cc}]+/gu;
+
+const TORONTO_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Toronto',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** The calendar date in America/Toronto as YYYY-MM-DD. */
+export function torontoDate(at: Date): string {
+  return TORONTO_DATE.format(at);
+}
 
 /** Request facts recorded as signing evidence. */
 export interface SigningEvidence {
@@ -122,6 +134,7 @@ export class DocumentSigningService {
       assignment: toAssignment(row),
       template: toSigningTemplate(template),
       sourceUrl,
+      consentText: { en: SIGNING_CONSENT.en, zh: SIGNING_CONSENT.zh },
     };
   }
 
@@ -216,7 +229,7 @@ export class DocumentSigningService {
     try {
       return parseSigningInput(template.fields, dto, {
         email: instructor.email,
-        dateSigned: now.toISOString().slice(0, 10),
+        dateSigned: torontoDate(now),
       });
     } catch (err) {
       if (err instanceof SigningInputError) {

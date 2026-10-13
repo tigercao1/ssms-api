@@ -353,6 +353,8 @@ export interface SigningDocument {
   assignment: Assignment;
   template: SigningTemplate;
   sourceUrl: string | null;
+  /** The consent wording to show; the same text is printed on the audit page. */
+  consentText: { en: string; zh: string };
 }
 
 /** `POST /me/documents/:assignmentId/complete`; `signedUrl` only for `sign` documents. */

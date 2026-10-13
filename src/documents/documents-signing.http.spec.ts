@@ -34,6 +34,7 @@ import {
 import {
   DocumentSigningService,
   SIGNING_CONSENT,
+  torontoDate,
 } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -183,6 +184,14 @@ const validSign = {
   },
 };
 
+describe('torontoDate', () => {
+  it('uses the America/Toronto calendar date', () => {
+    expect(torontoDate(new Date('2026-10-13T03:30:00Z'))).toBe('2026-10-12');
+    expect(torontoDate(new Date('2026-10-13T04:30:00Z'))).toBe('2026-10-13');
+    expect(torontoDate(new Date('2027-01-15T04:59:00Z'))).toBe('2027-01-14');
+  });
+});
+
 describe('documents signing HTTP', () => {
   let ctx: Awaited<ReturnType<typeof build>>;
   const http = () => request(ctx.app.getHttpServer());
@@ -295,6 +304,10 @@ describe('documents signing HTTP', () => {
         ]) as unknown,
       });
       expect(body.sourceUrl).toBe('memory://GET/templates/t/source.pdf');
+      expect(res.body).toHaveProperty('consentText', {
+        en: SIGNING_CONSENT.en,
+        zh: SIGNING_CONSENT.zh,
+      });
       expect(body.assignment).not.toHaveProperty('signerIp');
       const viewedAt = body.assignment.viewedAt;
       const again = await open(ctx.signAssignment.id).expect(200);
@@ -433,7 +446,7 @@ describe('documents signing HTTP', () => {
           agree: true,
           note: '已存档 on file',
           name: '王小明 Alice Wang',
-          when: row.completed_at!.slice(0, 10),
+          when: torontoDate(new Date(row.completed_at!)),
         },
       });
       expect(row.viewed_at).not.toBe(row.completed_at);

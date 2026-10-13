@@ -1,4 +1,8 @@
 import { Module } from '@nestjs/common';
+import { RolesGuard } from '../admin/roles.guard';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { MailerModule } from '../mailer/mailer.module';
+import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
 import {
@@ -6,6 +10,10 @@ import {
   SupabaseDocumentAssignmentsRepository,
 } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentNotificationsService } from './document-notifications.service';
+import { DocumentOnboardingService } from './document-onboarding.service';
+import { DocumentRemindersAuthGuard } from './document-reminders-auth.guard';
+import { DocumentRemindersService } from './document-reminders.service';
 import { DocumentSigningService } from './document-signing.service';
 import {
   DocumentSubjectsRepository,
@@ -16,6 +24,7 @@ import {
   SupabaseDocumentTemplatesRepository,
 } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
+import { InternalDocumentsController } from './internal-documents.controller';
 import { MeDocumentsController } from './me-documents.controller';
 import { MeDocumentsService } from './me-documents.service';
 import { PdfWorkQueue } from './pdf-work-queue';
@@ -25,10 +34,13 @@ import {
 } from './private-storage.client';
 
 @Module({
+  imports: [MailerModule],
   controllers: [
     AdminDocumentTemplatesController,
     AdminDocumentAssignmentsController,
     MeDocumentsController,
+    AdminDocumentRemindersController,
+    InternalDocumentsController,
   ],
   providers: [
     { provide: PrivateStorageClient, useClass: R2PrivateStorageClient },
@@ -49,6 +61,12 @@ import {
     DocumentAssignmentsService,
     MeDocumentsService,
     DocumentSigningService,
+    DocumentNotificationsService,
+    DocumentOnboardingService,
+    DocumentRemindersService,
+    DocumentRemindersAuthGuard,
+    SupabaseAuthGuard,
+    RolesGuard,
   ],
   exports: [
     PrivateStorageClient,
@@ -57,6 +75,8 @@ import {
     DocumentSubjectsRepository,
     PdfWorkQueue,
     DocumentAssignmentsService,
+    DocumentNotificationsService,
+    DocumentOnboardingService,
   ],
 })
 export class DocumentsModule {}

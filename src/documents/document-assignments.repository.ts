@@ -24,6 +24,7 @@ export const DOCUMENT_ASSIGNMENT_COLUMNS =
   'description_en, description_zh, required, is_active, sort_order)';
 
 export const SUBJECT_ID_CHUNK = 100;
+const OPEN_STATUSES = ['assigned', 'viewed'];
 
 export type DocumentAssignmentWrite = Partial<
   Omit<DocumentAssignmentRow, 'id' | 'template' | 'inserted_at' | 'updated_at'>
@@ -58,6 +59,14 @@ export abstract class DocumentAssignmentsRepository {
     statuses: AssignmentStatus[],
     patch: DocumentAssignmentWrite,
   ): Promise<DocumentAssignmentRow | null>;
+  /**
+   * Open (`assigned` or `viewed`) assignments of a subject type that were
+   * assigned before `cutoff` and not reminded since it, oldest first.
+   */
+  abstract listDueForReminder(
+    subjectType: SubjectType,
+    cutoff: Date,
+  ): Promise<DocumentAssignmentRow[]>;
 }
 
 @Injectable()
@@ -172,5 +181,24 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
       .maybeSingle()) as DbResult<DocumentAssignmentRow>;
     check(error, 'update document assignment');
     return data ?? null;
+  }
+
+  async listDueForReminder(
+    subjectType: SubjectType,
+    cutoff: Date,
+  ): Promise<DocumentAssignmentRow[]> {
+    const at = cutoff.toISOString();
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .select(DOCUMENT_ASSIGNMENT_COLUMNS)
+      .eq('subject_type', subjectType)
+      .in('status', OPEN_STATUSES)
+      .lt('assigned_at', at)
+      .or(`reminder_sent_at.is.null,reminder_sent_at.lt.${at}`)
+      .order('assigned_at', { ascending: true })) as DbResult<
+      DocumentAssignmentRow[]
+    >;
+    check(error, 'list document assignments due for a reminder');
+    return data ?? [];
   }
 }

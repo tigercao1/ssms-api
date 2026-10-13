@@ -58,6 +58,7 @@ describe('validateLlmResult', () => {
       certifications: [
         { value: REQUEST.unresolvedCertifications[0], certification: PARTIAL },
       ],
+      trainerStatus: [],
       locations: [
         { value: 'Ottawa Region', key: 'teaching_location.tremblant' },
       ],
@@ -108,6 +109,78 @@ describe('validateLlmResult', () => {
     expect(result.rejected.find((r) => r.value === 'Td')?.reason).toMatch(
       reason,
     );
+  });
+
+  describe('trainer development', () => {
+    const TRAINER = {
+      discipline: 'snowboard',
+      rookieSessionCompleted: true,
+      trainerExamPassed: false,
+      trainerLevel: 1,
+    };
+    const answer = (trainer: unknown, certification: unknown = null) => ({
+      certifications: [{ ...item('Td', certification), trainer }],
+      locations: [],
+    });
+
+    it('accepts trainer level 1 in the discipline of the row org', () => {
+      const result = validateLlmResult(answer(TRAINER), REQUEST);
+      expect(result.trainerStatus).toEqual([
+        { value: 'Td', trainerStatus: TRAINER },
+      ]);
+      expect(result.certifications).toEqual([]);
+      expect(result.rejected.map((r) => r.value)).not.toContain('Td');
+    });
+
+    it('accepts a certification and a trainer status for the same value', () => {
+      const full = { ...PARTIAL, isPartial: false, partialComponents: [] };
+      const result = validateLlmResult(answer(TRAINER, full), REQUEST);
+      expect(result.certifications).toEqual([
+        { value: 'Td', certification: full },
+      ]);
+      expect(result.trainerStatus).toEqual([
+        { value: 'Td', trainerStatus: TRAINER },
+      ]);
+    });
+
+    it.each([
+      ['another discipline', { ...TRAINER, discipline: 'ski' }],
+      ['trainer level 2', { ...TRAINER, trainerLevel: 2 }],
+      ['no rookie session', { ...TRAINER, rookieSessionCompleted: false }],
+      ['trainer exam passed', { ...TRAINER, trainerExamPassed: true }],
+      ['not an object', 'TD'],
+    ])('rejects %s', (_label, trainer) => {
+      const result = validateLlmResult(answer(trainer), REQUEST);
+      expect(result.trainerStatus).toEqual([]);
+      expect(result.rejected).toContainEqual({
+        value: 'Td',
+        reason: 'violates trainer rules',
+      });
+    });
+
+    it('rejects any discipline when the row names both orgs', () => {
+      const result = validateLlmResult(answer(TRAINER), {
+        ...REQUEST,
+        certifications: 'CSIA L2, CASI L1, Td',
+      });
+      expect(result.trainerStatus).toEqual([]);
+      expect(result.rejected).toContainEqual({
+        value: 'Td',
+        reason: 'violates trainer rules',
+      });
+    });
+
+    it('rejects a trainer status alongside an invalid certification', () => {
+      const result = validateLlmResult(
+        answer(TRAINER, { ...PARTIAL, level: 5 }),
+        REQUEST,
+      );
+      expect(result.trainerStatus).toEqual([]);
+      expect(result.rejected).toContainEqual({
+        value: 'Td',
+        reason: 'violates certification rules',
+      });
+    });
   });
 
   it('rejects location keys outside the allowed list, null keys and low confidence', () => {
@@ -171,6 +244,7 @@ describe('validateLlmResult', () => {
   it.each([null, 'text', [1], 42])('rejects everything for %j', (output) => {
     expect(validateLlmResult(output, REQUEST)).toEqual({
       certifications: [],
+      trainerStatus: [],
       locations: [],
       rejected: [
         ...REQUEST.unresolvedCertifications,
@@ -288,10 +362,7 @@ describe('GeminiRosterNormalizer', () => {
       certifications: 'CSIA L3 Partial (Please specify in "Other"), Td',
       certificationDetails: 'CSIA L3 2025',
       locations: 'MSL, Ottawa Region',
-      unresolvedCertifications: [
-        'CSIA L3 Partial (Please specify in "Other")',
-        'Td',
-      ],
+      unresolvedCertifications: ['CSIA L3 Partial (Please specify in "Other")'],
       unresolvedLocations: ['Ottawa Region'],
     });
     for (const secret of [

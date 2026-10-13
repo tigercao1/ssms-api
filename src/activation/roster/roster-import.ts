@@ -17,7 +17,9 @@ import {
 } from './roster-llm';
 import {
   describeCertification,
+  describeTrainerStatus,
   keepHighest,
+  mergeTrainerStatus,
   type ValueSource,
 } from './roster-normalize';
 import type {
@@ -53,6 +55,7 @@ const KEY_NOT_IN_DATABASE = '(key not in database)';
 export interface RowReview {
   raw: RosterRawValues;
   certifications: { certification: string; source: ValueSource }[];
+  trainerStatus: { trainer: string; source: ValueSource }[];
   locations: { key: string; source: ValueSource }[];
   llmProposals: { value: string; proposal: string }[];
   unresolved: {
@@ -78,10 +81,12 @@ export interface RowReport {
   displayNameSource: RosterEntry['displayNameSource'];
   dateOfBirth: RosterEntry['dateOfBirthStatus'];
   certifications: number;
+  trainerStatus: number;
   locations: number;
   unmappedCertifications: string[];
   unmappedLocations: string[];
   llmCertifications: number;
+  llmTrainerStatus: number;
   llmLocations: number;
   review?: RowReview;
   relationsWritten?: boolean;
@@ -336,10 +341,13 @@ async function plan(
       displayNameSource: entry.displayNameSource,
       dateOfBirth: entry.dateOfBirthStatus,
       certifications: entry.certifications.length,
+      trainerStatus: entry.trainerStatus.length,
       locations: entry.locationKeys.length,
       unmappedCertifications: entry.unmappedCertifications,
       unmappedLocations: entry.unmappedLocations,
       llmCertifications: entry.certifications.filter((c) => c.source === 'llm')
+        .length,
+      llmTrainerStatus: entry.trainerStatus.filter((t) => t.source === 'llm')
         .length,
       llmLocations: entry.llmLocationKeys.length,
       review: reviewOf(entry),
@@ -364,6 +372,10 @@ function reviewOf(entry: RosterEntry): RowReview | undefined {
     certifications: entry.certifications.map((c) => ({
       certification: describeCertification(c),
       source: c.source,
+    })),
+    trainerStatus: entry.trainerStatus.map((t) => ({
+      trainer: describeTrainerStatus(t),
+      source: t.source,
     })),
     locations: entry.locationKeys.map((key) => ({
       key,
@@ -411,7 +423,10 @@ async function normalizeEntryWithLlm(
     };
   }
   const result = validateLlmResult(output, request);
-  const certValues = result.certifications.map((c) => c.value);
+  const certValues = [
+    ...result.certifications.map((c) => c.value),
+    ...result.trainerStatus.map((t) => t.value),
+  ];
   const locationValues = result.locations.map((l) => l.value);
   const newKeys = [
     ...new Set(
@@ -429,6 +444,13 @@ async function normalizeEntryWithLlm(
         source: 'llm' as const,
       })),
     ]),
+    trainerStatus: mergeTrainerStatus([
+      ...entry.trainerStatus,
+      ...result.trainerStatus.map((t) => ({
+        ...t.trainerStatus,
+        source: 'llm' as const,
+      })),
+    ]),
     unmappedCertifications: entry.unmappedCertifications.filter(
       (v) => !certValues.includes(v),
     ),
@@ -442,6 +464,10 @@ async function normalizeEntryWithLlm(
       ...result.certifications.map((c) => ({
         value: c.value,
         proposal: describeCertification(c.certification),
+      })),
+      ...result.trainerStatus.map((t) => ({
+        value: t.value,
+        proposal: describeTrainerStatus(t.trainerStatus),
       })),
       ...result.locations.map((l) => ({ value: l.value, proposal: l.key })),
     ],
@@ -503,7 +529,9 @@ async function applyEntry(
       dateOfBirth: entry.dateOfBirth,
     }));
   const hasRelations =
-    entry.certifications.length > 0 || entry.locationKeys.length > 0;
+    entry.certifications.length > 0 ||
+    entry.locationKeys.length > 0 ||
+    entry.trainerStatus.length > 0;
   const writesRelations =
     hasRelations &&
     (existingInstructorId === null ||
@@ -513,6 +541,7 @@ async function applyEntry(
       instructorId,
       entry.certifications,
       entry.locationKeys.map((k) => locationIds.get(k) as string),
+      entry.trainerStatus,
     );
   }
   const createdInvite = await writer.insertInvite({
@@ -533,7 +562,7 @@ async function applyEntry(
 
 function llmToWrite(
   rows: RowReport[],
-  field: 'llmCertifications' | 'llmLocations',
+  field: 'llmCertifications' | 'llmTrainerStatus' | 'llmLocations',
 ): number {
   return rows
     .filter((r) =>
@@ -591,6 +620,7 @@ function buildImportReport(
         .length,
       rowsNeedingReview: rows.filter((r) => r.review !== undefined).length,
       llmCertificationsToWrite: llmToWrite(rows, 'llmCertifications'),
+      llmTrainerStatusToWrite: llmToWrite(rows, 'llmTrainerStatus'),
       llmLocationsToWrite: llmToWrite(rows, 'llmLocations'),
     },
     unmappedValues: {
@@ -624,12 +654,11 @@ function printImportReport(deps: RosterDeps, report: ImportReport): void {
     deps.log(`  ${JSON.stringify(value)} × ${n}`);
   }
   printReview(deps, report.rows);
-  const llmCerts = report.counts.llmCertificationsToWrite;
-  const llmLocations = report.counts.llmLocationsToWrite;
+  const llmValues = `${report.counts.llmCertificationsToWrite} certification(s), ${report.counts.llmTrainerStatusToWrite} trainer status(es), ${report.counts.llmLocationsToWrite} location(s)`;
   deps.log(
     report.mode === 'apply'
-      ? `LLM-derived values written by this run: ${llmCerts} certification(s), ${llmLocations} location(s). Unresolved values were not written.`
-      : `LLM-derived values --apply would write (only with ${LLM_FLAG}, re-derived and re-validated in that run): ${llmCerts} certification(s), ${llmLocations} location(s). Unresolved values are never written.`,
+      ? `LLM-derived values written by this run: ${llmValues}. Unresolved values were not written.`
+      : `LLM-derived values --apply would write (only with ${LLM_FLAG}, re-derived and re-validated in that run): ${llmValues}. Unresolved values are never written.`,
   );
   if (report.existingUsers.length > 0) {
     deps.log('Already in auth.users (skipped):');
@@ -660,6 +689,9 @@ function printReview(deps: RosterDeps, rows: RowReport[]): void {
     deps.log(`    raw locations: ${JSON.stringify(review.raw.locations)}`);
     for (const c of review.certifications) {
       deps.log(`    certification ${c.certification} (${c.source})`);
+    }
+    for (const t of review.trainerStatus) {
+      deps.log(`    trainer ${t.trainer} (${t.source})`);
     }
     for (const l of review.locations) {
       deps.log(`    location ${l.key} (${l.source})`);
@@ -707,11 +739,11 @@ export async function runDryRun(
 }
 
 /**
- * Creates the auth user, pending instructor, certifications, locations and an
- * unsent invite per new email. Users that exist and were not created by this
+ * Creates the auth user, pending instructor, certifications, locations,
+ * trainer status and an unsent invite per new email. Users that exist and were not created by this
  * season's import are skipped untouched. Users it did create are completed:
- * a missing instructor or invite is added, and certifications and locations
- * are written only when the instructor has none yet.
+ * a missing instructor or invite is added, and certifications, locations and
+ * trainer status are written only when the instructor has none of them yet.
  */
 export async function runApply(
   deps: RosterDeps,

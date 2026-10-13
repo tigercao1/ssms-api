@@ -124,6 +124,7 @@ describe('parseRosterCsv', () => {
             source: 'rule',
           },
         ],
+        trainerStatus: [],
         unmappedCertifications: [],
         locationKeys: [
           'teaching_location.moonstone',
@@ -157,7 +158,16 @@ describe('parseRosterCsv', () => {
             source: 'rule',
           },
         ],
-        unmappedCertifications: ['Td'],
+        trainerStatus: [
+          {
+            discipline: 'snowboard',
+            rookieSessionCompleted: true,
+            trainerExamPassed: false,
+            trainerLevel: 1,
+            source: 'rule',
+          },
+        ],
+        unmappedCertifications: [],
         locationKeys: [],
         llmLocationKeys: [],
         unmappedLocations: ['Lakeridge (Weekdays only)'],

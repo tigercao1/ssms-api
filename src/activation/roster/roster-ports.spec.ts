@@ -204,7 +204,7 @@ describe('SupabaseRosterWriter', () => {
     );
   });
 
-  it('sets certifications and locations through update_instructor_profile', async () => {
+  it('sets certifications and locations through update_instructor_profile without a trainer_status key', async () => {
     const db = new FakeSupabase();
     const writer = new SupabaseRosterWriter(db.asClient());
     await writer.setProfileRelations(
@@ -226,6 +226,7 @@ describe('SupabaseRosterWriter', () => {
         },
       ],
       ['loc-1'],
+      [],
     );
     expect(db.rpcCalls).toEqual([
       {
@@ -255,22 +256,67 @@ describe('SupabaseRosterWriter', () => {
       },
     ]);
     db.rpcResult = { data: null, error: { message: 'cert_park_level' } };
-    await expect(writer.setProfileRelations('ins', [], [])).rejects.toThrow(
+    await expect(writer.setProfileRelations('ins', [], [], [])).rejects.toThrow(
       'Failed to set certifications and locations: cert_park_level',
     );
   });
 
-  it('reports whether an instructor has any certification or teaching location', async () => {
+  it('sends trainer_status only when the row has a resolved trainer status', async () => {
+    const db = new FakeSupabase();
+    const writer = new SupabaseRosterWriter(db.asClient());
+    await writer.setProfileRelations(
+      'ins',
+      [],
+      [],
+      [
+        {
+          discipline: 'snowboard',
+          rookieSessionCompleted: true,
+          trainerExamPassed: false,
+          trainerLevel: 1,
+        },
+      ],
+    );
+    await writer.setProfileRelations('ins', [], [], []);
+    expect(db.rpcCalls.map((c) => c.params)).toEqual([
+      {
+        p_instructor_id: 'ins',
+        p_patch: {
+          certifications: [],
+          teaching_location_ids: [],
+          trainer_status: [
+            {
+              discipline: 'snowboard',
+              rookie_session_completed: true,
+              trainer_exam_passed: false,
+              trainer_level: 1,
+            },
+          ],
+        },
+      },
+      {
+        p_instructor_id: 'ins',
+        p_patch: { certifications: [], teaching_location_ids: [] },
+      },
+    ]);
+  });
+
+  it('reports whether an instructor has any certification, teaching location or trainer status', async () => {
     const db = new FakeSupabase();
     db.queue.push(
       { data: null, count: 1, error: null },
       { data: null, count: 0, error: null },
       { data: null, count: 2, error: null },
+      { data: null, count: 0, error: null },
+      { data: null, count: null, error: null },
+      { data: null, count: 1, error: null },
+      { data: null, count: null, error: null },
       { data: null, count: null, error: null },
       { data: null, count: null, error: null },
       { data: null, error: { message: 'down' } },
     );
     const writer = new SupabaseRosterWriter(db.asClient());
+    expect(await writer.hasProfileRelations('ins')).toBe(true);
     expect(await writer.hasProfileRelations('ins')).toBe(true);
     expect(await writer.hasProfileRelations('ins')).toBe(true);
     expect(await writer.hasProfileRelations('ins')).toBe(false);
@@ -280,13 +326,17 @@ describe('SupabaseRosterWriter', () => {
       'instructors_teaching_locations',
       'instructor_certifications',
       'instructors_teaching_locations',
+      'instructor_trainer_status',
+      'instructor_certifications',
+      'instructors_teaching_locations',
+      'instructor_trainer_status',
     ]);
     expect(db.ops(0)).toEqual([
       ['select', ['instructor_id', { count: 'exact', head: true }]],
       ['eq', ['instructor_id', 'ins']],
     ]);
     await expect(writer.hasProfileRelations('ins')).rejects.toThrow(
-      'Failed to load certifications and locations: down',
+      'Failed to load certifications, locations and trainer status: down',
     );
   });
 

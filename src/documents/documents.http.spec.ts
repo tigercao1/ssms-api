@@ -1,0 +1,961 @@
+import { PDFDocument } from '@cantoo/pdf-lib';
+import { ConfigService } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import {
+  ADMIN_AUTH as admin,
+  ADMIN_USER_ID,
+  certificationUploadRow,
+  INSTRUCTOR_AUTH,
+  INSTRUCTOR_USER_ID,
+  InMemoryDocumentAssignmentsRepository,
+  InMemoryDocumentSubjectsRepository,
+  InMemoryDocumentTemplatesRepository,
+  InMemoryPrivateStorage,
+  startDocumentsApp,
+  UNVERIFIED_AUTH,
+} from '../../test/helpers/documents-fakes';
+import { pdfFixture, pdfOfSize } from '../../test/helpers/pdf-fixtures';
+import { recordingAudit } from '../../test/helpers/public-pages-fakes';
+import { AuditService } from '../audit/audit.service';
+import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
+import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
+import { utcToday } from './certification-validity';
+import { DocumentAssignmentsRepository } from './document-assignments.repository';
+import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentSubjectsRepository } from './document-subjects.repository';
+import { DocumentTemplatesRepository } from './document-templates.repository';
+import { DocumentTemplatesService } from './document-templates.service';
+import type { TemplateFieldRow } from './documents.types';
+import { MeDocumentsController } from './me-documents.controller';
+import { MeDocumentsService } from './me-documents.service';
+import { PdfWorkQueue } from './pdf-work-queue';
+import { PrivateStorageClient } from './private-storage.client';
+import { storageKeys } from './storage-keys';
+import { sha256Hex } from './template-pdf';
+
+const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
+const LETTER = { width: 612, height: 792, rotate: 0 as const, x: 0, y: 0 };
+
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+async function build(env: Record<string, string> = {}) {
+  const storage = new InMemoryPrivateStorage();
+  const templates = new InMemoryDocumentTemplatesRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(templates);
+  const subjects = new InMemoryDocumentSubjectsRepository();
+  const audit = recordingAudit();
+  const app = await startDocumentsApp(
+    Test.createTestingModule({
+      controllers: [
+        AdminDocumentTemplatesController,
+        AdminDocumentAssignmentsController,
+        MeDocumentsController,
+      ],
+      providers: [
+        DocumentTemplatesService,
+        DocumentAssignmentsService,
+        MeDocumentsService,
+        PdfWorkQueue,
+        { provide: PrivateStorageClient, useValue: storage },
+        { provide: DocumentTemplatesRepository, useValue: templates },
+        { provide: DocumentAssignmentsRepository, useValue: assignments },
+        { provide: DocumentSubjectsRepository, useValue: subjects },
+        { provide: AuditService, useValue: audit },
+        { provide: ConfigService, useValue: { get: (k: string) => env[k] } },
+      ],
+    }),
+  );
+  return { app, storage, templates, assignments, subjects, audit };
+}
+
+const field = (
+  overrides: Partial<TemplateFieldRow> = {},
+): TemplateFieldRow => ({
+  id: 'f_1',
+  type: 'signature',
+  page: 1,
+  x: 72,
+  y: 120,
+  w: 180,
+  h: 36,
+  required: true,
+  label_en: 'Signature',
+  label_zh: '签名',
+  prefill: null,
+  ...overrides,
+});
+
+describe('documents HTTP', () => {
+  let ctx: Awaited<ReturnType<typeof build>>;
+  const http = () => request(ctx.app.getHttpServer());
+
+  afterEach(async () => {
+    await ctx.app.close();
+  });
+
+  describe('auth', () => {
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    const adminRoutes: [
+      string,
+      (r: ReturnType<typeof http>) => request.Test,
+    ][] = [
+      ['GET templates', (r) => r.get('/admin/documents/templates')],
+      ['POST template', (r) => r.post('/admin/documents/templates').send({})],
+      [
+        'GET template',
+        (r) => r.get(`/admin/documents/templates/${UNKNOWN_ID}`),
+      ],
+      [
+        'PATCH template',
+        (r) => r.patch(`/admin/documents/templates/${UNKNOWN_ID}`).send({}),
+      ],
+      [
+        'POST source upload-url',
+        (r) =>
+          r
+            .post(`/admin/documents/templates/${UNKNOWN_ID}/source/upload-url`)
+            .send({ contentLength: 10 }),
+      ],
+      [
+        'POST source confirm',
+        (r) =>
+          r.post(`/admin/documents/templates/${UNKNOWN_ID}/source/confirm`),
+      ],
+      [
+        'PUT fields',
+        (r) =>
+          r
+            .put(`/admin/documents/templates/${UNKNOWN_ID}/fields`)
+            .send({ fields: [] }),
+      ],
+      [
+        'POST assignments',
+        (r) => r.post('/admin/documents/assignments').send({}),
+      ],
+      [
+        'POST archive',
+        (r) => r.post(`/admin/documents/assignments/${UNKNOWN_ID}/archive`),
+      ],
+      [
+        'GET instructor documents',
+        (r) => r.get(`/admin/instructors/${UNKNOWN_ID}/documents`),
+      ],
+    ];
+
+    it.each(adminRoutes)('%s → 401 without a token', async (_name, send) => {
+      await send(http()).expect(401);
+    });
+
+    it.each(adminRoutes)('%s → 403 for a non-admin', async (_name, send) => {
+      await send(http()).set('Authorization', INSTRUCTOR_AUTH).expect(403);
+    });
+
+    it('GET /me/documents → 401 without a token', async () => {
+      await http().get('/me/documents').expect(401);
+    });
+
+    it('GET /me/documents → 403 with an unverified email', async () => {
+      await http()
+        .get('/me/documents')
+        .set('Authorization', UNVERIFIED_AUTH)
+        .expect(403);
+    });
+
+    it('GET /me/documents → 404 without an instructor row', async () => {
+      await http().get('/me/documents').set('Authorization', admin).expect(404);
+    });
+  });
+
+  describe('templates', () => {
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    const create = (body: object) =>
+      http()
+        .post('/admin/documents/templates')
+        .set('Authorization', admin)
+        .send(body);
+
+    it('creates a template and audits it', async () => {
+      const res = await create({
+        kind: 'sign',
+        audience: 'instructor',
+        titleEn: ' Instructor agreement ',
+        titleZh: '教练协议',
+        required: true,
+        sortOrder: 2,
+      }).expect(201);
+      expect(res.body).toMatchObject({
+        kind: 'sign',
+        audience: 'instructor',
+        titleEn: 'Instructor agreement',
+        titleZh: '教练协议',
+        descriptionEn: null,
+        required: true,
+        isActive: true,
+        sortOrder: 2,
+        hasSource: false,
+        pageCount: null,
+        pages: [],
+        fields: [],
+        sourceUrl: null,
+        updatedBy: ADMIN_USER_ID,
+      });
+      expect(ctx.audit.entries).toEqual([
+        expect.objectContaining({
+          action: 'document_template.create',
+          targetType: 'document_template',
+          targetId: (res.body as { id: string }).id,
+        }),
+      ]);
+    });
+
+    it('rejects invalid bodies', async () => {
+      await create({
+        kind: 'sign',
+        audience: 'instructor',
+        titleEn: 'x',
+      }).expect(400);
+      await create({
+        kind: 'countersign',
+        audience: 'instructor',
+        titleEn: 'x',
+        required: true,
+        sortOrder: 0,
+      }).expect(400);
+      await create({
+        kind: 'read',
+        audience: 'instructor',
+        titleEn: '   ',
+        required: true,
+        sortOrder: 0,
+      }).expect(400);
+    });
+
+    it('lists summaries in sort order', async () => {
+      ctx.templates.seed({ title_en: 'B', sort_order: 1 });
+      ctx.templates.seed({
+        title_en: 'A',
+        sort_order: 1,
+        fields: [field()],
+        source_key: 'k',
+        page_count: 1,
+      });
+      ctx.templates.seed({ title_en: 'Z', sort_order: 0 });
+      const res = await http()
+        .get('/admin/documents/templates')
+        .set('Authorization', admin)
+        .expect(200);
+      const body = res.body as {
+        titleEn: string;
+        fieldCount: number;
+        hasSource: boolean;
+      }[];
+      expect(body.map((t) => t.titleEn)).toEqual(['Z', 'A', 'B']);
+      expect(body[1]).toMatchObject({ fieldCount: 1, hasSource: true });
+      expect(body[1]).not.toHaveProperty('fields');
+    });
+
+    it('gets a template with a presigned source URL and camelCase fields', async () => {
+      const t = ctx.templates.seed({
+        source_key: storageKeys.templateSource('x'),
+        page_count: 1,
+        pages: [LETTER],
+        fields: [field({ prefill: 'full_name' })],
+      });
+      const res = await http()
+        .get(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        sourceUrl: 'memory://GET/templates/x/source.pdf',
+        pages: [LETTER],
+        fields: [
+          {
+            id: 'f_1',
+            type: 'signature',
+            labelEn: 'Signature',
+            labelZh: '签名',
+            prefill: 'full_name',
+          },
+        ],
+      });
+      await http()
+        .get(`/admin/documents/templates/${UNKNOWN_ID}`)
+        .set('Authorization', admin)
+        .expect(404);
+      await http()
+        .get('/admin/documents/templates/not-a-uuid')
+        .set('Authorization', admin)
+        .expect(400);
+    });
+
+    it('patches metadata, clears optional text with null, and audits the diff', async () => {
+      const t = ctx.templates.seed({ title_zh: '旧' });
+      const res = await http()
+        .patch(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .send({ titleZh: null, isActive: false, sortOrder: 5 })
+        .expect(200);
+      expect(res.body).toMatchObject({
+        titleZh: null,
+        isActive: false,
+        sortOrder: 5,
+      });
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'document_template.update',
+        metadata: {
+          before: { title_zh: '旧', is_active: true, sort_order: 0 },
+          after: { title_zh: null, is_active: false, sort_order: 5 },
+        },
+      });
+      await http()
+        .patch(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .send({})
+        .expect(400);
+      await http()
+        .patch(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .send({ kind: 'read' })
+        .expect(400);
+      await http()
+        .patch(`/admin/documents/templates/${UNKNOWN_ID}`)
+        .set('Authorization', admin)
+        .send({ required: false })
+        .expect(404);
+    });
+
+    it('presigns a source upload up to 20 MB', async () => {
+      const t = ctx.templates.seed();
+      const res = await http()
+        .post(`/admin/documents/templates/${t.id}/source/upload-url`)
+        .set('Authorization', admin)
+        .send({ contentLength: 2048 })
+        .expect(200);
+      expect(res.body).toEqual({
+        uploadUrl: `memory://PUT/templates/${t.id}/upload.pdf`,
+        expiresAt: '2026-10-13T00:10:00.000Z',
+      });
+      expect(ctx.storage.presigned[0]).toEqual({
+        op: 'PUT',
+        key: storageKeys.templateUpload(t.id),
+        input: { contentType: 'application/pdf', contentLength: 2048 },
+      });
+      await http()
+        .post(`/admin/documents/templates/${t.id}/source/upload-url`)
+        .set('Authorization', admin)
+        .send({ contentLength: 20 * 1024 * 1024 + 1 })
+        .expect(400);
+      await http()
+        .post(`/admin/documents/templates/${UNKNOWN_ID}/source/upload-url`)
+        .set('Authorization', admin)
+        .send({ contentLength: 10 })
+        .expect(404);
+    });
+
+    describe('source confirm', () => {
+      const confirm = (id: string) =>
+        http()
+          .post(`/admin/documents/templates/${id}/source/confirm`)
+          .set('Authorization', admin);
+
+      async function upload(fixture: Parameters<typeof pdfFixture>[0]) {
+        const t = ctx.templates.seed();
+        ctx.storage.seed(
+          storageKeys.templateUpload(t.id),
+          await pdfFixture(fixture),
+        );
+        return t;
+      }
+
+      it('normalises a PDF, stores it as the source and records its layout', async () => {
+        const t = await upload('normal');
+        const res = await confirm(t.id).expect(200);
+        const stored = ctx.storage.objects.get(
+          storageKeys.templateSource(t.id),
+        );
+        expect(stored?.contentType).toBe('application/pdf');
+        const sha = sha256Hex(stored!.body);
+        expect(res.body).toMatchObject({
+          hasSource: true,
+          pageCount: 2,
+          pages: [LETTER, LETTER],
+          sourceSha256: sha,
+          sourceUrl: `memory://GET/templates/${t.id}/source.pdf`,
+          fieldsCleared: false,
+        });
+        expect(ctx.storage.objects.has(storageKeys.templateUpload(t.id))).toBe(
+          false,
+        );
+        expect(ctx.templates.rows.get(t.id)).toMatchObject({
+          source_key: storageKeys.templateSource(t.id),
+          source_sha256: sha,
+          page_count: 2,
+        });
+        expect(ctx.audit.entries).toEqual([
+          expect.objectContaining({
+            action: 'document_template.source_replace',
+            metadata: expect.objectContaining({
+              beforeSha256: null,
+              afterSha256: sha,
+              pageCount: 2,
+              fieldsCleared: false,
+            }) as unknown,
+          }),
+        ]);
+      });
+
+      it('accepts an owner-only encrypted PDF and stores it decrypted', async () => {
+        const t = await upload('ownerEncrypted');
+        await confirm(t.id).expect(200);
+        const stored = ctx.storage.objects.get(
+          storageKeys.templateSource(t.id),
+        );
+        expect((await PDFDocument.load(stored!.body)).isEncrypted).toBe(false);
+      });
+
+      it('rejects a PDF that needs a user password and discards the upload', async () => {
+        const t = await upload('userPassword');
+        const res = await confirm(t.id).expect(400);
+        expect((res.body as { message: string }).message).toMatch(/password/);
+        expect(ctx.storage.deleted).toContain(storageKeys.templateUpload(t.id));
+        expect(ctx.templates.rows.get(t.id)?.source_key).toBeNull();
+        expect(ctx.audit.entries).toEqual([]);
+      });
+
+      it('rejects XFA forms', async () => {
+        const t = await upload('xfa');
+        const res = await confirm(t.id).expect(400);
+        expect((res.body as { message: string }).message).toMatch(/XFA/);
+      });
+
+      it('flattens AcroForms', async () => {
+        const t = await upload('acroForm');
+        await confirm(t.id).expect(200);
+        const stored = ctx.storage.objects.get(
+          storageKeys.templateSource(t.id),
+        );
+        const doc = await PDFDocument.load(stored!.body);
+        expect(doc.getForm().getFields()).toHaveLength(0);
+      });
+
+      it('records rotation and the offset CropBox', async () => {
+        const rotated = await upload('rotated');
+        const offset = await upload('offsetCropBox');
+        const r1 = await confirm(rotated.id).expect(200);
+        const r2 = await confirm(offset.id).expect(200);
+        expect((r1.body as { pages: unknown }).pages).toEqual([
+          { ...LETTER, rotate: 90 },
+        ]);
+        expect((r2.body as { pages: unknown }).pages).toEqual([
+          { width: 540, height: 700, rotate: 0, x: 36, y: 48 },
+        ]);
+      });
+
+      it('rejects a missing upload, a non-PDF content type and an oversize file', async () => {
+        const t = ctx.templates.seed();
+        expect(
+          ((await confirm(t.id).expect(400)).body as { message: string })
+            .message,
+        ).toMatch(/No uploaded PDF/);
+        ctx.storage.seed(
+          storageKeys.templateUpload(t.id),
+          await pdfFixture('normal'),
+          'image/png',
+        );
+        expect(
+          ((await confirm(t.id).expect(400)).body as { message: string })
+            .message,
+        ).toMatch(/application\/pdf/);
+        ctx.storage.seed(
+          storageKeys.templateUpload(t.id),
+          Buffer.alloc(20 * 1024 * 1024 + 1),
+        );
+        expect(
+          ((await confirm(t.id).expect(400)).body as { message: string })
+            .message,
+        ).toMatch(/larger than 20 MB/);
+        ctx.storage.seed(
+          storageKeys.templateUpload(t.id),
+          Buffer.from('%PDF-1.7 garbage'),
+          'application/pdf; charset=binary',
+        );
+        await confirm(t.id).expect(400);
+        await confirm(UNKNOWN_ID).expect(404);
+      });
+
+      it('keeps placed fields when the page layout is unchanged', async () => {
+        const t = ctx.templates.seed({
+          source_key: storageKeys.templateSource('old'),
+          source_sha256: 'b'.repeat(64),
+          page_count: 2,
+          pages: [LETTER, LETTER],
+          fields: [field()],
+        });
+        ctx.storage.seed(
+          storageKeys.templateUpload(t.id),
+          await pdfFixture('normal'),
+        );
+        const res = await confirm(t.id).expect(200);
+        expect(res.body).toMatchObject({ fieldsCleared: false, fieldCount: 1 });
+      });
+
+      it('clears placed fields and says so when the layout changed', async () => {
+        const t = ctx.templates.seed({
+          source_key: storageKeys.templateSource('old'),
+          page_count: 1,
+          pages: [LETTER],
+          fields: [field(), field({ id: 'f_2' })],
+        });
+        ctx.storage.seed(
+          storageKeys.templateUpload(t.id),
+          await pdfOfSize([[595, 842]]),
+        );
+        const res = await confirm(t.id).expect(200);
+        expect(res.body).toMatchObject({
+          fieldsCleared: true,
+          fieldCount: 0,
+          fields: [],
+        });
+        expect(ctx.audit.entries[0].metadata).toMatchObject({
+          fieldsCleared: true,
+          clearedFieldCount: 2,
+        });
+      });
+    });
+
+    describe('fields', () => {
+      const put = (id: string, fields: unknown[]) =>
+        http()
+          .put(`/admin/documents/templates/${id}/fields`)
+          .set('Authorization', admin)
+          .send({ fields });
+
+      const apiField = {
+        id: 'f_1',
+        type: 'full_name',
+        page: 2,
+        x: 72,
+        y: 100,
+        w: 200,
+        h: 24,
+        required: true,
+        labelEn: 'Full name',
+        prefill: 'full_name',
+      };
+
+      it('stores fields and returns them', async () => {
+        const t = ctx.templates.seed({ page_count: 2, source_key: 'k' });
+        const res = await put(t.id, [apiField]).expect(200);
+        expect((res.body as { fields: unknown }).fields).toEqual([
+          { ...apiField, labelZh: null },
+        ]);
+        expect(ctx.templates.rows.get(t.id)?.fields).toEqual([
+          {
+            id: 'f_1',
+            type: 'full_name',
+            page: 2,
+            x: 72,
+            y: 100,
+            w: 200,
+            h: 24,
+            required: true,
+            label_en: 'Full name',
+            label_zh: null,
+            prefill: 'full_name',
+          },
+        ]);
+        expect(ctx.audit.entries[0]).toMatchObject({
+          action: 'document_template.fields_update',
+          metadata: { beforeCount: 0, afterCount: 1 },
+        });
+      });
+
+      it('rejects fields before a source, duplicate ids, missing pages and bad shapes', async () => {
+        const noSource = ctx.templates.seed();
+        await put(noSource.id, [apiField]).expect(400);
+        const t = ctx.templates.seed({ page_count: 1, source_key: 'k' });
+        await put(t.id, [
+          { ...apiField, page: 1 },
+          { ...apiField, page: 1 },
+        ]).expect(400);
+        const offPage = await put(t.id, [apiField]).expect(400);
+        expect((offPage.body as { message: string }).message).toMatch(
+          /page 2, but the PDF has 1/,
+        );
+        await put(t.id, [{ ...apiField, page: 1, type: 'stamp' }]).expect(400);
+        await put(t.id, [{ ...apiField, page: 1, w: 0 }]).expect(400);
+        await put(t.id, [{ ...apiField, page: 1, labelEn: '' }]).expect(400);
+        await put(UNKNOWN_ID, []).expect(404);
+      });
+    });
+  });
+
+  describe('assignments', () => {
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    const assign = (body: object) =>
+      http()
+        .post('/admin/documents/assignments')
+        .set('Authorization', admin)
+        .send(body);
+
+    function assignable() {
+      return ctx.templates.seed({
+        source_key: 'templates/x/source.pdf',
+        page_count: 1,
+      });
+    }
+
+    it('assigns explicit instructors idempotently', async () => {
+      const t = assignable();
+      const a = ctx.subjects.seedInstructor();
+      const b = ctx.subjects.seedInstructor({ approval_status: 'pending' });
+      const body = {
+        templateId: t.id,
+        season: '2026-27',
+        instructorIds: [a.id, b.id, a.id],
+      };
+      await assign(body).expect(201, { created: 2, skipped: 0 });
+      await assign(body).expect(201, { created: 0, skipped: 2 });
+      expect(ctx.assignments.rows.size).toBe(2);
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'document_assignment.create',
+        targetType: 'document_template',
+        targetId: t.id,
+        metadata: { season: '2026-27', created: 2, skipped: 0, requested: 2 },
+      });
+    });
+
+    it('assigns every active approved instructor', async () => {
+      const t = assignable();
+      const active = ctx.subjects.seedInstructor();
+      ctx.subjects.seedInstructor({ is_active: false });
+      ctx.subjects.seedInstructor({ approval_status: 'rejected' });
+      await assign({
+        templateId: t.id,
+        season: '2026-27',
+        allActiveInstructors: true,
+      }).expect(201, { created: 1, skipped: 0 });
+      expect([...ctx.assignments.rows.values()][0]).toMatchObject({
+        subject_type: 'instructor',
+        subject_id: active.id,
+        season: '2026-27',
+        status: 'assigned',
+      });
+    });
+
+    it('treats another season and archived assignments as new', async () => {
+      const t = assignable();
+      const a = ctx.subjects.seedInstructor();
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: a.id,
+        season: '2025-26',
+      });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: a.id,
+        season: '2026-27',
+        status: 'archived',
+      });
+      await assign({
+        templateId: t.id,
+        season: '2026-27',
+        instructorIds: [a.id],
+      }).expect(201, { created: 1, skipped: 0 });
+    });
+
+    it('falls back to row-by-row inserts when a concurrent request won', async () => {
+      const t = assignable();
+      const a = ctx.subjects.seedInstructor();
+      const b = ctx.subjects.seedInstructor();
+      ctx.assignments.seed({ template_id: t.id, subject_id: a.id });
+      jest
+        .spyOn(ctx.assignments, 'findOpenSubjectIds')
+        .mockResolvedValueOnce(new Set());
+      await assign({
+        templateId: t.id,
+        season: '2026-27',
+        instructorIds: [a.id, b.id],
+      }).expect(201, { created: 1, skipped: 1 });
+    });
+
+    it('validates the target and the template', async () => {
+      const t = assignable();
+      const a = ctx.subjects.seedInstructor();
+      await assign({ templateId: t.id, season: '2026-27' }).expect(400);
+      await assign({
+        templateId: t.id,
+        season: '2026-27',
+        instructorIds: [a.id],
+        allActiveInstructors: true,
+      }).expect(400);
+      await assign({
+        templateId: t.id,
+        season: '2026-27',
+        allActiveInstructors: false,
+      }).expect(400);
+      await assign({
+        templateId: t.id,
+        season: '2026-27',
+        instructorIds: [],
+      }).expect(400);
+      const unknown = await assign({
+        templateId: t.id,
+        season: '2026-27',
+        instructorIds: [a.id, UNKNOWN_ID],
+      }).expect(400);
+      expect((unknown.body as { message: string }).message).toContain(
+        UNKNOWN_ID,
+      );
+      await assign({
+        templateId: UNKNOWN_ID,
+        season: '2026-27',
+        allActiveInstructors: true,
+      }).expect(404);
+      for (const overrides of [
+        { is_active: false },
+        { source_key: null },
+        { audience: 'customer' as const },
+      ]) {
+        const bad = ctx.templates.seed({
+          source_key: 'k',
+          ...overrides,
+        });
+        await assign({
+          templateId: bad.id,
+          season: '2026-27',
+          allActiveInstructors: true,
+        }).expect(400);
+      }
+      expect(ctx.assignments.rows.size).toBe(0);
+    });
+
+    it('archives an assignment once and audits it', async () => {
+      const t = assignable();
+      const a = ctx.subjects.seedInstructor();
+      const row = ctx.assignments.seed({ template_id: t.id, subject_id: a.id });
+      const archive = () =>
+        http()
+          .post(`/admin/documents/assignments/${row.id}/archive`)
+          .set('Authorization', admin);
+      const res = await archive().expect(200);
+      expect(res.body).toMatchObject({ id: row.id, status: 'archived' });
+      await archive().expect(200);
+      expect(ctx.audit.entries).toHaveLength(1);
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'document_assignment.archive',
+        targetType: 'document_assignment',
+        targetId: row.id,
+        metadata: { previousStatus: 'assigned', subjectId: a.id },
+      });
+      await http()
+        .post(`/admin/documents/assignments/${UNKNOWN_ID}/archive`)
+        .set('Authorization', admin)
+        .expect(404);
+    });
+
+    it("lists an instructor's assignments and certification uploads", async () => {
+      const t = assignable();
+      const a = ctx.subjects.seedInstructor();
+      const row = ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: a.id,
+        status: 'completed',
+        signed_key: 'k',
+        signed_sha256: 'c'.repeat(64),
+      });
+      const old = certificationUploadRow({ instructor_id: a.id });
+      const latest = certificationUploadRow({
+        instructor_id: a.id,
+        review_status: 'pending',
+      });
+      ctx.subjects.uploads.push(old, latest);
+      const res = await http()
+        .get(`/admin/instructors/${a.id}/documents`)
+        .set('Authorization', admin)
+        .expect(200);
+      const body = res.body as {
+        assignments: Record<string, unknown>[];
+        certificationUploads: Record<string, unknown>[];
+      };
+      expect(body.assignments).toEqual([
+        expect.objectContaining({
+          id: row.id,
+          status: 'completed',
+          hasSignedCopy: true,
+          signedSha256: 'c'.repeat(64),
+          template: {
+            id: t.id,
+            kind: 'sign',
+            titleEn: 'Instructor agreement',
+            titleZh: null,
+            required: true,
+          },
+        }),
+      ]);
+      expect(body.assignments[0]).not.toHaveProperty('signedKey');
+      expect(body.certificationUploads).toEqual([
+        expect.objectContaining({
+          id: latest.id,
+          current: true,
+          state: 'pending',
+        }),
+        expect.objectContaining({ id: old.id, current: false, state: 'valid' }),
+      ]);
+      await http()
+        .get(`/admin/instructors/${UNKNOWN_ID}/documents`)
+        .set('Authorization', admin)
+        .expect(404);
+    });
+  });
+
+  describe('GET /me/documents', () => {
+    const today = utcToday();
+
+    async function setup(env: Record<string, string> = {}) {
+      ctx = await build(env);
+      const me = ctx.subjects.seedInstructor({
+        auth_user_id: INSTRUCTOR_USER_ID,
+      });
+      const agreement = ctx.templates.seed({
+        title_en: 'Agreement',
+        sort_order: 2,
+        source_key: 'k',
+      });
+      const handbook = ctx.templates.seed({
+        title_en: 'Handbook',
+        kind: 'read',
+        sort_order: 1,
+        source_key: 'k',
+      });
+      return { me, agreement, handbook };
+    }
+
+    const get = () =>
+      http().get('/me/documents').set('Authorization', INSTRUCTOR_AUTH);
+
+    it("lists the current season's documents and one item per certification", async () => {
+      const { me, agreement, handbook } = await setup();
+      const signed = ctx.assignments.seed({
+        template_id: agreement.id,
+        subject_id: me.id,
+        status: 'completed',
+      });
+      const toRead = ctx.assignments.seed({
+        template_id: handbook.id,
+        subject_id: me.id,
+      });
+      ctx.assignments.seed({
+        template_id: handbook.id,
+        subject_id: me.id,
+        season: '2025-26',
+        status: 'completed',
+      });
+      ctx.assignments.seed({
+        template_id: agreement.id,
+        subject_id: me.id,
+        season: '2026-27',
+        status: 'archived',
+      });
+      ctx.subjects.certifications.set(me.id, [
+        { org: 'casi', track: 'regular', level: 2 },
+        { org: 'csia', track: 'park', level: 1 },
+        { org: 'csia', track: 'regular', level: 3 },
+      ]);
+      ctx.subjects.uploads.push(
+        certificationUploadRow({
+          instructor_id: me.id,
+          org: 'csia',
+          track: 'regular',
+          valid_until: addDays(today, -400),
+        }),
+        certificationUploadRow({
+          instructor_id: me.id,
+          org: 'csia',
+          track: 'regular',
+          valid_until: addDays(today, 10),
+        }),
+        certificationUploadRow({
+          instructor_id: me.id,
+          org: 'casi',
+          track: 'regular',
+          valid_until: addDays(today, -1),
+        }),
+      );
+      const res = await get().expect(200);
+      const body = res.body as {
+        season: string;
+        items: Record<string, unknown>[];
+      };
+      expect(body.season).toBe('2026-27');
+      expect(body.items).toEqual([
+        expect.objectContaining({
+          type: 'document',
+          assignmentId: toRead.id,
+          kind: 'read',
+          titleEn: 'Handbook',
+          status: 'assigned',
+        }),
+        expect.objectContaining({
+          type: 'document',
+          assignmentId: signed.id,
+          kind: 'sign',
+          status: 'completed',
+        }),
+        expect.objectContaining({
+          type: 'certification',
+          org: 'casi',
+          track: 'regular',
+          level: 2,
+          state: 'expired',
+          reviewStatus: 'approved',
+        }),
+        {
+          type: 'certification',
+          org: 'csia',
+          track: 'park',
+          level: 1,
+          uploadId: null,
+          reviewStatus: null,
+          reviewNote: null,
+          validUntil: null,
+          state: 'missing',
+        },
+        expect.objectContaining({
+          type: 'certification',
+          org: 'csia',
+          track: 'regular',
+          level: 3,
+          state: 'expiring',
+          validUntil: addDays(today, 10),
+        }),
+      ]);
+    });
+
+    it('uses CURRENT_SEASON when set', async () => {
+      const { me, agreement } = await setup({ CURRENT_SEASON: '2027-28' });
+      ctx.assignments.seed({ template_id: agreement.id, subject_id: me.id });
+      const res = await get().expect(200);
+      expect(res.body).toEqual({ season: '2027-28', items: [] });
+    });
+
+    it('returns a null season and no items for a new instructor', async () => {
+      await setup();
+      await get().expect(200, { season: null, items: [] });
+    });
+  });
+});

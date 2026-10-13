@@ -70,10 +70,11 @@ async function open(bytes: Uint8Array): Promise<PDFDocument> {
       updateMetadata: false,
     });
   } catch (err) {
-    if (/password/i.test((err as Error).message)) {
-      throw new TemplatePdfError('password_protected');
-    }
-    throw new TemplatePdfError('invalid');
+    throw new TemplatePdfError(
+      /password/i.test((err as Error).message)
+        ? 'password_protected'
+        : 'invalid',
+    );
   }
 }
 
@@ -91,6 +92,17 @@ function hasXfa(doc: PDFDocument): boolean {
 export async function normaliseTemplatePdf(
   input: Uint8Array,
 ): Promise<NormalisedTemplatePdf> {
+  try {
+    return await normalise(input);
+  } catch (err) {
+    if (err instanceof TemplatePdfError) {
+      throw err;
+    }
+    throw new TemplatePdfError('invalid');
+  }
+}
+
+async function normalise(input: Uint8Array): Promise<NormalisedTemplatePdf> {
   const source = await open(input);
   if (hasXfa(source)) {
     throw new TemplatePdfError('xfa');
@@ -99,11 +111,7 @@ export async function normaliseTemplatePdf(
     throw new TemplatePdfError('no_pages');
   }
   if (source.catalog.has(PDFName.of('AcroForm'))) {
-    try {
-      source.getForm().flatten();
-    } catch {
-      throw new TemplatePdfError('invalid');
-    }
+    source.getForm().flatten();
   }
   const output = await PDFDocument.create({ updateMetadata: false });
   const copied = await output.copyPages(source, source.getPageIndices());
@@ -118,7 +126,6 @@ export async function normaliseTemplatePdf(
     pages: output.getPages().map(pageGeometry),
   };
 }
-
 const TOLERANCE = 0.01;
 
 /** Whether placed fields stay valid on `next`: same page count and the same visible box per page. */

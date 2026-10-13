@@ -62,6 +62,12 @@ export const AUDIT_ACTIONS = {
   classImportEventMapUpdate: 'class_import.event_map_update',
   classImportCommit: 'class_import.commit',
   classImportDiscard: 'class_import.discard',
+  documentTemplateCreate: 'document_template.create',
+  documentTemplateUpdate: 'document_template.update',
+  documentTemplateSourceReplace: 'document_template.source_replace',
+  documentTemplateFieldsUpdate: 'document_template.fields_update',
+  documentAssignmentCreate: 'document_assignment.create',
+  documentAssignmentArchive: 'document_assignment.archive',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -98,6 +104,8 @@ export interface AuditEntry {
     | 'payroll_period'
     | 'payroll_settings'
     | 'class_import'
+    | 'document_template'
+    | 'document_assignment'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

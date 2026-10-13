@@ -52,6 +52,7 @@ describe('normaliseTemplatePdf', () => {
 
   it('refuses bytes that are not a PDF', async () => {
     expect(await problemOf(Buffer.from('not a pdf at all'))).toBe('invalid');
+    expect(await problemOf(Buffer.from('%PDF-1.7 garbage'))).toBe('invalid');
   });
 
   it('flattens an AcroForm into page content', async () => {
@@ -82,6 +83,15 @@ describe('normaliseTemplatePdf', () => {
     ]);
     const page = (await PDFDocument.load(result.bytes)).getPage(0);
     expect(page.getMediaBox()).toEqual({ x: 0, y: 0, width: 612, height: 792 });
+  });
+
+  it('refuses a PDF without pages', async () => {
+    const empty = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n' +
+        '2 0 obj\n<</Type/Pages/Kids[]/Count 0>>\nendobj\n' +
+        'trailer\n<</Root 1 0 R>>\n%%EOF\n',
+    );
+    expect(await problemOf(empty)).toBe('no_pages');
   });
 });
 

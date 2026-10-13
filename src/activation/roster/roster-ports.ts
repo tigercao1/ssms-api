@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { NewInvite } from '../activation.types';
-import type { RosterCertification } from './roster-csv';
+import type { RosterCertification } from './roster-normalize';
 
 export const IMPORT_SEASON_CLAIM = 'roster_import_season';
 const USERS_PAGE_SIZE = 1000;
@@ -177,8 +177,8 @@ export class SupabaseRosterWriter implements RosterWriter {
           org: c.org,
           track: c.track,
           level: c.level,
-          is_partial: false,
-          partial_components: [],
+          is_partial: c.isPartial,
+          partial_components: c.partialComponents,
         })),
         teaching_location_ids: teachingLocationIds,
       },

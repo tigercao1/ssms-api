@@ -67,13 +67,12 @@ let fontBytes: Promise<Record<FontRole, Uint8Array>> | null = null;
 /** Reads the bundled fonts on first use and keeps the bytes for the life of the process. */
 export function loadStampFonts(): Promise<Record<FontRole, Uint8Array>> {
   fontBytes ??= (async () => {
-    const entries = await Promise.all(
-      (Object.keys(FONT_FILES) as FontRole[]).map(
-        async (role) =>
-          [role, await readFile(join(FONT_DIR, FONT_FILES[role]))] as const,
+    const [text, latinScript, cjkScript] = await Promise.all(
+      [FONT_FILES.text, FONT_FILES.latinScript, FONT_FILES.cjkScript].map(
+        (file) => readFile(join(FONT_DIR, file)),
       ),
     );
-    return Object.fromEntries(entries) as Record<FontRole, Uint8Array>;
+    return { text, latinScript, cjkScript };
   })().catch((err: unknown) => {
     fontBytes = null;
     throw err;

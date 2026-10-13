@@ -6,6 +6,7 @@ import {
   SupabaseDocumentAssignmentsRepository,
 } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentSigningService } from './document-signing.service';
 import {
   DocumentSubjectsRepository,
   SupabaseDocumentSubjectsRepository,
@@ -47,6 +48,7 @@ import {
     DocumentTemplatesService,
     DocumentAssignmentsService,
     MeDocumentsService,
+    DocumentSigningService,
   ],
   exports: [
     PrivateStorageClient,

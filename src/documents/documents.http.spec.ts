@@ -23,6 +23,7 @@ import { AdminDocumentTemplatesController } from './admin-document-templates.con
 import { utcToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
@@ -60,6 +61,7 @@ async function build(env: Record<string, string> = {}) {
         DocumentTemplatesService,
         DocumentAssignmentsService,
         MeDocumentsService,
+        DocumentSigningService,
         PdfWorkQueue,
         { provide: PrivateStorageClient, useValue: storage },
         { provide: DocumentTemplatesRepository, useValue: templates },

@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install poppler-utils (renders stamped PDFs in tests)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
+
       # Run eslint WITHOUT --fix so CI fails on any lint error or warning
       # (the `npm run lint` script auto-fixes, which would mask problems in CI).
       - name: Lint

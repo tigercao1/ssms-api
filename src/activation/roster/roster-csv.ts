@@ -1,13 +1,10 @@
 import { parseCsv } from '../../shopify/legacy-pairing/pairing-csv';
-
-export type CertOrg = 'csia' | 'casi';
-export type CertTrack = 'regular' | 'park';
-
-export interface RosterCertification {
-  org: CertOrg;
-  track: CertTrack;
-  level: number;
-}
+import {
+  normalizeCertifications,
+  normalizeLocations,
+  type ProposedCertification,
+  type ProposedTrainerStatus,
+} from './roster-normalize';
 
 export type DisplayNameSource = 'preferred' | 'legal_first_token' | 'none';
 export type DateOfBirthStatus = 'ok' | 'missing' | 'invalid';
@@ -20,10 +17,24 @@ export interface RosterEntry {
   displayNameSource: DisplayNameSource;
   dateOfBirth: string | null;
   dateOfBirthStatus: DateOfBirthStatus;
-  certifications: RosterCertification[];
+  certifications: ProposedCertification[];
+  trainerStatus: ProposedTrainerStatus[];
   unmappedCertifications: string[];
   locationKeys: string[];
+  llmLocationKeys: string[];
   unmappedLocations: string[];
+  llmRejected: { value: string; reason: string }[];
+  llmResolved: { value: string; proposal: string }[];
+  /** Raw certification and location cells, kept for review and the optional LLM pass. */
+  raw: RosterRawValues;
+  /** True when a value needed normalisation beyond the canonical form or stayed unresolved. */
+  needsReview: boolean;
+}
+
+export interface RosterRawValues {
+  certifications: string;
+  certificationDetails: string;
+  locations: string;
 }
 
 export interface DuplicateEmail {
@@ -53,92 +64,20 @@ export const ROSTER_COLUMNS = {
   email: 'email address',
 } as const;
 
-type ColumnKey = keyof typeof ROSTER_COLUMNS;
+export const OPTIONAL_ROSTER_COLUMNS = {
+  certificationDetails: 'when and where did you receive your highest',
+} as const;
 
-export const LOCATION_KEYS: Record<string, string> = {
-  msl: 'teaching_location.moonstone',
-  'blue mountain': 'teaching_location.blue_mountain',
-  tremblant: 'teaching_location.tremblant',
-  'glen eden': 'teaching_location.glen_eden',
-};
+type ColumnKey =
+  | keyof typeof ROSTER_COLUMNS
+  | keyof typeof OPTIONAL_ROSTER_COLUMNS;
 
 const DISPLAY_NAME_MAX = 100;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const REGULAR_CERT = /^(CSIA|CASI)L([1-4])$/;
-const PARK_CERT = /^(CSIA|CASI)PARK([12])$/;
 const DOB_SHAPE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
-
-function splitList(value: string): string[] {
-  return value
-    .split(',')
-    .map((v) => v.trim())
-    .filter((v) => v !== '');
-}
 
 function collapse(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
-}
-
-/** `CSIA L3`, `casi park 1`, … → `{ org, track, level }`; anything else → null. */
-export function mapCertification(value: string): RosterCertification | null {
-  const compact = value.toUpperCase().replace(/\s+/g, '');
-  const regular = REGULAR_CERT.exec(compact);
-  if (regular) {
-    return {
-      org: regular[1].toLowerCase() as CertOrg,
-      track: 'regular',
-      level: Number(regular[2]),
-    };
-  }
-  const park = PARK_CERT.exec(compact);
-  if (park) {
-    return {
-      org: park[1].toLowerCase() as CertOrg,
-      track: 'park',
-      level: Number(park[2]),
-    };
-  }
-  return null;
-}
-
-/** Maps a comma-separated certification cell, keeping the highest level per (org, track). */
-export function mapCertifications(cell: string): {
-  certifications: RosterCertification[];
-  unmapped: string[];
-} {
-  const best = new Map<string, RosterCertification>();
-  const unmapped: string[] = [];
-  for (const value of splitList(cell)) {
-    const cert = mapCertification(value);
-    if (!cert) {
-      unmapped.push(value);
-      continue;
-    }
-    const key = `${cert.org}:${cert.track}`;
-    const current = best.get(key);
-    if (!current || cert.level > current.level) {
-      best.set(key, cert);
-    }
-  }
-  return { certifications: [...best.values()], unmapped };
-}
-
-/** Maps a comma-separated location cell onto `teaching_locations.key` values. */
-export function mapLocations(cell: string): {
-  keys: string[];
-  unmapped: string[];
-} {
-  const keys: string[] = [];
-  const unmapped: string[] = [];
-  for (const value of splitList(cell)) {
-    const key = LOCATION_KEYS[collapse(value).toLowerCase()];
-    if (key === undefined) {
-      unmapped.push(value);
-    } else if (!keys.includes(key)) {
-      keys.push(key);
-    }
-  }
-  return { keys, unmapped };
 }
 
 /** `M/D/YYYY` → ISO `YYYY-MM-DD` when it is a real past date. */
@@ -199,6 +138,12 @@ function resolveColumns(header: string[]): Record<ColumnKey, number> {
     }
     result[key] = index;
   }
+  for (const [key, prefix] of Object.entries(OPTIONAL_ROSTER_COLUMNS) as [
+    ColumnKey,
+    string,
+  ][]) {
+    result[key] = names.findIndex((n) => n.startsWith(prefix));
+  }
   if (missing.length > 0) {
     throw new RosterCsvError(`CSV is missing column(s): ${missing.join(', ')}`);
   }
@@ -232,8 +177,16 @@ export function parseRosterCsv(
     }
     const name = pickDisplayName(cell('preferredName'), cell('legalName'));
     const dob = parseDateOfBirth(cell('dateOfBirth'), today);
-    const certs = mapCertifications(cell('certification'));
-    const locations = mapLocations(cell('locations'));
+    const raw: RosterRawValues = {
+      certifications: cell('certification'),
+      certificationDetails: cell('certificationDetails'),
+      locations: cell('locations'),
+    };
+    const certs = normalizeCertifications(
+      raw.certifications,
+      raw.certificationDetails,
+    );
+    const locations = normalizeLocations(raw.locations);
     byEmail.set(email, {
       line,
       email,
@@ -242,9 +195,15 @@ export function parseRosterCsv(
       dateOfBirth: dob.value,
       dateOfBirthStatus: dob.status,
       certifications: certs.certifications,
-      unmappedCertifications: certs.unmapped,
+      trainerStatus: certs.trainerStatus,
+      unmappedCertifications: certs.unresolved,
       locationKeys: locations.keys,
-      unmappedLocations: locations.unmapped,
+      llmLocationKeys: [],
+      unmappedLocations: locations.unresolved,
+      llmRejected: [],
+      llmResolved: [],
+      raw,
+      needsReview: certs.normalized || locations.normalized,
     });
     linesByEmail.set(email, [...(linesByEmail.get(email) ?? []), line]);
   });

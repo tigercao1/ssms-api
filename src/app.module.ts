@@ -22,6 +22,8 @@ import { ActivationModule } from './activation/activation.module';
 import { LessonsModule } from './lessons/lessons.module';
 import { CustomersModule } from './customers/customers.module';
 import { BookingModule } from './booking/booking.module';
+import { PayrollModule } from './payroll/payroll.module';
+import { ClassImportModule } from './class-import/class-import.module';
 
 @Module({
   imports: [
@@ -56,6 +58,8 @@ import { BookingModule } from './booking/booking.module';
     LessonsModule,
     CustomersModule,
     BookingModule,
+    PayrollModule,
+    ClassImportModule,
     AuthHooksModule,
   ],
   controllers: [AppController],

@@ -3,6 +3,7 @@ import type { ClassStatus } from '../lessons/lessons.types';
 import { localDate } from './payroll-time';
 
 export const NEEDS_RATE = 'needs_rate';
+export const ALREADY_PAID = 'already_paid';
 export const DEFAULT_CURRENCY = 'CAD';
 
 export interface PayableClass {
@@ -88,6 +89,17 @@ export function classLine(
   };
 }
 
+export function markAlreadyPaid(
+  lines: readonly ClassLine[],
+  paidClassIds: ReadonlySet<string>,
+): ClassLine[] {
+  return lines.map((line) =>
+    paidClassIds.has(line.classId)
+      ? { ...line, amount: 0, flags: [ALREADY_PAID] }
+      : line,
+  );
+}
+
 export function classLinesFor(
   classes: readonly PayableClass[],
   rates: readonly PayableRate[],
@@ -155,6 +167,9 @@ export function instructorTotals(
   };
   for (const line of lines) {
     const total = entry(line.instructorId, line.currency);
+    if (line.flags.includes(ALREADY_PAID)) {
+      continue;
+    }
     total.lessons += 1;
     total.minutes += line.minutes;
     total.lessonCents += toCents(line.amount);

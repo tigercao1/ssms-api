@@ -2,6 +2,7 @@ import { recordingPayrollSupabase } from '../../test/helpers/payroll-fakes';
 import { DatabaseError } from '../database/db-result';
 import { PAY_RATE_COLUMNS } from '../lessons/pay-rates.repository';
 import {
+  CLASS_ID_CHUNK,
   PAGE_SIZE,
   PAYROLL_CLASS_COLUMNS,
   PAYROLL_LINE_COLUMNS,
@@ -128,6 +129,28 @@ describe('SupabasePayrollRepository', () => {
           ['in', 'lesson_type_id', [ID]],
         ],
       },
+    ]);
+  });
+
+  it('finds classes already snapshotted by another period in chunks', async () => {
+    const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);
+    const { client, calls } = recordingPayrollSupabase({
+      payroll_lines: [ok([{ class_id: 'c1' }]), ok(null)],
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.classesPaidElsewhere(ID, ids)).resolves.toEqual(['c1']);
+    await expect(repo.classesPaidElsewhere(ID, [])).resolves.toEqual([]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].ops).toEqual([
+      ['select', 'class_id'],
+      ['eq', 'kind', 'class'],
+      ['neq', 'period_id', ID],
+      ['in', 'class_id', ids.slice(0, CLASS_ID_CHUNK)],
+    ]);
+    expect(calls[1].ops).toContainEqual([
+      'in',
+      'class_id',
+      [ids[CLASS_ID_CHUNK]],
     ]);
   });
 

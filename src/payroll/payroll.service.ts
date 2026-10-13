@@ -27,6 +27,7 @@ import {
   DEFAULT_CURRENCY,
   type InstructorTotal,
   instructorTotals,
+  markAlreadyPaid,
   NEEDS_RATE,
   type PayableClass,
 } from './payroll-lines';
@@ -287,12 +288,17 @@ export class PayrollService {
         ),
       ];
       const rates = (await this.repo.ratesFor(lessonTypeIds)).map(toPayRate);
-      classLines = classLinesFor(
+      const live = classLinesFor(
         classes.map(toPayable),
         rates,
         period.starts_on,
         period.ends_on,
       );
+      const paidElsewhere = await this.repo.classesPaidElsewhere(
+        period.id,
+        live.map((line) => line.classId),
+      );
+      classLines = markAlreadyPaid(live, new Set(paidElsewhere));
     } else {
       classLines = rows
         .filter((row) => row.kind === 'class')

@@ -202,6 +202,23 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     );
   }
 
+  classesPaidElsewhere(
+    periodId: string,
+    classIds: string[],
+  ): Promise<string[]> {
+    return Promise.resolve(
+      this.lineRows
+        .filter(
+          (l) =>
+            l.kind === 'class' &&
+            l.period_id !== periodId &&
+            l.class_id !== null &&
+            classIds.includes(l.class_id),
+        )
+        .map((l) => l.class_id as string),
+    );
+  }
+
   insertAdjustment(input: AdjustmentInsert): Promise<PayrollLineRow> {
     if (this.isFinalized(input.period_id)) {
       throw prerequisite('payroll period is finalized');

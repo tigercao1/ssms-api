@@ -568,6 +568,24 @@ describe('payroll admin HTTP', () => {
       ]);
     });
 
+    it('does not pay a class again after it moves out of a finalized period', async () => {
+      await post(`/admin/payroll/periods/${period.id}/finalize`).expect(200);
+      ctx.repo.classes[0].starts_at = '2026-01-13T15:00:00.000Z';
+      ctx.repo.classes[0].ends_at = '2026-01-13T16:30:00.000Z';
+      ctx.repo.addClass({ startsAt: '2026-01-14T15:00:00Z' });
+      const next = await detailFor('2026-01-13');
+      expect(next.lines.map((l) => [l.date, l.amount, l.flags])).toEqual([
+        ['2026-01-13', 0, ['already_paid']],
+        ['2026-01-14', 60, []],
+      ]);
+      expect(next.instructors[0]).toMatchObject({
+        lessons: 1,
+        minutes: 90,
+        total: 60,
+      });
+      expect(next.needsRateCount).toBe(0);
+    });
+
     it('recomputes live again after reopen and audits the reopen', async () => {
       await post(`/admin/payroll/periods/${period.id}/finalize`).expect(200);
       ctx.repo.rates[0].hourly_rate = 50;

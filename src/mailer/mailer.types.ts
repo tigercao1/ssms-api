@@ -35,6 +35,8 @@ export type EmailTemplate =
   | 'auth.generic'
   | 'invite.season'
   | 'invite.reminder'
+  | 'certification.expiring'
+  | 'certification.expired'
   | 'admin.instructor_pending'
   | 'documents.assigned'
   | 'documents.reminder'
@@ -63,6 +65,15 @@ interface DocumentListVars extends GreetingVars {
   onboardingUrl: string;
 }
 
+interface CertificationExpiryVars extends GreetingVars {
+  org: 'csia' | 'casi';
+  track: 'regular' | 'park' | 'carving';
+  level: number;
+  /** Last valid day, YYYY-MM-DD. */
+  validUntil: string;
+  uploadUrl: string;
+}
+
 /** Variables each template needs, keyed by template. */
 export interface EmailTemplateVars {
   approved: GreetingVars & { loginUrl: string };
@@ -89,6 +100,8 @@ export interface EmailTemplateVars {
   'auth.generic': { actionUrl?: string | null };
   'invite.season': InviteVars;
   'invite.reminder': InviteVars;
+  'certification.expiring': CertificationExpiryVars;
+  'certification.expired': CertificationExpiryVars;
   'admin.instructor_pending': { instructorEmail: string; reviewUrl: string };
   'documents.assigned': DocumentListVars;
   'documents.reminder': DocumentListVars;

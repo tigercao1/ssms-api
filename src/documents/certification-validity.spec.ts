@@ -1,8 +1,11 @@
 import {
+  addDays,
   certificationKey,
   certificationState,
   currentUploads,
   daysBetween,
+  expiryReminderDue,
+  expiryReminderSent,
   isCertificationSatisfied,
   utcToday,
 } from './certification-validity';
@@ -128,5 +131,99 @@ describe('currentUploads', () => {
     expect(current.get(certificationKey('csia', 'regular'))?.id).toBe('b');
     expect(current.get('casi:regular')?.id).toBe('d');
     expect(current.get('csia:park')).toBeUndefined();
+  });
+});
+
+describe('addDays', () => {
+  it('moves across month, year and leap-day boundaries', () => {
+    expect(addDays('2026-10-12', 30)).toBe('2026-11-11');
+    expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
+    expect(addDays('2028-03-01', -1)).toBe('2028-02-29');
+    expect(addDays('2026-10-12', 0)).toBe('2026-10-12');
+  });
+});
+
+describe('expiryReminderSent', () => {
+  const VALID_UNTIL = '2026-11-30';
+
+  it.each([
+    [null, null],
+    ['2026-10-31T09:00:00.000Z', 'expiring'],
+    ['2026-11-30T23:59:59.000Z', 'expiring'],
+    ['2026-12-01T00:00:00.000Z', 'expired'],
+    ['2026-10-30T12:00:00.000Z', null],
+  ])('sent at %s → %s', (sentAt, stage) => {
+    expect(expiryReminderSent(sentAt, VALID_UNTIL)).toBe(stage);
+  });
+});
+
+describe('expiryReminderDue', () => {
+  const upload = (
+    validUntil: string,
+    overrides: Partial<Parameters<typeof expiryReminderDue>[0]> = {},
+  ) => ({
+    reviewStatus: 'approved' as const,
+    validUntil,
+    expiryReminderSentAt: null,
+    ...overrides,
+  });
+
+  it.each([
+    ['2026-11-12', null],
+    ['2026-11-11', 'expiring'],
+    ['2026-10-12', 'expiring'],
+    ['2026-10-11', 'expired'],
+    ['2026-10-05', 'expired'],
+    ['2026-10-04', null],
+  ])('nothing sent, valid until %s → %s', (validUntil, due) => {
+    expect(expiryReminderDue(upload(validUntil), TODAY)).toBe(due);
+  });
+
+  it('sends the expiring email once', () => {
+    expect(
+      expiryReminderDue(
+        upload('2026-11-11', { expiryReminderSentAt: '2026-10-12T08:00:00Z' }),
+        TODAY,
+      ),
+    ).toBeNull();
+  });
+
+  it('sends the expired email after an expiring one, then never again', () => {
+    expect(
+      expiryReminderDue(
+        upload('2026-10-11', { expiryReminderSentAt: '2026-09-11T08:00:00Z' }),
+        TODAY,
+      ),
+    ).toBe('expired');
+    expect(
+      expiryReminderDue(
+        upload('2026-10-11', { expiryReminderSentAt: '2026-10-12T08:00:00Z' }),
+        TODAY,
+      ),
+    ).toBeNull();
+  });
+
+  it('treats a reminder sent before the window as stale after a date change', () => {
+    expect(
+      expiryReminderDue(
+        upload('2026-11-11', { expiryReminderSentAt: '2025-10-01T08:00:00Z' }),
+        TODAY,
+      ),
+    ).toBe('expiring');
+  });
+
+  it('includes pending uploads and skips rejected ones', () => {
+    expect(
+      expiryReminderDue(
+        upload('2026-10-20', { reviewStatus: 'pending' }),
+        TODAY,
+      ),
+    ).toBe('expiring');
+    expect(
+      expiryReminderDue(
+        upload('2026-10-20', { reviewStatus: 'rejected' }),
+        TODAY,
+      ),
+    ).toBeNull();
   });
 });

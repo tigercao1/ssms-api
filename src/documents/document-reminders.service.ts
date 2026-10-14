@@ -7,6 +7,10 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import {
+  CertificationExpiryService,
+  type CertificationExpiryResult,
+} from './certification-expiry.service';
 import { utcToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { ASSIGNMENT_NOT_FOUND } from './document-assignments.service';
@@ -40,6 +44,7 @@ export interface AssignmentRemindersResult {
 /** `POST /internal/documents/reminders` response: one entry per daily job. */
 export interface DailyRemindersResult {
   documents: AssignmentRemindersResult;
+  certifications: CertificationExpiryResult;
 }
 
 /**
@@ -55,11 +60,15 @@ export class DocumentRemindersService {
     private readonly subjects: DocumentSubjectsRepository,
     private readonly notifications: DocumentNotificationsService,
     private readonly audit: AuditService,
+    private readonly certificationExpiry: CertificationExpiryService,
   ) {}
 
   /** Runs every daily reminder job and returns each job's counts. */
   async run(now: Date = new Date()): Promise<DailyRemindersResult> {
-    return { documents: await this.remindOpenAssignments(now) };
+    return {
+      documents: await this.remindOpenAssignments(now),
+      certifications: await this.certificationExpiry.run(utcToday(now), now),
+    };
   }
 
   /**

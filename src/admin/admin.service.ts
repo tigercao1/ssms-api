@@ -288,7 +288,8 @@ export class AdminService {
    * v1.x — promote / demote a user by setting the server-only
    * `app_metadata.role` (ADMIN_ROLE_PLAN.md). Writes a single `user.role_change`
    * audit row on an actual change; a no-op (already that role) is idempotent and
-   * un-audited. An admin cannot change their own role (avoids self-lockout).
+   * un-audited. A demotion from admin also revokes the user's sessions. An admin
+   * cannot change their own role (avoids self-lockout).
    */
   async setUserRole(
     authUserId: string,
@@ -311,13 +312,28 @@ export class AdminService {
 
     await this.repo.setUserRole(authUserId, role);
 
+    const metadata: Record<string, unknown> = { from: previousRole, to: role };
+    let revokeFailure: { error: unknown } | null = null;
+    if (previousRole === 'admin') {
+      try {
+        metadata.sessionsRevoked = await this.repo.revokeSessions(authUserId);
+      } catch (error) {
+        metadata.sessionsRevoked = null;
+        revokeFailure = { error };
+      }
+    }
+
     await this.audit.record({
       action: AUDIT_ACTIONS.userRoleChange,
       actor: { ...actor, role: 'admin' },
       targetType: 'user',
       targetId: authUserId,
-      metadata: { from: previousRole, to: role },
+      metadata,
     });
+
+    if (revokeFailure) {
+      throw revokeFailure.error;
+    }
 
     return { userId: authUserId, role, previousRole, changed: true };
   }

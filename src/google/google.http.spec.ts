@@ -143,7 +143,7 @@ async function build(env: Record<string, string> = GOOGLE_ENV) {
       transform: true,
     }),
   );
-  await app.init();
+  await app.listen(0, '127.0.0.1');
   return { app, repo, audit, state, ...fake };
 }
 

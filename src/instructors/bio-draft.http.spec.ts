@@ -172,7 +172,7 @@ async function build(translator: BioTranslator) {
       transform: true,
     }),
   );
-  await app.init();
+  await app.listen(0, '127.0.0.1');
   return {
     app,
     repo,

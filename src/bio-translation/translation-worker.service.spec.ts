@@ -33,6 +33,8 @@ interface Instructor {
   bio_zh: string | null;
   bio_en_machine_translated: boolean;
   bio_zh_machine_translated: boolean;
+  bio_en_updated_at: string | null;
+  bio_zh_updated_at: string | null;
   [column: string]: unknown;
 }
 
@@ -42,6 +44,8 @@ function instructor(over: Partial<Instructor> = {}): Instructor {
     bio_zh: null,
     bio_en_machine_translated: false,
     bio_zh_machine_translated: false,
+    bio_en_updated_at: null,
+    bio_zh_updated_at: null,
     ...over,
   };
 }
@@ -225,6 +229,57 @@ describe('TranslationWorkerService', () => {
         bio_en_machine_translated: true,
         bio_en_translated_by: 'gemini-test',
       }),
+    );
+  });
+
+  it('dates the translated target like its source', async () => {
+    const sourceAt = '2026-10-01T10:00:00.123456+00:00';
+    const { client, row } = makeSupabase({
+      job: jobRow(),
+      instructor: instructor({
+        bio_en_updated_at: sourceAt,
+        bio_zh_updated_at: '2026-09-01T00:00:00+00:00',
+      }),
+    });
+    const worker = makeWorker(client, provider().translator);
+
+    expect(await worker.processNext()).toBe('completed');
+    expect(row.bio_zh_updated_at).toBe(sourceAt);
+    expect(row.bio_en_updated_at).toBe(sourceAt);
+  });
+
+  it('leaves the target timestamp null when the source has none', async () => {
+    const { client, row } = makeSupabase({
+      job: jobRow({
+        source_lang: 'zh-CN',
+        target_lang: 'en',
+        source_text: '我教滑雪。',
+      }),
+      instructor: instructor({ bio_en: null, bio_zh: '我教滑雪。' }),
+    });
+    const worker = makeWorker(client, provider('I teach skiing.').translator);
+
+    expect(await worker.processNext()).toBe('completed');
+    expect(row.bio_en).toBe('I teach skiing.');
+    expect(row.bio_en_updated_at).toBeNull();
+  });
+
+  it('writes nothing when the source is re-dated while translating', async () => {
+    const { client, row, jobUpdates } = makeSupabase({
+      job: jobRow(),
+      instructor: instructor({
+        bio_en_updated_at: '2026-10-01T10:00:00+00:00',
+      }),
+      beforeInstructorUpdate: (r) => {
+        r.bio_en_updated_at = '2026-10-02T10:00:00+00:00';
+      },
+    });
+    const worker = makeWorker(client, provider().translator);
+
+    expect(await worker.processNext()).toBe('skipped');
+    expect(row.bio_zh).toBeNull();
+    expect(jobUpdates).toContainEqual(
+      expect.objectContaining({ last_error: 'bio changed while translating' }),
     );
   });
 

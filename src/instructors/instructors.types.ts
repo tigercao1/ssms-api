@@ -117,6 +117,8 @@ export interface InstructorProfilePatch {
   bio_zh_machine_translated?: boolean;
   bio_en_translated_by?: string | null;
   bio_zh_translated_by?: string | null;
+  /** Stamps both bio_*_updated_at with the same now(), even if unchanged. */
+  bio_synced?: boolean;
   date_of_birth?: string | null;
   preferred_language?: PreferredLanguage;
   profile_photo_url?: string | null;

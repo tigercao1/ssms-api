@@ -57,6 +57,69 @@ begin
     raise exception 'a non-bio patch changed the machine-translated state';
   end if;
 
+  -- Timestamps. now() is fixed in this transaction, so start from old values.
+  update instructors set bio_en = 'Src', bio_zh = '旧',
+         bio_en_updated_at = '2020-01-01', bio_zh_updated_at = '2020-01-02'
+   where id = inst;
+  select * into r from instructors where id = inst;
+  if r.bio_en_updated_at <> '2020-01-01' or r.bio_zh_updated_at <> '2020-01-02' then
+    raise exception 'explicit timestamps were overwritten by the trigger';
+  end if;
+
+  -- bio_synced: both sides stamped together, unchanged text included.
+  perform public.update_instructor_profile(inst,
+    '{"bio_zh": "新译文", "bio_synced": true}'::jsonb);
+  select * into r from instructors where id = inst;
+  if r.bio_en_updated_at <> now() or r.bio_zh_updated_at <> now() then
+    raise exception 'bio_synced did not stamp both sides: % / %',
+      r.bio_en_updated_at, r.bio_zh_updated_at;
+  end if;
+  update instructors set bio_en_updated_at = '2020-01-01',
+         bio_zh_updated_at = '2020-01-02' where id = inst;
+  perform public.update_instructor_profile(inst, '{"bio_synced": true}'::jsonb);
+  select * into r from instructors where id = inst;
+  if r.bio_en_updated_at <> now() or r.bio_zh_updated_at <> now()
+     or r.bio_en <> 'Src' or r.bio_zh <> '新译文' then
+    raise exception 'bio_synced with both texts unchanged misbehaved';
+  end if;
+
+  -- One bio key, no bio_synced: only the changed side is stamped.
+  update instructors set bio_en_updated_at = '2020-01-01',
+         bio_zh_updated_at = '2020-01-02' where id = inst;
+  perform public.update_instructor_profile(inst, '{"bio_zh": "单边"}'::jsonb);
+  select * into r from instructors where id = inst;
+  if r.bio_zh_updated_at <> now() or r.bio_en_updated_at <> '2020-01-01' then
+    raise exception 'single-key save stamped the wrong side';
+  end if;
+  update instructors set bio_zh_updated_at = '2020-01-02' where id = inst;
+  perform public.update_instructor_profile(inst,
+    '{"bio_en": "Src", "bio_synced": false}'::jsonb);
+  perform public.update_instructor_profile(inst, '{"display_name_en": "Y"}'::jsonb);
+  select * into r from instructors where id = inst;
+  if r.bio_en_updated_at <> '2020-01-01' or r.bio_zh_updated_at <> '2020-01-02' then
+    raise exception 'unchanged or non-bio save moved a timestamp';
+  end if;
+
+  -- Worker-style write: an explicit target timestamp wins over the trigger.
+  update instructors set bio_zh = '机器译文', bio_zh_machine_translated = true,
+         bio_zh_updated_at = bio_en_updated_at
+   where id = inst;
+  select * into r from instructors where id = inst;
+  if r.bio_zh_updated_at is distinct from r.bio_en_updated_at then
+    raise exception 'worker target timestamp not kept equal to the source';
+  end if;
+  update instructors set bio_en_updated_at = null where id = inst;
+  update instructors set bio_zh = '机器译文二', bio_zh_updated_at = null
+   where id = inst;
+  select * into r from instructors where id = inst;
+  if r.bio_zh_updated_at is not null then
+    raise exception 'explicit null target timestamp was stamped';
+  end if;
+  update instructors set bio_en = 'Plain' where id = inst;
+  if (select bio_en_updated_at from instructors where id = inst) <> now() then
+    raise exception 'text change without an explicit timestamp not stamped';
+  end if;
+
   -- Quota: five reservations, the sixth is refused.
   for i in 1..5 loop
     select * into r from public.reserve_bio_ai_request(inst, 'refine', 5);

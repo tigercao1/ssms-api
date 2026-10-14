@@ -143,6 +143,8 @@ export class InstructorsService {
    * T3.2 — Update the caller's own profile (resolved via JWT subject). Editable
    * in every approval_status; email is not part of the DTO so it stays immutable.
    * Bios are reviewed in the draft flow, so no background translation is queued.
+   * Sending both bioEn and bioZh confirms both languages: both timestamps are
+   * stamped together, even when a text is unchanged.
    */
   async updateOwnProfile(
     authUserId: string,
@@ -152,7 +154,7 @@ export class InstructorsService {
     if (!instructor) {
       throw new NotFoundException('Instructor profile not found');
     }
-    return this.applyUpdate(instructor.id, dto, false);
+    return this.applyUpdate(instructor.id, dto, false, true);
   }
 
   /**
@@ -174,6 +176,7 @@ export class InstructorsService {
     instructorId: string,
     dto: UpdateOwnInstructorProfileDto,
     enqueueTranslation: boolean,
+    syncBothBios = false,
   ): Promise<InstructorProfile> {
     const existing = await this.repo.findById(instructorId);
     if (!existing) {
@@ -181,6 +184,8 @@ export class InstructorsService {
     }
 
     const patch = this.buildPatch(dto);
+    const bothBiosSent =
+      patch.bio_en !== undefined && patch.bio_zh !== undefined;
     if (sameBio(patch.bio_en, existing.bio_en)) delete patch.bio_en;
     if (sameBio(patch.bio_zh, existing.bio_zh)) delete patch.bio_zh;
     if (dto.bioEnMachineTranslated === true && patch.bio_en) {
@@ -192,6 +197,7 @@ export class InstructorsService {
       patch.bio_zh_translated_by = this.translator.modelId;
     }
     const bioTouched = patch.bio_en !== undefined || patch.bio_zh !== undefined;
+    if (syncBothBios && bothBiosSent) patch.bio_synced = true;
     const before = bioStateOf(existing);
     try {
       await this.repo.applyProfilePatch(instructorId, patch);

@@ -735,6 +735,11 @@ describe('InstructorsService', () => {
       expect(queue.calls).toEqual([]);
     });
 
+    it('does not sync timestamps on an admin save with both bios', async () => {
+      await service.updateProfileById('inst-1', { bioEn: 'A', bioZh: '乙' });
+      expect(repo.lastPatch).toEqual({ bio_en: 'A', bio_zh: '乙' });
+    });
+
     it('treats an empty string and null as the same bio', async () => {
       await service.updateProfileById('inst-1', { bioEn: '' });
       expect(repo.lastPatch).toEqual({});
@@ -770,6 +775,7 @@ describe('InstructorsService', () => {
         bio_zh: '我教滑雪。',
         bio_zh_machine_translated: true,
         bio_zh_translated_by: 'gemini-server',
+        bio_synced: true,
       });
       expect(profile).toMatchObject({
         bioEnMachineTranslated: false,
@@ -797,7 +803,11 @@ describe('InstructorsService', () => {
         bioZh: '我的',
         bioZhMachineTranslated: false,
       });
-      expect(repo.lastPatch).toEqual({ bio_en: 'Mine', bio_zh: '我的' });
+      expect(repo.lastPatch).toEqual({
+        bio_en: 'Mine',
+        bio_zh: '我的',
+        bio_synced: true,
+      });
     });
 
     it('ignores a flag for a bio that is not in the body, unchanged or empty', async () => {
@@ -810,12 +820,35 @@ describe('InstructorsService', () => {
         bioZh: '',
         bioZhMachineTranslated: true,
       });
-      expect(repo.lastPatch).toEqual({});
+      expect(repo.lastPatch).toEqual({ bio_synced: true });
       await service.updateOwnProfile('auth-1', {
         displayNameEn: 'Jane',
         bioZhMachineTranslated: true,
       });
       expect(repo.lastPatch).toEqual({ display_name_en: 'Jane' });
+    });
+
+    it('syncs both timestamps when both bios are sent, even if one is unchanged', async () => {
+      repo.rows = [
+        makeRow({ id: 'inst-1', auth_user_id: 'auth-1', bio_en: 'Source' }),
+      ];
+      await service.updateOwnProfile('auth-1', {
+        bioEn: 'Source',
+        bioZh: '译文',
+        bioZhMachineTranslated: true,
+      });
+      expect(repo.lastPatch).toEqual({
+        bio_zh: '译文',
+        bio_zh_machine_translated: true,
+        bio_zh_translated_by: 'gemini-server',
+        bio_synced: true,
+      });
+      expect(queue.calls).toEqual([]);
+    });
+
+    it('does not sync timestamps when only one bio is sent', async () => {
+      await service.updateOwnProfile('auth-1', { bioZh: '只有中文' });
+      expect(repo.lastPatch).toEqual({ bio_zh: '只有中文' });
     });
 
     it('rejects a client-supplied translated_by', async () => {

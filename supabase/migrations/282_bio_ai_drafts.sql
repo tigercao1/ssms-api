@@ -1,6 +1,7 @@
 -- Instructor bio refine / translate: per-instructor request log for the daily
 -- quota, per-language bio timestamps, and machine-translation flags in the
 -- profile RPC. Callers that omit the new patch keys behave as before.
+-- A bio timestamp moves when its text changes, unless the statement sets it.
 
 create table if not exists bio_ai_requests (
   id            uuid primary key default gen_random_uuid(),
@@ -25,18 +26,21 @@ language plpgsql
 set search_path = public
 as $$
 begin
+  -- Stamp a side whose text changed, unless the statement set its timestamp.
   if tg_op = 'INSERT' then
-    if new.bio_en is not null then
+    if new.bio_en is not null and new.bio_en_updated_at is null then
       new.bio_en_updated_at := now();
     end if;
-    if new.bio_zh is not null then
+    if new.bio_zh is not null and new.bio_zh_updated_at is null then
       new.bio_zh_updated_at := now();
     end if;
   else
-    if new.bio_en is distinct from old.bio_en then
+    if new.bio_en is distinct from old.bio_en
+       and new.bio_en_updated_at is not distinct from old.bio_en_updated_at then
       new.bio_en_updated_at := now();
     end if;
-    if new.bio_zh is distinct from old.bio_zh then
+    if new.bio_zh is distinct from old.bio_zh
+       and new.bio_zh_updated_at is not distinct from old.bio_zh_updated_at then
       new.bio_zh_updated_at := now();
     end if;
   end if;
@@ -110,8 +114,9 @@ create or replace function public.update_instructor_profile(
 language plpgsql
 as $$
 declare
-  v_cert  jsonb;
-  v_trn   jsonb;
+  v_cert   jsonb;
+  v_trn    jsonb;
+  v_synced boolean := coalesce((p_patch->>'bio_synced')::boolean, false);
 begin
   if p_patch is null then
     return;
@@ -141,6 +146,10 @@ begin
       then p_patch->>'bio_en_translated_by' else bio_en_translated_by end,
     bio_zh_translated_by = case when p_patch ? 'bio_zh_translated_by'
       then p_patch->>'bio_zh_translated_by' else bio_zh_translated_by end,
+    bio_en_updated_at = case when v_synced
+      then now() else bio_en_updated_at end,
+    bio_zh_updated_at = case when v_synced
+      then now() else bio_zh_updated_at end,
     date_of_birth = case when p_patch ? 'date_of_birth'
       then (p_patch->>'date_of_birth')::date else date_of_birth end,
     preferred_language = case when p_patch ? 'preferred_language'
@@ -229,7 +238,8 @@ $$;
 comment on function public.update_instructor_profile(uuid, jsonb) is
   'T3.4 transactional profile update: partial core-column patch + relation '
   'replacement in one transaction. Omitted keys untouched; [] clears a relation. '
-  'bio_*_machine_translated / bio_*_translated_by override the bio-write reset.';
+  'bio_*_machine_translated / bio_*_translated_by override the bio-write reset. '
+  'bio_synced = true stamps both bio_*_updated_at with the same now().';
 
 revoke all on function public.update_instructor_profile(uuid, jsonb)
   from public, anon, authenticated;

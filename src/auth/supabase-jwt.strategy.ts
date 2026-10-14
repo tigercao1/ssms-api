@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { passportJwtSecret } from 'jwks-rsa';
 import { SupabaseJwtPayload } from './jwt-payload.interface';
+import { SessionLivenessService } from './session-liveness.service';
 
 /**
  * Verifies Supabase access tokens (T1.3).
@@ -29,7 +30,10 @@ export class SupabaseJwtStrategy extends PassportStrategy(
   Strategy,
   'supabase-jwt',
 ) {
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly sessions: SessionLivenessService,
+  ) {
     const supabaseUrl = config
       .getOrThrow<string>('SUPABASE_URL')
       .replace(/\/+$/, '');
@@ -51,7 +55,13 @@ export class SupabaseJwtStrategy extends PassportStrategy(
     });
   }
 
-  validate(payload: SupabaseJwtPayload): SupabaseJwtPayload {
+  async validate(payload: SupabaseJwtPayload): Promise<SupabaseJwtPayload> {
+    if (typeof payload.session_id !== 'string') {
+      throw new UnauthorizedException();
+    }
+    if (!(await this.sessions.isActive(payload.session_id))) {
+      throw new UnauthorizedException();
+    }
     return payload;
   }
 }

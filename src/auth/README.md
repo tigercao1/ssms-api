@@ -9,6 +9,13 @@ Supabase Auth; the client then sends `Authorization: Bearer <supabase-jwt>`.
   **JWKS** (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`, cached; `kid`-based
   rotation), `aud=authenticated`. Decoded payload → `request.user` (T1.3). No
   shared JWT secret in env.
+- `SessionLivenessService` — after the signature checks, the strategy requires a
+  `session_id` claim and asks Postgres (`session_is_active` rpc) whether that
+  `auth.sessions` row still exists, so a revoked session (sign-out, demotion)
+  gets 401 immediately instead of at token expiry. Live results are cached
+  in memory for 30s per session; inactive results are never cached. If the
+  check itself fails the request gets 503, not 401, so a DB blip does not sign
+  the portal out.
 - JWKS handled by **`jwks-rsa`** (`passportJwtSecret`): fetch + cache + `kid`
   rotation. Requires **Node ≥ 22.12** (jwks-rsa `require()`s ESM `jose@6`);
   pinned via `package.json` engines + `.nvmrc` (24).

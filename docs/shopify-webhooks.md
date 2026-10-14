@@ -35,7 +35,7 @@ replace it with this block.
 
 ```toml
 [webhooks]
-api_version = "2026-07"
+api_version = "2026-10"
 
   [[webhooks.subscriptions]]
   topics = [ "customers/create", "customers/update" ]
@@ -85,7 +85,7 @@ the store and is never retried. Point it at a local or dev API that has `SHOPIFY
 ```sh
 shopify app webhook trigger \
   --topic customers/update \
-  --api-version 2026-07 \
+  --api-version 2026-10 \
   --delivery-method http \
   --address http://localhost:3000/webhooks/shopify \
   --client-secret <SHOPIFY_CLIENT_SECRET>

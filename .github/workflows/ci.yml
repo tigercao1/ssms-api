@@ -111,6 +111,9 @@ jobs:
       - name: Customer webhook checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/customer_webhooks_checks.sql
 
+      - name: Session revocation checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/session_revocation_checks.sql
+
       # Mirrors what the post-merge job does to dev and prod: the base branch's
       # migrations are already applied, and only this PR's new files run.
       - name: Apply on top of base branch (PRs only)

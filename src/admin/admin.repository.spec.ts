@@ -364,4 +364,40 @@ describe('SupabaseAdminRepository', () => {
       InternalServerErrorException,
     );
   });
+
+  describe('revokeSessions', () => {
+    async function buildWithRpc(result: {
+      data: unknown;
+      error: { message: string } | null;
+    }) {
+      const rpc = jest.fn().mockResolvedValue(result);
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          { provide: AdminRepository, useClass: SupabaseAdminRepository },
+          { provide: SUPABASE_CLIENT, useValue: { rpc } },
+        ],
+      }).compile();
+      return { repo: moduleRef.get(AdminRepository), rpc };
+    }
+
+    it('calls revoke_user_sessions for the user and returns the revoked count', async () => {
+      const { repo, rpc } = await buildWithRpc({ data: 2, error: null });
+
+      await expect(repo.revokeSessions('user-9')).resolves.toBe(2);
+      expect(rpc).toHaveBeenCalledWith('revoke_user_sessions', {
+        p_user_id: 'user-9',
+      });
+    });
+
+    it('surfaces Supabase errors as 500', async () => {
+      const { repo } = await buildWithRpc({
+        data: null,
+        error: { message: 'boom' },
+      });
+
+      await expect(repo.revokeSessions('user-9')).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+    });
+  });
 });

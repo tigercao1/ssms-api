@@ -11,6 +11,13 @@ alter table customer_sync_status
     constraint customer_sync_status_last_reconcile_error_check
     check (char_length(last_reconcile_error) <= 2000);
 
+insert into customer_sync_status (id) values (true) on conflict (id) do nothing;
+
+update customer_sync_status
+   set incremental_since = (select max(shopify_updated_at) - interval '2 minutes' from customers)
+ where id
+   and incremental_since is null;
+
 create table if not exists shopify_webhook_events (
   id                   uuid primary key default gen_random_uuid(),
   webhook_id           text not null

@@ -60,6 +60,7 @@ describe('AdminService', () => {
     deleteReference: jest.fn(),
     getUserRole: jest.fn(),
     setUserRole: jest.fn(),
+    revokeSessions: jest.fn(),
   };
   const instructors = {
     updateProfileById: jest.fn(),
@@ -374,6 +375,57 @@ describe('AdminService', () => {
           metadata: { from: 'instructor', to: 'admin' },
         }),
       );
+      expect(repo.revokeSessions).not.toHaveBeenCalled();
+    });
+
+    it('revokes the sessions of a demoted admin and audits the count', async () => {
+      repo.getUserRole.mockResolvedValue({ found: true, role: 'admin' });
+      repo.setUserRole.mockResolvedValue(undefined);
+      repo.revokeSessions.mockResolvedValue(3);
+
+      const result = await service.setUserRole('user-9', 'instructor', {
+        userId: 'admin-1',
+      });
+
+      expect(repo.revokeSessions).toHaveBeenCalledWith('user-9');
+      expect(repo.setUserRole.mock.invocationCallOrder[0]).toBeLessThan(
+        repo.revokeSessions.mock.invocationCallOrder[0],
+      );
+      expect(result).toEqual({
+        userId: 'user-9',
+        role: 'instructor',
+        previousRole: 'admin',
+        changed: true,
+      });
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'user.role_change',
+          targetId: 'user-9',
+          metadata: { from: 'admin', to: 'instructor', sessionsRevoked: 3 },
+        }),
+      );
+    });
+
+    it('still audits a demotion whose session revocation fails, then surfaces the error', async () => {
+      repo.getUserRole.mockResolvedValue({ found: true, role: 'admin' });
+      repo.setUserRole.mockResolvedValue(undefined);
+      const failure = new Error('revoke failed');
+      repo.revokeSessions.mockRejectedValue(failure);
+
+      await expect(
+        service.setUserRole('user-9', 'instructor', { userId: 'admin-1' }),
+      ).rejects.toBe(failure);
+
+      expect(repo.setUserRole).toHaveBeenCalledWith('user-9', 'instructor');
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'user.role_change',
+          targetId: 'user-9',
+          metadata: { from: 'admin', to: 'instructor', sessionsRevoked: null },
+        }),
+      );
     });
 
     it('is an idempotent no-op (no write, no audit) when role is unchanged', async () => {
@@ -385,6 +437,7 @@ describe('AdminService', () => {
 
       expect(result.changed).toBe(false);
       expect(repo.setUserRole).not.toHaveBeenCalled();
+      expect(repo.revokeSessions).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 

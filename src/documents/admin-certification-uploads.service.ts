@@ -5,7 +5,7 @@ import {
   CertificationUploadsRepository,
   type CertificationUploadWrite,
 } from './certification-uploads.repository';
-import { utcToday } from './certification-validity';
+import { torontoToday } from './certification-validity';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import type {
   CertUpload,
@@ -96,7 +96,9 @@ export class AdminCertificationUploadsService {
     const rows = await this.subjects.listCertificationUploads(
       row.instructor_id,
     );
-    const upload = toCertUploads(rows, utcToday(now)).find((u) => u.id === id);
+    const upload = toCertUploads(rows, torontoToday(now)).find(
+      (u) => u.id === id,
+    );
     if (!upload) {
       throw new NotFoundException(CERTIFICATION_UPLOAD_NOT_FOUND);
     }

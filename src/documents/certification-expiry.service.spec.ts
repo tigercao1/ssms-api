@@ -225,8 +225,44 @@ describe('CertificationExpiryService.run', () => {
     seed({ valid_until: '2027-01-15' });
     await service.run('2027-01-01', NOW);
     expect(subjects.uploads[0].expiry_reminder_sent_at).toBe(
-      '2027-01-01T00:00:00.000Z',
+      '2027-01-01T05:00:00.000Z',
     );
+  });
+
+  it.each([
+    ['2026-11-01', '2026-11-01T04:00:00.000Z'],
+    ['2026-11-02', '2026-11-02T05:00:00.000Z'],
+  ])(
+    'stamps Toronto midnight of %s across the DST change',
+    async (day, sentAt) => {
+      const { service, seed, subjects } = setup();
+      seed({ valid_until: addDays(day, 10) });
+      await service.run(day, NOW);
+      expect(subjects.uploads[0].expiry_reminder_sent_at).toBe(sentAt);
+    },
+  );
+
+  it('stamps now when the run day is the Toronto date of now, even after UTC midnight', async () => {
+    const { service, seed, subjects } = setup();
+    const now = new Date('2026-10-14T02:00:00.000Z');
+    seed({ valid_until: '2026-10-20' });
+    await service.run('2026-10-13', now);
+    expect(subjects.uploads[0].expiry_reminder_sent_at).toBe(now.toISOString());
+  });
+
+  it('sends the expired email the Toronto day after an expiring email sent at 22:00 Toronto on the last day', async () => {
+    const { service, seed, sent } = setup();
+    seed({ valid_until: '2026-10-13' });
+    await expect(
+      service.run('2026-10-13', new Date('2026-10-14T02:00:00.000Z')),
+    ).resolves.toMatchObject({ expiring: 1, expired: 0 });
+    await expect(
+      service.run('2026-10-14', new Date('2026-10-14T13:00:00.000Z')),
+    ).resolves.toMatchObject({ expiring: 0, expired: 1 });
+    expect(sent.map((s) => s.template)).toEqual([
+      'certification.expiring',
+      'certification.expired',
+    ]);
   });
 
   it('defaults to today', async () => {

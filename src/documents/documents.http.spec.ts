@@ -22,7 +22,7 @@ import { AuditService } from '../audit/audit.service';
 import { MailerService } from '../mailer/mailer.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
-import { utcToday } from './certification-validity';
+import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
@@ -846,7 +846,7 @@ describe('documents HTTP', () => {
   });
 
   describe('GET /me/documents', () => {
-    const today = utcToday();
+    const today = torontoToday();
 
     async function setup(env: Record<string, string> = {}) {
       ctx = await build(env);

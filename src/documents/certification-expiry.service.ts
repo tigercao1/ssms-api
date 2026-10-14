@@ -14,7 +14,8 @@ import {
   EXPIRING_WITHIN_DAYS,
   type ExpiryReminder,
   expiryReminderDue,
-  utcToday,
+  torontoStartOfDay,
+  torontoToday,
 } from './certification-validity';
 
 export const CERTIFICATION_REUPLOAD_PATH = '/onboarding';
@@ -54,9 +55,9 @@ export class CertificationExpiryService {
     private readonly mailer: MailerService,
   ) {}
 
-  /** Sends the expiry emails due on `today` (YYYY-MM-DD, UTC). */
+  /** Sends the expiry emails due on `today` (YYYY-MM-DD, Toronto). */
   async run(
-    today = utcToday(),
+    today = torontoToday(),
     now = new Date(),
   ): Promise<CertificationExpiryResult> {
     const result: CertificationExpiryResult = {
@@ -65,7 +66,9 @@ export class CertificationExpiryService {
       failed: 0,
     };
     const sentAt =
-      utcToday(now) === today ? now.toISOString() : `${today}T00:00:00.000Z`;
+      torontoToday(now) === today
+        ? now.toISOString()
+        : torontoStartOfDay(today);
     for (const due of await this.dueReminders(today)) {
       const claimed = await this.uploads.swapExpiryReminderSentAt(
         due.upload.id,

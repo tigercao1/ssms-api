@@ -7,7 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { hasCode, PG_UNIQUE_VIOLATION } from '../database/db-result';
-import { utcToday } from './certification-validity';
+import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import {
   DocumentNotificationsService,
@@ -172,7 +172,7 @@ export class DocumentAssignmentsService {
     ]);
     return {
       assignments: assignments.map(toAssignment),
-      certificationUploads: toCertUploads(uploads, utcToday()),
+      certificationUploads: toCertUploads(uploads, torontoToday()),
     };
   }
 

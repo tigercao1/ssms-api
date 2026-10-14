@@ -18,7 +18,7 @@ import {
   CertificationUploadsRepository,
   type NewCertificationUploadRow,
 } from './certification-uploads.repository';
-import { daysBetween, utcToday } from './certification-validity';
+import { daysBetween, torontoToday } from './certification-validity';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import {
   CERT_ORGS,
@@ -104,7 +104,7 @@ export class MeCertificationUploadsService {
   async uploadUrl(
     authUserId: string,
     dto: CertificationUploadUrlDto,
-    today = utcToday(),
+    today = torontoToday(),
   ): Promise<CertificationUploadUrl> {
     const instructor = await this.me.instructorFor(authUserId);
     if (daysBetween(today, dto.validUntil) < 0) {
@@ -148,7 +148,7 @@ export class MeCertificationUploadsService {
   async confirm(
     authUserId: string,
     uploadId: string,
-    today = utcToday(),
+    today = torontoToday(),
   ): Promise<CertUpload> {
     const instructor = await this.me.instructorFor(authUserId);
     const existing = await this.uploads.findById(uploadId);

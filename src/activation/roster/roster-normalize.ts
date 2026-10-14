@@ -642,8 +642,10 @@ export function describeCertification(cert: RosterCertification): string {
       : cert.track === 'carving'
         ? 'Carving '
         : '';
-  const partial = cert.isPartial
-    ? ` Partial [${cert.partialComponents.join(', ')}]`
-    : '';
+  const components =
+    cert.partialComponents.length > 0
+      ? ` [${cert.partialComponents.join(', ')}]`
+      : '';
+  const partial = cert.isPartial ? ` Partial${components}` : '';
   return `${ORG_LABEL[cert.org]} ${track}Level ${cert.level}${partial}`;
 }

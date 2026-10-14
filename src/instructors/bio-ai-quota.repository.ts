@@ -24,7 +24,7 @@ interface WindowRow {
   request_id?: string | null;
 }
 
-/** Quota storage for bio refine / translate requests (migration 281). */
+/** Quota storage for bio refine / translate requests (migration 282). */
 export abstract class BioAiQuotaRepository {
   abstract usage(instructorId: string): Promise<BioAiWindow>;
   /** Atomically records a request unless `limit` are already in the window. */

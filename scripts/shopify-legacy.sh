@@ -9,7 +9,7 @@
 #   SSMS_ENV=dev  ./scripts/shopify-legacy.sh apply <reviewed.csv>            # dry run
 #   SSMS_ENV=dev  ./scripts/shopify-legacy.sh apply <reviewed.csv> --write
 #
-# apply --write against prod also requires SSMS_CONFIRM_PROD=yes.
+# apply/backfill --write against prod also requires SSMS_CONFIRM_PROD=yes.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,10 +24,10 @@ ssms_banner
 cmd="${1:-}"
 
 case "$cmd" in
-  snapshot | propose | apply) ;;
+  snapshot | propose | apply | backfill) ;;
   *)
     echo "Unknown command: ${cmd:-<none>}" >&2
-    echo "Use one of: snapshot | propose | apply" >&2
+    echo "Use one of: snapshot | propose | apply | backfill" >&2
     exit 1
     ;;
 esac
@@ -39,9 +39,9 @@ for v in SUPABASE_URL SUPABASE_SECRET_KEY; do
   fi
 done
 
-if [[ "$cmd" == "apply" ]] && [[ " $* " == *" --write "* ]]; then
+if [[ "$cmd" == "apply" || "$cmd" == "backfill" ]] && [[ " $* " == *" --write "* ]]; then
   if [[ "$SSMS_ENV" == "prod" && "${SSMS_CONFIRM_PROD:-}" != "yes" ]]; then
-    echo "ERROR: apply --write against PROD requires SSMS_CONFIRM_PROD=yes." >&2
+    echo "ERROR: $cmd --write against PROD requires SSMS_CONFIRM_PROD=yes." >&2
     exit 1
   fi
 fi

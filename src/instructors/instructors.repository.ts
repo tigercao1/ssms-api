@@ -62,7 +62,8 @@ export abstract class InstructorsRepository {
 const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'bio_en_machine_translated, bio_zh_machine_translated, ' +
-  'bio_en_translated_by, bio_zh_translated_by, date_of_birth, ' +
+  'bio_en_translated_by, bio_zh_translated_by, ' +
+  'bio_en_updated_at, bio_zh_updated_at, date_of_birth, ' +
   'profile_photo_url, photo_2_url, photo_3_url, preferred_language, ' +
   'approval_status, is_active, ' +
   'min_student_age, display_order, inserted_at, updated_at';

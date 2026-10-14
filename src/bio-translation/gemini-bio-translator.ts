@@ -1,5 +1,8 @@
 import { Logger } from '@nestjs/common';
 import type {
+  BioDraft,
+  BioDraftInput,
+  BioDraftMode,
   BioLang,
   BioTranslationInput,
   BioTranslator,
@@ -81,6 +84,44 @@ export function buildTranslationInstruction(
   ].join('\n');
 }
 
+const DRAFT_TASKS: Record<BioDraftMode, string[]> = {
+  refine: [
+    'Polish the wording in the language or languages it is written in: fix grammar, spelling and flow, keep every fact, the first person and the tone, and add nothing new.',
+    'Then give the polished bio in both English and Simplified Chinese.',
+  ],
+  translate: [
+    "Keep the instructor's wording exactly as written; do not polish, shorten or reorder it.",
+    'Translate only what is missing: English parts stay unchanged in "en" and are translated into "zh"; Chinese parts stay unchanged in "zh" and are translated into "en".',
+  ],
+};
+
+const DRAFT_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: { en: { type: 'STRING' }, zh: { type: 'STRING' } },
+  required: ['en', 'zh'],
+  propertyOrdering: ['en', 'zh'],
+};
+
+export function buildDraftInstruction(
+  mode: BioDraftMode,
+  maxLength: number,
+): string {
+  const glossary = TRANSLATION_GLOSSARY.map(
+    (entry) => `- ${entry.zh.join(' / ')} = ${entry.en}`,
+  ).join('\n');
+  return [
+    `The user message is ${SUBJECTS.bio}, written in English, Simplified Chinese or a mix of both.`,
+    ...DRAFT_TASKS[mode],
+    '"en" must be the complete bio in English and "zh" the complete bio in Simplified Chinese.',
+    `Keep people's names, certifications (${PRESERVED_TERMS.join(', ')}), numbers and URLs unchanged.`,
+    'Write naturally, as a native speaker would; do not translate word for word.',
+    'Use this glossary in both directions:',
+    glossary,
+    `Each of "en" and "zh" must be at most ${maxLength} characters.`,
+    'Respond with JSON only: {"en": "...", "zh": "..."}.',
+  ].join('\n');
+}
+
 export class GeminiBioTranslator implements BioTranslator {
   private readonly logger = new Logger(GeminiBioTranslator.name);
   readonly modelId: string;
@@ -127,10 +168,48 @@ export class GeminiBioTranslator implements BioTranslator {
     throw lastError ?? new GeminiTranslationError('Gemini timed out', true);
   }
 
-  private async request(
+  /** Single attempt: the caller is waiting and the quota counts the call. */
+  async draft(input: BioDraftInput): Promise<BioDraft> {
+    const text = await this.generate(
+      {
+        systemInstruction: {
+          parts: [{ text: buildDraftInstruction(input.mode, input.maxLength) }],
+        },
+        contents: [{ role: 'user', parts: [{ text: input.text }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: DRAFT_RESPONSE_SCHEMA,
+        },
+      },
+      this.timeoutMs,
+    );
+    return parseDraft(text, input.maxLength);
+  }
+
+  private request(
     input: BioTranslationInput,
     timeoutMs: number,
   ): Promise<string> {
+    return this.generate(
+      {
+        systemInstruction: {
+          parts: [
+            {
+              text: buildTranslationInstruction(
+                input.from,
+                input.to,
+                input.kind,
+              ),
+            },
+          ],
+        },
+        contents: [{ role: 'user', parts: [{ text: input.text }] }],
+      },
+      timeoutMs,
+    );
+  }
+
+  private async generate(body: object, timeoutMs: number): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -142,31 +221,18 @@ export class GeminiBioTranslator implements BioTranslator {
             'Content-Type': 'application/json',
             [GEMINI_API_KEY_HEADER]: this.apiKey,
           },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [
-                {
-                  text: buildTranslationInstruction(
-                    input.from,
-                    input.to,
-                    input.kind,
-                  ),
-                },
-              ],
-            },
-            contents: [{ role: 'user', parts: [{ text: input.text }] }],
-          }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         },
       );
-      const body = (await response.json().catch(() => ({}))) as GeminiResponse;
+      const json = (await response.json().catch(() => ({}))) as GeminiResponse;
       if (!response.ok) {
         throw new GeminiTranslationError(
-          `Gemini HTTP ${response.status}${body.error?.message ? `: ${body.error.message.slice(0, 200)}` : ''}`,
+          `Gemini HTTP ${response.status}${json.error?.message ? `: ${json.error.message.slice(0, 200)}` : ''}`,
           response.status === 429 || response.status >= 500,
         );
       }
-      const text = extractText(body);
+      const text = extractText(json);
       if (text === '') {
         throw new GeminiTranslationError('Gemini returned no text', false);
       }
@@ -183,6 +249,33 @@ export class GeminiBioTranslator implements BioTranslator {
       clearTimeout(timer);
     }
   }
+}
+
+function parseDraft(text: string, maxLength: number): BioDraft {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new GeminiTranslationError('Gemini returned invalid JSON', false);
+  }
+  const { en, zh } = (parsed ?? {}) as Record<string, unknown>;
+  if (typeof en !== 'string' || typeof zh !== 'string') {
+    throw new GeminiTranslationError('Gemini draft is missing en or zh', false);
+  }
+  const draft = { en: en.trim(), zh: zh.trim() };
+  if (draft.en === '' || draft.zh === '') {
+    throw new GeminiTranslationError(
+      'Gemini draft has an empty language',
+      false,
+    );
+  }
+  if (draft.en.length > maxLength || draft.zh.length > maxLength) {
+    throw new GeminiTranslationError(
+      `Gemini draft exceeds ${maxLength} characters`,
+      false,
+    );
+  }
+  return draft;
 }
 
 function extractText(body: GeminiResponse): string {

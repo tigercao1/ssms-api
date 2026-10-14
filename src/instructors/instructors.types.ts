@@ -21,6 +21,8 @@ export interface InstructorRow {
   bio_zh_machine_translated: boolean;
   bio_en_translated_by: string | null;
   bio_zh_translated_by: string | null;
+  bio_en_updated_at: string | null;
+  bio_zh_updated_at: string | null;
   date_of_birth: string | null;
   profile_photo_url: string | null;
   photo_2_url: string | null;
@@ -69,6 +71,8 @@ export interface InstructorProfile {
   bioZhMachineTranslated: boolean;
   bioEnTranslatedBy: string | null;
   bioZhTranslatedBy: string | null;
+  bioEnUpdatedAt: string | null;
+  bioZhUpdatedAt: string | null;
   dateOfBirth: string | null;
   preferredLanguage: PreferredLanguage;
   approvalStatus: ApprovalStatus;
@@ -109,6 +113,10 @@ export interface InstructorProfilePatch {
   display_name_zh?: string | null;
   bio_en?: string | null;
   bio_zh?: string | null;
+  bio_en_machine_translated?: boolean;
+  bio_zh_machine_translated?: boolean;
+  bio_en_translated_by?: string | null;
+  bio_zh_translated_by?: string | null;
   date_of_birth?: string | null;
   preferred_language?: PreferredLanguage;
   profile_photo_url?: string | null;

@@ -1,11 +1,25 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailVerifiedGuard } from '../auth/email-verified.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
-import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
+import { BioDraftDto } from './dto/bio-draft.dto';
+import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
 import { InstructorProfile } from './instructors.types';
 import { InstructorsService } from './instructors.service';
+import {
+  BioAiUsage,
+  BioDraftResponse,
+  BioDraftService,
+} from './bio-draft.service';
 
 /**
  * Self-service instructor profile endpoints (`/me/instructor`).
@@ -18,7 +32,10 @@ import { InstructorsService } from './instructors.service';
 @Controller('me/instructor')
 @UseGuards(SupabaseAuthGuard, EmailVerifiedGuard)
 export class InstructorsController {
-  constructor(private readonly instructors: InstructorsService) {}
+  constructor(
+    private readonly instructors: InstructorsService,
+    private readonly bioDrafts: BioDraftService,
+  ) {}
 
   /**
    * T3.1 — Fetch the caller's profile. First verified call auto-creates a
@@ -36,8 +53,24 @@ export class InstructorsController {
   @Patch()
   updateMe(
     @CurrentUser() user: SupabaseJwtPayload,
-    @Body() dto: UpdateInstructorProfileDto,
+    @Body() dto: UpdateOwnInstructorProfileDto,
   ): Promise<InstructorProfile> {
     return this.instructors.updateOwnProfile(user.sub, dto);
+  }
+
+  /** Remaining bio refine / translate requests in the rolling 24 h window. */
+  @Get('bio/ai-usage')
+  getBioAiUsage(@CurrentUser() user: SupabaseJwtPayload): Promise<BioAiUsage> {
+    return this.bioDrafts.getUsage(user.sub);
+  }
+
+  /** Refine or translate a bio into both languages. Saves nothing. */
+  @Post('bio/draft')
+  @HttpCode(200)
+  draftBio(
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Body() dto: BioDraftDto,
+  ): Promise<BioDraftResponse> {
+    return this.bioDrafts.draft(user.sub, dto);
   }
 }

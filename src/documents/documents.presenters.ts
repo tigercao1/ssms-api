@@ -5,6 +5,7 @@ import type {
   CertificationUploadRow,
   DocumentAssignmentRow,
   DocumentTemplateRow,
+  SigningTemplate,
   Template,
   TemplateField,
   TemplateFieldRow,
@@ -161,4 +162,18 @@ export function toCertUploads(
   return [...rows]
     .sort((a, b) => Date.parse(b.inserted_at) - Date.parse(a.inserted_at))
     .map((row) => toCertUpload(row, currentIds.has(row.id), today));
+}
+
+export function toSigningTemplate(row: DocumentTemplateRow): SigningTemplate {
+  return {
+    id: row.id,
+    kind: row.kind,
+    titleEn: row.title_en,
+    titleZh: row.title_zh,
+    descriptionEn: row.description_en,
+    descriptionZh: row.description_zh,
+    pageCount: row.page_count,
+    pages: row.pages,
+    fields: row.fields.map(toTemplateField),
+  };
 }

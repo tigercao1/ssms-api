@@ -8,6 +8,7 @@ import {
 } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type {
+  AssignmentStatus,
   DocumentAssignmentRow,
   NewAssignmentRow,
   SubjectType,
@@ -49,6 +50,12 @@ export abstract class DocumentAssignmentsRepository {
   abstract insertIfAbsent(row: NewAssignmentRow): Promise<boolean>;
   abstract update(
     id: string,
+    patch: DocumentAssignmentWrite,
+  ): Promise<DocumentAssignmentRow | null>;
+  /** Updates the row only while its status is one of `statuses`; null otherwise. */
+  abstract updateIfStatus(
+    id: string,
+    statuses: AssignmentStatus[],
     patch: DocumentAssignmentWrite,
   ): Promise<DocumentAssignmentRow | null>;
 }
@@ -145,6 +152,22 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
       .from(DOCUMENT_ASSIGNMENTS_TABLE)
       .update(patch)
       .eq('id', id)
+      .select(DOCUMENT_ASSIGNMENT_COLUMNS)
+      .maybeSingle()) as DbResult<DocumentAssignmentRow>;
+    check(error, 'update document assignment');
+    return data ?? null;
+  }
+
+  async updateIfStatus(
+    id: string,
+    statuses: AssignmentStatus[],
+    patch: DocumentAssignmentWrite,
+  ): Promise<DocumentAssignmentRow | null> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .update(patch)
+      .eq('id', id)
+      .in('status', statuses)
       .select(DOCUMENT_ASSIGNMENT_COLUMNS)
       .maybeSingle()) as DbResult<DocumentAssignmentRow>;
     check(error, 'update document assignment');

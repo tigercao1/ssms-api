@@ -22,6 +22,7 @@ import {
   type NewDocumentTemplate,
 } from '../../src/documents/document-templates.repository';
 import type {
+  AssignmentStatus,
   CertificationUploadRow,
   DocumentAssignmentRow,
   DocumentInstructorRow,
@@ -70,12 +71,14 @@ class FakeDocumentsJwtGuard implements CanActivate {
  */
 export async function startDocumentsApp(
   builder: TestingModuleBuilder,
+  configure?: (app: INestApplication<App>) => void,
 ): Promise<INestApplication<App>> {
   const moduleRef = await builder
     .overrideGuard(SupabaseAuthGuard)
     .useClass(FakeDocumentsJwtGuard)
     .compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
+  configure?.(app);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -386,6 +389,17 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
     const next = { ...row, ...patch, updated_at: nextTimestamp() };
     this.rows.set(id, next);
     return Promise.resolve(this.withTemplate(next));
+  }
+
+  updateIfStatus(
+    id: string,
+    statuses: AssignmentStatus[],
+    patch: DocumentAssignmentWrite,
+  ): Promise<DocumentAssignmentRow | null> {
+    const row = this.rows.get(id);
+    return row && statuses.includes(row.status)
+      ? this.update(id, patch)
+      : Promise.resolve(null);
   }
 }
 

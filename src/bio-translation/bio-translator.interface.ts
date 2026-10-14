@@ -18,6 +18,22 @@ export interface BioTranslationInput {
   timeoutMs?: number;
 }
 
+export type BioDraftMode = 'refine' | 'translate';
+
+export interface BioDraftInput {
+  text: string;
+  mode: BioDraftMode;
+  /** Upper bound on each output language, in characters. */
+  maxLength: number;
+}
+
+export interface BioDraft {
+  en: string;
+  zh: string;
+  /** Languages present in the input text; non-empty. */
+  sourceLangs: BioLang[];
+}
+
 /**
  * The single contract any translation provider must fulfil.
  *
@@ -35,6 +51,12 @@ export interface BioTranslator {
    * instead of resolving empty.
    */
   translate(input: BioTranslationInput): Promise<string>;
+
+  /**
+   * One call that returns the bio in both languages (instructor refine /
+   * translate). Absent when no real provider is configured.
+   */
+  draft?(input: BioDraftInput): Promise<BioDraft>;
 }
 
 /**

@@ -35,13 +35,22 @@ interface TargetState {
 
 interface BioRowState {
   source: string;
+  sourceUpdatedAt: string | null;
   target: TargetState;
 }
 
 function bioColumns(lang: BioLang) {
   return lang === 'en'
-    ? { text: 'bio_en', flag: 'bio_en_machine_translated' }
-    : { text: 'bio_zh', flag: 'bio_zh_machine_translated' };
+    ? {
+        text: 'bio_en',
+        flag: 'bio_en_machine_translated',
+        updatedAt: 'bio_en_updated_at',
+      }
+    : {
+        text: 'bio_zh',
+        flag: 'bio_zh_machine_translated',
+        updatedAt: 'bio_zh_updated_at',
+      };
 }
 
 function isWritable(target: TargetState): boolean {
@@ -225,7 +234,9 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     const columns = bioColumns(job.target_lang);
     const { data, error } = await this.supabase
       .from('instructors')
-      .select(`${source.text}, ${columns.text}, ${columns.flag}`)
+      .select(
+        `${source.text}, ${source.updatedAt}, ${columns.text}, ${columns.flag}`,
+      )
       .eq('id', job.instructor_id)
       .maybeSingle();
     if (error) {
@@ -237,6 +248,7 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     const row = data as unknown as Record<string, string | boolean | null>;
     return {
       source: (row[source.text] as string | null) ?? '',
+      sourceUpdatedAt: (row[source.updatedAt] as string | null) ?? null,
       target: {
         text: (row[columns.text] as string | null) ?? null,
         machineTranslated: row[columns.flag] === true,
@@ -244,7 +256,10 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /** Writes the translation + MT flag and model; false if the bios changed. */
+  /**
+   * Writes the translation + MT flag and model, dating the target like the
+   * source so neither looks stale. False if the bios changed meanwhile.
+   */
   private async applyTranslation(
     job: BioTranslationJobRow,
     translated: string,
@@ -262,20 +277,27 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
             bio_en: translated,
             bio_en_machine_translated: true,
             bio_en_translated_by: modelId,
+            bio_en_updated_at: expected.sourceUpdatedAt,
           }
         : {
             bio_zh: translated,
             bio_zh_machine_translated: true,
             bio_zh_translated_by: modelId,
+            bio_zh_updated_at: expected.sourceUpdatedAt,
           };
 
     const columns = bioColumns(job.target_lang);
-    const guardedUpdate = this.supabase
+    const source = bioColumns(job.source_lang);
+    let guardedUpdate = this.supabase
       .from('instructors')
       .update(patch)
       .eq('id', job.instructor_id)
-      .eq(bioColumns(job.source_lang).text, expected.source)
+      .eq(source.text, expected.source)
       .eq(columns.flag, expected.target.machineTranslated);
+    guardedUpdate =
+      expected.sourceUpdatedAt === null
+        ? guardedUpdate.is(source.updatedAt, null)
+        : guardedUpdate.eq(source.updatedAt, expected.sourceUpdatedAt);
     const { data, error } = await (
       expected.target.text === null
         ? guardedUpdate.is(columns.text, null)

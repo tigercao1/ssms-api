@@ -2,6 +2,11 @@ import { Module } from '@nestjs/common';
 import { BioTranslationModule } from '../bio-translation/bio-translation.module';
 import { TranslationQueueService } from '../bio-translation/translation-queue.service';
 import { MailerModule } from '../mailer/mailer.module';
+import {
+  BioAiQuotaRepository,
+  SupabaseBioAiQuotaRepository,
+} from './bio-ai-quota.repository';
+import { BioDraftService } from './bio-draft.service';
 import { InstructorsController } from './instructors.controller';
 import { InstructorsService } from './instructors.service';
 import {
@@ -27,6 +32,8 @@ import { TRANSLATION_QUEUE } from './translation-queue.port';
   controllers: [InstructorsController],
   providers: [
     InstructorsService,
+    BioDraftService,
+    { provide: BioAiQuotaRepository, useClass: SupabaseBioAiQuotaRepository },
     { provide: InstructorsRepository, useClass: SupabaseInstructorsRepository },
     { provide: TRANSLATION_QUEUE, useExisting: TranslationQueueService },
   ],

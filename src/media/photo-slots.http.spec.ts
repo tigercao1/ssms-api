@@ -14,6 +14,7 @@ import type { AddressInfo } from 'node:net';
 import request from 'supertest';
 import { AdminMediaController } from '../admin/admin-media.controller';
 import { AdminService } from '../admin/admin.service';
+import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { EmailVerifiedGuard } from '../auth/email-verified.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { InstructorsRepository } from '../instructors/instructors.repository';
@@ -157,6 +158,7 @@ async function build() {
       },
       { provide: STORAGE_CLIENT, useValue: storage },
       { provide: MailerService, useValue: {} },
+      { provide: BIO_TRANSLATOR, useValue: { modelId: null } },
       { provide: ConfigService, useValue: { get: () => undefined } },
       {
         provide: AdminService,

@@ -17,7 +17,9 @@ import {
   TrainerStatusRow,
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
+import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
 import { plainToInstance } from 'class-transformer';
+import type { BioTranslator } from '../bio-translation/bio-translator.interface';
 import type {
   BioChangeInput,
   TranslationQueuePort,
@@ -36,6 +38,8 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     bio_zh_machine_translated: false,
     bio_en_translated_by: null,
     bio_zh_translated_by: null,
+    bio_en_updated_at: null,
+    bio_zh_updated_at: null,
     date_of_birth: null,
     profile_photo_url: null,
     photo_2_url: null,
@@ -112,11 +116,15 @@ class FakeRepo extends InstructorsRepository {
     if (row) {
       if (patch.bio_en !== undefined) {
         row.bio_en = patch.bio_en;
-        row.bio_en_machine_translated = false;
+        row.bio_en_machine_translated =
+          patch.bio_en_machine_translated ?? false;
+        row.bio_en_translated_by = patch.bio_en_translated_by ?? null;
       }
       if (patch.bio_zh !== undefined) {
         row.bio_zh = patch.bio_zh;
-        row.bio_zh_machine_translated = false;
+        row.bio_zh_machine_translated =
+          patch.bio_zh_machine_translated ?? false;
+        row.bio_zh_translated_by = patch.bio_zh_translated_by ?? null;
       }
       if (patch.display_name_en !== undefined)
         row.display_name_en = patch.display_name_en;
@@ -164,6 +172,10 @@ describe('InstructorsService', () => {
   let queue: FakeQueue;
   let service: InstructorsService;
   let mailer: { send: jest.Mock; portalLink: jest.Mock };
+  const translator: BioTranslator = {
+    modelId: 'gemini-server',
+    translate: jest.fn(),
+  };
 
   beforeEach(() => {
     repo = new FakeRepo();
@@ -178,6 +190,7 @@ describe('InstructorsService', () => {
       repo,
       queue,
       mailer as unknown as MailerService,
+      translator,
     );
   });
 
@@ -639,7 +652,7 @@ describe('InstructorsService', () => {
     });
   });
 
-  describe('bio translation enqueue (T3.2/T5.2)', () => {
+  describe('bio translation enqueue on admin saves (T3.2/T5.2)', () => {
     beforeEach(() => {
       repo.rows.push(makeRow({ id: 'inst-1', auth_user_id: 'auth-1' }));
     });
@@ -652,7 +665,7 @@ describe('InstructorsService', () => {
     };
 
     it('hands the bios before and after the save to the queue', async () => {
-      await service.updateOwnProfile('auth-1', { bioEn: 'English bio' });
+      await service.updateProfileById('inst-1', { bioEn: 'English bio' });
       expect(queue.calls).toEqual([
         {
           instructorId: 'inst-1',
@@ -663,7 +676,7 @@ describe('InstructorsService', () => {
     });
 
     it('hands the saved bios to the queue when bio_zh is in the patch', async () => {
-      await service.updateOwnProfile('auth-1', { bioZh: '中文简介' });
+      await service.updateProfileById('inst-1', { bioZh: '中文简介' });
       expect(queue.calls).toEqual([
         {
           instructorId: 'inst-1',
@@ -683,7 +696,7 @@ describe('InstructorsService', () => {
           bio_zh_machine_translated: true,
         }),
       ];
-      await service.updateOwnProfile('auth-1', {
+      await service.updateProfileById('inst-1', {
         bioEn: 'New',
         bioZh: '机器翻译',
       });
@@ -717,20 +730,152 @@ describe('InstructorsService', () => {
           bio_zh: 'y',
         }),
       ];
-      await service.updateOwnProfile('auth-1', { bioEn: 'x', bioZh: 'y' });
+      await service.updateProfileById('inst-1', { bioEn: 'x', bioZh: 'y' });
       expect(repo.lastPatch).toEqual({});
       expect(queue.calls).toEqual([]);
     });
 
+    it('does not sync timestamps on an admin save with both bios', async () => {
+      await service.updateProfileById('inst-1', { bioEn: 'A', bioZh: '乙' });
+      expect(repo.lastPatch).toEqual({ bio_en: 'A', bio_zh: '乙' });
+    });
+
     it('treats an empty string and null as the same bio', async () => {
-      await service.updateOwnProfile('auth-1', { bioEn: '' });
+      await service.updateProfileById('inst-1', { bioEn: '' });
       expect(repo.lastPatch).toEqual({});
       expect(queue.calls).toEqual([]);
     });
 
     it('does NOT call the queue when no bio field is part of the update', async () => {
-      await service.updateOwnProfile('auth-1', { displayNameEn: 'No bios' });
+      await service.updateProfileById('inst-1', { displayNameEn: 'No bios' });
       expect(queue.calls).toEqual([]);
+    });
+  });
+
+  describe('instructor self-service bio saves', () => {
+    beforeEach(() => {
+      repo.rows.push(makeRow({ id: 'inst-1', auth_user_id: 'auth-1' }));
+    });
+
+    it('does NOT enqueue a background translation', async () => {
+      await service.updateOwnProfile('auth-1', { bioEn: 'English bio' });
+      expect(repo.lastPatch).toEqual({ bio_en: 'English bio' });
+      expect(queue.calls).toEqual([]);
+    });
+
+    it('stores a flagged side as machine-translated by the server model', async () => {
+      const profile = await service.updateOwnProfile('auth-1', {
+        bioEn: 'I teach skiing.',
+        bioZh: '我教滑雪。',
+        bioEnMachineTranslated: false,
+        bioZhMachineTranslated: true,
+      });
+      expect(repo.lastPatch).toEqual({
+        bio_en: 'I teach skiing.',
+        bio_zh: '我教滑雪。',
+        bio_zh_machine_translated: true,
+        bio_zh_translated_by: 'gemini-server',
+        bio_synced: true,
+      });
+      expect(profile).toMatchObject({
+        bioEnMachineTranslated: false,
+        bioZhMachineTranslated: true,
+        bioZhTranslatedBy: 'gemini-server',
+      });
+      expect(queue.calls).toEqual([]);
+    });
+
+    it('marks English as machine-translated too', async () => {
+      await service.updateOwnProfile('auth-1', {
+        bioEn: 'I teach skiing.',
+        bioEnMachineTranslated: true,
+      });
+      expect(repo.lastPatch).toEqual({
+        bio_en: 'I teach skiing.',
+        bio_en_machine_translated: true,
+        bio_en_translated_by: 'gemini-server',
+      });
+    });
+
+    it('treats an omitted or false flag as human-written', async () => {
+      await service.updateOwnProfile('auth-1', {
+        bioEn: 'Mine',
+        bioZh: '我的',
+        bioZhMachineTranslated: false,
+      });
+      expect(repo.lastPatch).toEqual({
+        bio_en: 'Mine',
+        bio_zh: '我的',
+        bio_synced: true,
+      });
+    });
+
+    it('ignores a flag for a bio that is not in the body, unchanged or empty', async () => {
+      repo.rows = [
+        makeRow({ id: 'inst-1', auth_user_id: 'auth-1', bio_en: 'Same' }),
+      ];
+      await service.updateOwnProfile('auth-1', {
+        bioEn: 'Same',
+        bioEnMachineTranslated: true,
+        bioZh: '',
+        bioZhMachineTranslated: true,
+      });
+      expect(repo.lastPatch).toEqual({ bio_synced: true });
+      await service.updateOwnProfile('auth-1', {
+        displayNameEn: 'Jane',
+        bioZhMachineTranslated: true,
+      });
+      expect(repo.lastPatch).toEqual({ display_name_en: 'Jane' });
+    });
+
+    it('syncs both timestamps when both bios are sent, even if one is unchanged', async () => {
+      repo.rows = [
+        makeRow({ id: 'inst-1', auth_user_id: 'auth-1', bio_en: 'Source' }),
+      ];
+      await service.updateOwnProfile('auth-1', {
+        bioEn: 'Source',
+        bioZh: '译文',
+        bioZhMachineTranslated: true,
+      });
+      expect(repo.lastPatch).toEqual({
+        bio_zh: '译文',
+        bio_zh_machine_translated: true,
+        bio_zh_translated_by: 'gemini-server',
+        bio_synced: true,
+      });
+      expect(queue.calls).toEqual([]);
+    });
+
+    it('does not sync timestamps when only one bio is sent', async () => {
+      await service.updateOwnProfile('auth-1', { bioZh: '只有中文' });
+      expect(repo.lastPatch).toEqual({ bio_zh: '只有中文' });
+    });
+
+    it('rejects a client-supplied translated_by', async () => {
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      });
+      await expect(
+        pipe.transform(
+          { bioZh: '你好', bioZhTranslatedBy: 'client-model' },
+          { type: 'body', metatype: UpdateOwnInstructorProfileDto },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('returns bio timestamps as ISO strings, or null', async () => {
+      repo.rows = [
+        makeRow({
+          id: 'inst-1',
+          auth_user_id: 'auth-1',
+          bio_en_updated_at: '2026-10-14T02:47:37.945123+00:00',
+        }),
+      ];
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com');
+      expect(profile.bioEnUpdatedAt).toBe('2026-10-14T02:47:37.945Z');
+      expect(profile.bioZhUpdatedAt).toBeNull();
     });
   });
 });

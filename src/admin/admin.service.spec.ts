@@ -12,6 +12,7 @@ import { Test } from '@nestjs/testing';
 import { InstructorsService } from '../instructors/instructors.service';
 import { InstructorsRepository } from '../instructors/instructors.repository';
 import { TRANSLATION_QUEUE } from '../instructors/translation-queue.port';
+import type { BioChangeInput } from '../instructors/translation-queue.port';
 import { AuditService } from '../audit/audit.service';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -540,6 +541,55 @@ describe('AdminService', () => {
         { min_student_age: 16 },
       );
       expect(profile.minStudentAge).toBe(16);
+    });
+  });
+
+  describe('admin bio saves', () => {
+    it('still enqueue a background translation', async () => {
+      let stored = { ...makeRow(), bio_en: null as string | null };
+      const instructorsRepo = {
+        findById: jest.fn(() => Promise.resolve({ ...stored })),
+        applyProfilePatch: jest.fn(
+          (_id: string, patch: { bio_en?: string }) => {
+            stored = { ...stored, bio_en: patch.bio_en ?? stored.bio_en };
+            return Promise.resolve();
+          },
+        ),
+        getTeachingLocations: jest.fn().mockResolvedValue([]),
+        getLanguages: jest.fn().mockResolvedValue([]),
+        getCourseLevels: jest.fn().mockResolvedValue([]),
+        getCertifications: jest.fn().mockResolvedValue([]),
+        getTrainerStatus: jest.fn().mockResolvedValue([]),
+      };
+      const queue = { enqueueForProfile: jest.fn().mockResolvedValue(true) };
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          AdminService,
+          InstructorsService,
+          { provide: InstructorsRepository, useValue: instructorsRepo },
+          { provide: TRANSLATION_QUEUE, useValue: queue },
+          { provide: AdminRepository, useValue: repo },
+          { provide: AuditService, useValue: audit },
+          { provide: MailerService, useValue: mailer },
+          { provide: DocumentOnboardingService, useValue: onboarding },
+          { provide: BIO_TRANSLATOR, useValue: translator },
+        ],
+      }).compile();
+
+      await moduleRef
+        .get(AdminService)
+        .updateProfile(stored.id, { bioEn: 'Admin wrote this' });
+
+      expect(instructorsRepo.applyProfilePatch).toHaveBeenCalledWith(
+        stored.id,
+        { bio_en: 'Admin wrote this' },
+      );
+      expect(queue.enqueueForProfile).toHaveBeenCalledTimes(1);
+      const [change] = queue.enqueueForProfile.mock.calls[0] as [
+        BioChangeInput,
+      ];
+      expect(change.instructorId).toBe(stored.id);
+      expect(change.after.bioEn).toBe('Admin wrote this');
     });
   });
 

@@ -3,10 +3,12 @@ import {
   GEMINI_API_KEY_HEADER,
   GeminiBioTranslator,
   GeminiTranslationError,
+  buildDraftInstruction,
   buildTranslationInstruction,
+  parseSourceLangs,
   type FetchLike,
 } from './gemini-bio-translator';
-import { TRANSLATION_GLOSSARY } from './translation-glossary';
+import { PRESERVED_TERMS, TRANSLATION_GLOSSARY } from './translation-glossary';
 
 const API_KEY = 'test-gemini-key';
 
@@ -289,4 +291,191 @@ describe('buildTranslationInstruction', () => {
       buildTranslationInstruction('en', 'zh-CN', 'reference-name'),
     ).toContain('a short label used by a ski/snowboard school');
   });
+});
+
+describe('GeminiBioTranslator.draft', () => {
+  const jsonReply = (value: unknown) =>
+    textReply(typeof value === 'string' ? value : JSON.stringify(value));
+
+  interface DraftBody {
+    systemInstruction: { parts: { text: string }[] };
+    contents: { role: string; parts: { text: string }[] }[];
+    generationConfig: {
+      responseMimeType: string;
+      responseSchema: { required: string[] };
+    };
+  }
+
+  it.each(['refine', 'translate'] as const)(
+    'makes one structured-JSON call in %s mode and returns both languages',
+    async (mode) => {
+      const fetchImpl = jest.fn<ReturnType<FetchLike>, FetchCall>(() =>
+        jsonReply({
+          en: ' I teach skiing. ',
+          zh: '我教滑雪。',
+          sourceLangs: ['en'],
+        }),
+      );
+
+      await expect(
+        makeTranslator(fetchImpl, { model: 'gemini-test' }).draft({
+          text: 'I teach skiing.',
+          mode,
+          maxLength: 1000,
+        }),
+      ).resolves.toEqual({
+        en: 'I teach skiing.',
+        zh: '我教滑雪。',
+        sourceLangs: ['en'],
+      });
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toContain('/models/gemini-test:generateContent');
+      const body = JSON.parse(init.body) as DraftBody;
+      expect(body.contents).toEqual([
+        { role: 'user', parts: [{ text: 'I teach skiing.' }] },
+      ]);
+      expect(body.generationConfig.responseMimeType).toBe('application/json');
+      expect(body.generationConfig.responseSchema.required).toEqual([
+        'en',
+        'zh',
+        'sourceLangs',
+      ]);
+      expect(body.systemInstruction.parts[0].text).toBe(
+        buildDraftInstruction(mode, 1000),
+      );
+    },
+  );
+
+  it.each([
+    ['invalid JSON', 'not json', /invalid JSON/],
+    [
+      'a missing language',
+      { en: 'Hi', sourceLangs: ['en'] },
+      /missing en or zh/,
+    ],
+    [
+      'an empty language',
+      { en: 'Hi', zh: '  ', sourceLangs: ['en'] },
+      /empty language/,
+    ],
+    [
+      'an over-limit language',
+      { en: 'x'.repeat(11), zh: '好', sourceLangs: ['en'] },
+      /exceeds 10/,
+    ],
+    ['missing sourceLangs', { en: 'Hi', zh: '嗨' }, /invalid sourceLangs/],
+    [
+      'empty sourceLangs',
+      { en: 'Hi', zh: '嗨', sourceLangs: [] },
+      /invalid sourceLangs/,
+    ],
+    [
+      'an unknown source language',
+      { en: 'Hi', zh: '嗨', sourceLangs: ['en', 'fr'] },
+      /invalid sourceLangs/,
+    ],
+    [
+      'a non-array sourceLangs',
+      { en: 'Hi', zh: '嗨', sourceLangs: 'en' },
+      /invalid sourceLangs/,
+    ],
+  ])('rejects %s without retrying', async (_label, reply, message) => {
+    const fetchImpl = jest.fn<ReturnType<FetchLike>, FetchCall>(() =>
+      jsonReply(reply),
+    );
+    await expect(
+      makeTranslator(fetchImpl).draft({
+        text: 'Hi',
+        mode: 'refine',
+        maxLength: 10,
+      }),
+    ).rejects.toThrow(message);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a server error', async () => {
+    const fetchImpl = jest.fn<ReturnType<FetchLike>, FetchCall>(() =>
+      reply(503, { error: { message: 'overloaded' } }),
+    );
+    await expect(
+      makeTranslator(fetchImpl).draft({
+        text: 'Hi',
+        mode: 'translate',
+        maxLength: 1000,
+      }),
+    ).rejects.toBeInstanceOf(GeminiTranslationError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('times out', async () => {
+    const fetchImpl = jest.fn<ReturnType<FetchLike>, FetchCall>(
+      (_url, init) =>
+        new Promise<never>((_resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
+        }),
+    );
+    await expect(
+      makeTranslator(fetchImpl, { timeoutMs: 20 }).draft({
+        text: 'Hi',
+        mode: 'refine',
+        maxLength: 1000,
+      }),
+    ).rejects.toThrow(/timed out/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('parseSourceLangs', () => {
+  it.each([
+    [['en'], ['en']],
+    [['zh-CN'], ['zh-CN']],
+    [
+      ['zh-CN', 'en'],
+      ['en', 'zh-CN'],
+    ],
+    [['en', 'en'], ['en']],
+  ])('accepts %j as %j', (input, expected) => {
+    expect(parseSourceLangs(input)).toEqual(expected);
+  });
+
+  it.each([[[]], [['zh']], [['EN']], [[null]], ['en'], [undefined], [{}]])(
+    'rejects %j',
+    (input) => {
+      expect(() => parseSourceLangs(input)).toThrow(GeminiTranslationError);
+    },
+  );
+});
+
+describe('buildDraftInstruction', () => {
+  it('asks refine to polish and produce both languages', () => {
+    const prompt = buildDraftInstruction('refine', 1000);
+    expect(prompt).toMatch(/Polish the wording/);
+    expect(prompt).toMatch(/both English and Simplified Chinese/);
+    expect(prompt).not.toMatch(/exactly as written/);
+  });
+
+  it('asks translate to keep the wording and fill in only what is missing', () => {
+    const prompt = buildDraftInstruction('translate', 1000);
+    expect(prompt).toMatch(/exactly as written/);
+    expect(prompt).toMatch(/Translate only what is missing/);
+    expect(prompt).not.toMatch(/Polish/);
+  });
+
+  it.each(['refine', 'translate'] as const)(
+    'uses the shared glossary, preserved terms and the length limit (%s)',
+    (mode) => {
+      const prompt = buildDraftInstruction(mode, 1000);
+      for (const entry of TRANSLATION_GLOSSARY) {
+        expect(prompt).toContain(`${entry.zh.join(' / ')} = ${entry.en}`);
+      }
+      expect(prompt).toContain(PRESERVED_TERMS.join(', '));
+      expect(prompt).toContain('at most 1000 characters');
+      expect(prompt).toMatch(/mix of both/);
+      expect(prompt).toContain('"sourceLangs"');
+    },
+  );
 });

@@ -23,6 +23,12 @@ describe('UpdateInstructorProfileDto validation (T3.2)', () => {
     expect(validate({})).toHaveLength(0);
   });
 
+  it('rejects the machine-translated flags, which only self-service PATCH accepts', () => {
+    expect(
+      errorsOn({ bioEnMachineTranslated: true, bioZhMachineTranslated: true }),
+    ).toEqual(['bioEnMachineTranslated', 'bioZhMachineTranslated']);
+  });
+
   it('rejects displayOrder, which only admins can set', () => {
     expect(errorsOn({ displayOrder: 1 })).toEqual(['displayOrder']);
   });

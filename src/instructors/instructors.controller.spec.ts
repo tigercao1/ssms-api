@@ -5,7 +5,9 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { EmailVerifiedGuard } from '../auth/email-verified.guard';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import type { InstructorProfile } from './instructors.types';
-import type { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
+import type { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
+import { BioDraftService } from './bio-draft.service';
+import type { BioDraftDto } from './dto/bio-draft.dto';
 
 const fakeProfile = { id: 'inst-1' } as InstructorProfile;
 
@@ -15,12 +17,20 @@ describe('InstructorsController', () => {
     getOrCreateForUser: jest.fn().mockResolvedValue(fakeProfile),
     updateOwnProfile: jest.fn().mockResolvedValue(fakeProfile),
   };
+  const usage = { limit: 5, used: 0, remaining: 5, resetsAt: null };
+  const bioDrafts = {
+    getUsage: jest.fn().mockResolvedValue(usage),
+    draft: jest.fn().mockResolvedValue({ en: 'a', zh: 'b', model: 'm', usage }),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
       controllers: [InstructorsController],
-      providers: [{ provide: InstructorsService, useValue: service }],
+      providers: [
+        { provide: InstructorsService, useValue: service },
+        { provide: BioDraftService, useValue: bioDrafts },
+      ],
     })
       // guards aren't exercised here (covered by auth module); stub them open
       .overrideGuard(SupabaseAuthGuard)
@@ -47,8 +57,19 @@ describe('InstructorsController', () => {
   });
 
   it('PATCH /me/instructor → updateOwnProfile(sub, dto)', async () => {
-    const dto = { displayNameEn: 'Jane' } as UpdateInstructorProfileDto;
+    const dto = { displayNameEn: 'Jane' } as UpdateOwnInstructorProfileDto;
     await expect(controller.updateMe(user, dto)).resolves.toBe(fakeProfile);
     expect(service.updateOwnProfile).toHaveBeenCalledWith('auth-1', dto);
+  });
+
+  it('GET /me/instructor/bio/ai-usage → getUsage(sub)', async () => {
+    await expect(controller.getBioAiUsage(user)).resolves.toBe(usage);
+    expect(bioDrafts.getUsage).toHaveBeenCalledWith('auth-1');
+  });
+
+  it('POST /me/instructor/bio/draft → draft(sub, dto)', async () => {
+    const dto: BioDraftDto = { text: 'Hi', mode: 'refine' };
+    await controller.draftBio(user, dto);
+    expect(bioDrafts.draft).toHaveBeenCalledWith('auth-1', dto);
   });
 });

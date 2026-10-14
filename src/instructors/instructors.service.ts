@@ -5,6 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
+import type { BioTranslator } from '../bio-translation/bio-translator.interface';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import {
@@ -19,6 +21,7 @@ import {
   InstructorRow,
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
+import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
 import { TRANSLATION_QUEUE } from './translation-queue.port';
 import type {
   BioStateInput,
@@ -49,6 +52,10 @@ function sameBio(
   return next !== undefined && (next ?? '') === (current ?? '');
 }
 
+function toIso(value: string | null | undefined): string | null {
+  return value == null ? null : new Date(value).toISOString();
+}
+
 function bioStateOf(row: InstructorRow): BioStateInput {
   return {
     bioEn: row.bio_en,
@@ -67,6 +74,7 @@ export class InstructorsService {
     @Inject(TRANSLATION_QUEUE)
     private readonly translationQueue: TranslationQueuePort,
     private readonly mailer: MailerService,
+    @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
   ) {}
 
   /**
@@ -134,16 +142,19 @@ export class InstructorsService {
   /**
    * T3.2 — Update the caller's own profile (resolved via JWT subject). Editable
    * in every approval_status; email is not part of the DTO so it stays immutable.
+   * Bios are reviewed in the draft flow, so no background translation is queued.
+   * Sending both bioEn and bioZh confirms both languages: both timestamps are
+   * stamped together, even when a text is unchanged.
    */
   async updateOwnProfile(
     authUserId: string,
-    dto: UpdateInstructorProfileDto,
+    dto: UpdateOwnInstructorProfileDto,
   ): Promise<InstructorProfile> {
     const instructor = await this.repo.findByAuthUserId(authUserId);
     if (!instructor) {
       throw new NotFoundException('Instructor profile not found');
     }
-    return this.updateProfileById(instructor.id, dto);
+    return this.applyUpdate(instructor.id, dto, false, true);
   }
 
   /**
@@ -154,9 +165,18 @@ export class InstructorsService {
    * (update core row + replace relation rows) so partial writes are impossible,
    * then hands the before/after bios to the translation queue.
    */
-  async updateProfileById(
+  updateProfileById(
     instructorId: string,
     dto: UpdateInstructorProfileDto,
+  ): Promise<InstructorProfile> {
+    return this.applyUpdate(instructorId, dto, true);
+  }
+
+  private async applyUpdate(
+    instructorId: string,
+    dto: UpdateOwnInstructorProfileDto,
+    enqueueTranslation: boolean,
+    syncBothBios = false,
   ): Promise<InstructorProfile> {
     const existing = await this.repo.findById(instructorId);
     if (!existing) {
@@ -164,9 +184,20 @@ export class InstructorsService {
     }
 
     const patch = this.buildPatch(dto);
+    const bothBiosSent =
+      patch.bio_en !== undefined && patch.bio_zh !== undefined;
     if (sameBio(patch.bio_en, existing.bio_en)) delete patch.bio_en;
     if (sameBio(patch.bio_zh, existing.bio_zh)) delete patch.bio_zh;
+    if (dto.bioEnMachineTranslated === true && patch.bio_en) {
+      patch.bio_en_machine_translated = true;
+      patch.bio_en_translated_by = this.translator.modelId;
+    }
+    if (dto.bioZhMachineTranslated === true && patch.bio_zh) {
+      patch.bio_zh_machine_translated = true;
+      patch.bio_zh_translated_by = this.translator.modelId;
+    }
     const bioTouched = patch.bio_en !== undefined || patch.bio_zh !== undefined;
+    if (syncBothBios && bothBiosSent) patch.bio_synced = true;
     const before = bioStateOf(existing);
     try {
       await this.repo.applyProfilePatch(instructorId, patch);
@@ -179,7 +210,7 @@ export class InstructorsService {
     const profile = await this.buildProfile(updated ?? existing);
     // Only enqueue when a bio field was actually part of this update; the queue
     // then decides whether a translation is warranted.
-    if (bioTouched) {
+    if (enqueueTranslation && bioTouched) {
       await this.translationQueue.enqueueForProfile({
         instructorId,
         before,
@@ -284,6 +315,8 @@ export class InstructorsService {
       bioZhMachineTranslated: row.bio_zh_machine_translated,
       bioEnTranslatedBy: row.bio_en_translated_by,
       bioZhTranslatedBy: row.bio_zh_translated_by,
+      bioEnUpdatedAt: toIso(row.bio_en_updated_at),
+      bioZhUpdatedAt: toIso(row.bio_zh_updated_at),
       dateOfBirth: row.date_of_birth,
       preferredLanguage: row.preferred_language,
       approvalStatus: row.approval_status,

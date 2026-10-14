@@ -64,6 +64,23 @@ export class CustomerSyncService {
     if (options.cursor && !options.full) {
       throw new BadRequestException(CURSOR_NEEDS_FULL);
     }
+    const result = await this.run(options, MAX_SYNC_PAGES_PER_RUN);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.customerSync,
+      actor: { ...actor, role: 'admin' },
+      metadata: { ...result },
+    });
+    return result;
+  }
+
+  syncIncremental(maxPages: number): Promise<CustomerSyncResult> {
+    return this.run({}, maxPages);
+  }
+
+  private async run(
+    options: CustomerSyncOptions,
+    maxPages: number,
+  ): Promise<CustomerSyncResult> {
     const latest = options.full
       ? null
       : await this.repo.latestShopifyUpdatedAt();
@@ -72,7 +89,7 @@ export class CustomerSyncService {
     let pages = 0;
     let fetched = 0;
     let page: ShopifyCustomerPage | null = null;
-    while (pages < MAX_SYNC_PAGES_PER_RUN) {
+    while (pages < maxPages) {
       try {
         page = await this.directory.page(after, updatedSince);
       } catch (err) {
@@ -87,7 +104,7 @@ export class CustomerSyncService {
       after = page.endCursor;
     }
     const hasMore = Boolean(page?.hasNextPage && page.endCursor);
-    const result: CustomerSyncResult = {
+    return {
       mode: updatedSince ? 'incremental' : 'backfill',
       updatedSince,
       pages,
@@ -95,11 +112,5 @@ export class CustomerSyncService {
       hasMore,
       nextCursor: hasMore && options.full ? (page?.endCursor ?? null) : null,
     };
-    await this.audit.record({
-      action: AUDIT_ACTIONS.customerSync,
-      actor: { ...actor, role: 'admin' },
-      metadata: { ...result },
-    });
-    return result;
   }
 }

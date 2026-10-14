@@ -14,6 +14,7 @@ import {
 
 export const CUSTOMER_SEARCH_DEFAULT_LIMIT = 20;
 export const CUSTOMER_SEARCH_MAX_LIMIT = 100;
+export const CUSTOMER_SEARCH_MAX_PAGE = 10_000;
 export const CUSTOMER_NAME_MAX_LENGTH = 255;
 
 const trim = ({ value }: { value: unknown }) =>
@@ -38,6 +39,13 @@ export class SearchCustomersQueryDto {
   @Min(1)
   @Max(CUSTOMER_SEARCH_MAX_LIMIT)
   limit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(CUSTOMER_SEARCH_MAX_PAGE)
+  page?: number;
 }
 
 export class CreateCustomerDto {

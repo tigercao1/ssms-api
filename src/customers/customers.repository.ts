@@ -3,6 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult, likePattern } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 
+type CountedResult<T> = DbResult<T> & { count: number | null };
+
 export const CUSTOMERS_TABLE = 'customers';
 export const CUSTOMER_COLUMNS =
   'id, shopify_customer_id, first_name, last_name, email, phone, shopify_updated_at, created_at, updated_at';
@@ -28,8 +30,23 @@ export interface CustomerUpsert {
   shopify_updated_at: string | null;
 }
 
+export interface CustomerPageRequest {
+  limit: number;
+  offset: number;
+}
+
+export interface CustomerRowPage {
+  rows: CustomerRow[];
+  total: number;
+}
+
+export const PGRST_RANGE_NOT_SATISFIABLE = 'PGRST103';
+
 export abstract class CustomersRepository {
-  abstract search(tokens: string[], limit: number): Promise<CustomerRow[]>;
+  abstract search(
+    tokens: string[],
+    page: CustomerPageRequest,
+  ): Promise<CustomerRowPage>;
   abstract latestShopifyUpdatedAt(): Promise<string | null>;
   abstract upsertMany(rows: CustomerUpsert[]): Promise<void>;
   abstract upsertOne(row: CustomerUpsert): Promise<CustomerRow>;
@@ -43,18 +60,46 @@ export class SupabaseCustomersRepository extends CustomersRepository {
     super();
   }
 
-  async search(tokens: string[], limit: number): Promise<CustomerRow[]> {
-    let query = this.supabase.from(CUSTOMERS_TABLE).select(CUSTOMER_COLUMNS);
-    for (const token of tokens) {
-      query = query.ilike('search_text', likePattern(token.toLowerCase()));
-    }
-    const { data, error } = (await query
+  async search(
+    tokens: string[],
+    { limit, offset }: CustomerPageRequest,
+  ): Promise<CustomerRowPage> {
+    const { data, error, count } = (await this.matching(
+      this.supabase
+        .from(CUSTOMERS_TABLE)
+        .select(CUSTOMER_COLUMNS, { count: 'exact' }),
+      tokens,
+    )
       .order('last_name', { ascending: true, nullsFirst: false })
       .order('first_name', { ascending: true, nullsFirst: false })
       .order('id', { ascending: true })
-      .limit(limit)) as DbResult<CustomerRow[]>;
+      .range(offset, offset + limit - 1)) as CountedResult<CustomerRow[]>;
+    if (error?.code === PGRST_RANGE_NOT_SATISFIABLE) {
+      return { rows: [], total: await this.count(tokens) };
+    }
     check(error, 'search customers');
-    return data ?? [];
+    return { rows: data ?? [], total: count ?? 0 };
+  }
+
+  private async count(tokens: string[]): Promise<number> {
+    const { error, count } = (await this.matching(
+      this.supabase
+        .from(CUSTOMERS_TABLE)
+        .select('id', { count: 'exact', head: true }),
+      tokens,
+    )) as CountedResult<null>;
+    check(error, 'count customers');
+    return count ?? 0;
+  }
+
+  private matching<Q extends { ilike(column: string, pattern: string): Q }>(
+    query: Q,
+    tokens: string[],
+  ): Q {
+    return tokens.reduce(
+      (q, token) => q.ilike('search_text', likePattern(token.toLowerCase())),
+      query,
+    );
   }
 
   async latestShopifyUpdatedAt(): Promise<string | null> {

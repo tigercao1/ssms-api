@@ -13,9 +13,11 @@ import {
   customersPage,
   fakeShopifyGraphql,
   InMemoryCustomersRepository,
+  InMemoryCustomerSyncStatusRepository,
 } from '../../test/helpers/customers-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { buildCorsOptions } from '../config/cors';
 import { ShopifyAdminClient } from '../shopify/shopify-admin.client';
 import {
   ShopifyConfigError,
@@ -34,15 +36,24 @@ import {
   CustomerSyncService,
   MAX_SYNC_PAGES_PER_RUN,
 } from './customer-sync.service';
+import { CustomerSyncStatusRepository } from './customer-sync-status.repository';
+import { CustomerSyncWorker } from './customer-sync.worker';
 import { CustomersController } from './customers.controller';
 import { CustomersRepository } from './customers.repository';
 import { CustomersService } from './customers.service';
 import { ShopifyCustomerDirectory } from './shopify-customers';
 
+const PORTAL_ORIGIN = 'https://portal.example';
+
 async function build(
-  options: { responses?: unknown[]; enabled?: boolean } = {},
+  options: {
+    responses?: unknown[];
+    enabled?: boolean;
+    env?: Record<string, string>;
+  } = {},
 ) {
   const repo = new InMemoryCustomersRepository();
+  const syncStatus = new InMemoryCustomerSyncStatusRepository();
   const audit = recordingAudit();
   const shopify = fakeShopifyGraphql(options.responses ?? []);
   const app = await startAdminApp(
@@ -51,20 +62,26 @@ async function build(
       providers: [
         CustomersService,
         CustomerSyncService,
+        CustomerSyncWorker,
         ShopifyCustomerDirectory,
         { provide: CustomersRepository, useValue: repo },
+        { provide: CustomerSyncStatusRepository, useValue: syncStatus },
         { provide: ShopifyAdminClient, useValue: shopify.client },
         { provide: AuditService, useValue: audit },
         {
           provide: ConfigService,
-          useValue: new ConfigService(
-            options.enabled === false ? {} : { CUSTOMER_SYNC_ENABLED: 'true' },
-          ),
+          useValue: new ConfigService({
+            ...(options.enabled === false
+              ? {}
+              : { CUSTOMER_SYNC_ENABLED: 'true' }),
+            ...options.env,
+          }),
         },
       ],
     }),
+    (app) => app.enableCors(buildCorsOptions([PORTAL_ORIGIN])),
   );
-  return { app, repo, audit, graphql: shopify.graphql };
+  return { app, repo, syncStatus, audit, graphql: shopify.graphql };
 }
 
 const message = (res: request.Response) =>
@@ -96,6 +113,7 @@ describe('customers admin HTTP', () => {
           r.post('/admin/customers').send({ firstName: 'A', lastName: 'B' }),
       ],
       ['POST sync', (r) => r.post('/admin/customers/sync')],
+      ['GET sync status', (r) => r.get('/admin/customers/sync-status')],
     ];
 
     it.each(routes)('%s → 401 without a token', async (_name, send) => {
@@ -353,13 +371,10 @@ describe('customers admin HTTP', () => {
       ]);
     });
 
+    const get = (qs: string) =>
+      http().get(`/admin/customers${qs}`).set('Authorization', admin);
     const search = async (qs: string) =>
-      (
-        await http()
-          .get(`/admin/customers${qs}`)
-          .set('Authorization', admin)
-          .expect(200)
-      ).body as { shopifyCustomerId: number }[];
+      (await get(qs).expect(200)).body as { shopifyCustomerId: number }[];
 
     it.each([
       ['?q=wang', [1]],
@@ -368,9 +383,9 @@ describe('customers admin HTTP', () => {
       ['?q=647-555', [1]],
       ['?q=(647)%20555%200100', [1]],
       ['?q=%E7%8E%8B%E5%B0%8F%E6%98%8E', [2]],
-      ['?q=example.com', [1, 3]],
+      ['?q=example.com', [3, 1]],
       ['?q=nobody', []],
-      ['', [1, 2, 3]],
+      ['', [3, 1, 2]],
     ])('works even with sync off: %s → %j', async (qs, ids) => {
       expect((await search(qs)).map((c) => c.shopifyCustomerId)).toEqual(ids);
     });
@@ -394,14 +409,90 @@ describe('customers admin HTTP', () => {
       await search('?q=a&limit=5');
       await search('?q=a');
       expect(ctx.repo.searches.map((s) => s.limit)).toEqual([5, 20]);
-      await http()
-        .get('/admin/customers?limit=101')
-        .set('Authorization', admin)
-        .expect(400);
-      await http()
-        .get('/admin/customers?limit=0')
-        .set('Authorization', admin)
-        .expect(400);
+      await get('?limit=101').expect(400);
+      await get('?limit=0').expect(400);
+    });
+
+    it('pages a plain array in stable order and reports the total matches in X-Total-Count', async () => {
+      const pages = await Promise.all(
+        ['?limit=2', '?limit=2&page=2', '?limit=2&page=3'].map((qs) =>
+          get(qs).expect(200),
+        ),
+      );
+      expect(
+        pages.map((res) =>
+          (res.body as { shopifyCustomerId: number }[]).map(
+            (c) => c.shopifyCustomerId,
+          ),
+        ),
+      ).toEqual([[3, 1], [2], []]);
+      expect(pages.map((res) => res.headers['x-total-count'])).toEqual([
+        '3',
+        '3',
+        '3',
+      ]);
+      const filtered = await get('?q=example.com&limit=1&page=2').expect(200);
+      expect(filtered.headers['x-total-count']).toBe('2');
+      expect(ctx.repo.searches.at(-1)).toMatchObject({ limit: 1, offset: 1 });
+    });
+
+    it('defaults to page 1 and rejects bad pages', async () => {
+      await search('?q=a');
+      expect(ctx.repo.searches.at(-1)?.offset).toBe(0);
+      await get('?page=0').expect(400);
+      await get('?page=1.5').expect(400);
+      await get('?page=abc').expect(400);
+      await get('?page=10001').expect(400);
+    });
+
+    it('lets the portal origin read X-Total-Count through CORS', async () => {
+      const res = await get('?limit=1')
+        .set('Origin', PORTAL_ORIGIN)
+        .expect(200);
+      expect(res.headers['access-control-allow-origin']).toBe(PORTAL_ORIGIN);
+      expect(res.headers['access-control-expose-headers']).toBe(
+        'X-Total-Count',
+      );
+    });
+  });
+
+  describe('GET /admin/customers/sync-status', () => {
+    const status = async () =>
+      (
+        await http()
+          .get('/admin/customers/sync-status')
+          .set('Authorization', admin)
+          .expect(200)
+      ).body as unknown;
+
+    it('reports the last scheduled run and the schedule', async () => {
+      ctx = await build({ env: { CUSTOMER_SYNC_INTERVAL_MINUTES: '30' } });
+      Object.assign(ctx.syncStatus.row, {
+        last_started_at: '2026-10-13T12:00:00Z',
+        last_finished_at: '2026-10-13T12:00:04Z',
+        last_success_at: '2026-10-13T11:30:04Z',
+        last_fetched: 12,
+        last_error: 'Shopify request failed',
+      });
+      expect(await status()).toEqual({
+        scheduled: true,
+        intervalMinutes: 30,
+        lastStartedAt: '2026-10-13T12:00:00Z',
+        lastFinishedAt: '2026-10-13T12:00:04Z',
+        lastSuccessAt: '2026-10-13T11:30:04Z',
+        lastFetched: 12,
+        lastError: 'Shopify request failed',
+      });
+    });
+
+    it('is unscheduled when customer sync is off', async () => {
+      ctx = await build({ enabled: false });
+      expect(await status()).toMatchObject({
+        scheduled: false,
+        intervalMinutes: 15,
+        lastStartedAt: null,
+        lastFetched: null,
+      });
     });
   });
 

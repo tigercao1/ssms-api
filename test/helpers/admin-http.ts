@@ -33,6 +33,7 @@ class FakeJwtGuard implements CanActivate {
 
 export async function startAdminApp(
   builder: TestingModuleBuilder,
+  configure?: (app: INestApplication<App>) => void,
 ): Promise<INestApplication<App>> {
   const moduleRef = await builder
     .overrideGuard(SupabaseAuthGuard)
@@ -46,6 +47,7 @@ export async function startAdminApp(
       transform: true,
     }),
   );
+  configure?.(app);
   await app.init();
   return app;
 }

@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { CustomerSyncService } from '../customers/customer-sync.service';
+import { CustomerSyncWorker } from '../customers/customer-sync.worker';
 import {
   CustomersRepository,
   SupabaseCustomersRepository,
@@ -58,6 +59,11 @@ describe('Lessons and customers modules in the app', () => {
     expect(moduleRef.get(CustomerSyncService).isEnabled()).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(supabase.from).not.toHaveBeenCalledWith('customers');
+    expect(moduleRef.get(CustomerSyncWorker).scheduled()).toBe(false);
+    expect(supabase.rpc).not.toHaveBeenCalledWith(
+      'try_lock_customer_sync',
+      expect.anything(),
+    );
     await moduleRef.close();
   });
 });

@@ -28,6 +28,7 @@ describe('buildCorsOptions', () => {
     expect(opts.origin).toEqual(['https://portal.example']);
     expect(opts.credentials).toBe(false);
     expect(opts.allowedHeaders).toContain('Authorization');
+    expect(opts.exposedHeaders).toEqual(['X-Total-Count']);
     expect(opts.methods).toEqual(
       expect.arrayContaining(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     );

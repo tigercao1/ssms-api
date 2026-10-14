@@ -13,6 +13,11 @@ import {
   ShopifyCustomerDirectory,
 } from './shopify-customers';
 
+export interface CustomerSearchPage {
+  customers: Customer[];
+  total: number;
+}
+
 const PHONE_LIKE = /^[+\d\s().-]+$/;
 const MIN_PHONE_DIGITS = 3;
 
@@ -36,12 +41,16 @@ export class CustomersService {
     private readonly audit: AuditService,
   ) {}
 
-  async search(q: string | undefined, limit?: number): Promise<Customer[]> {
-    const rows = await this.repo.search(
-      customerSearchTokens(q),
-      limit ?? CUSTOMER_SEARCH_DEFAULT_LIMIT,
-    );
-    return rows.map(toCustomer);
+  async search(
+    q: string | undefined,
+    limit = CUSTOMER_SEARCH_DEFAULT_LIMIT,
+    page = 1,
+  ): Promise<CustomerSearchPage> {
+    const { rows, total } = await this.repo.search(customerSearchTokens(q), {
+      limit,
+      offset: (page - 1) * limit,
+    });
+    return { customers: rows.map(toCustomer), total };
   }
 
   async create(dto: CreateCustomerDto, actor: AuditActor): Promise<Customer> {

@@ -14,6 +14,7 @@ import {
   fakeShopifyGraphql,
   InMemoryCustomersRepository,
   InMemoryCustomerSyncStatusRepository,
+  InMemoryShopifyWebhookEventsRepository,
 } from '../../test/helpers/customers-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
@@ -36,12 +37,14 @@ import {
   CustomerSyncService,
   MAX_SYNC_PAGES_PER_RUN,
 } from './customer-sync.service';
+import { CustomerReconcileService } from './customer-reconcile.service';
 import { CustomerSyncStatusRepository } from './customer-sync-status.repository';
 import { CustomerSyncWorker } from './customer-sync.worker';
 import { CustomersController } from './customers.controller';
 import { CustomersRepository } from './customers.repository';
 import { CustomersService } from './customers.service';
 import { ShopifyCustomerDirectory } from './shopify-customers';
+import { ShopifyWebhookEventsRepository } from './shopify-webhook-events.repository';
 
 const PORTAL_ORIGIN = 'https://portal.example';
 
@@ -54,6 +57,7 @@ async function build(
 ) {
   const repo = new InMemoryCustomersRepository();
   const syncStatus = new InMemoryCustomerSyncStatusRepository();
+  const events = new InMemoryShopifyWebhookEventsRepository();
   const audit = recordingAudit();
   const shopify = fakeShopifyGraphql(options.responses ?? []);
   const app = await startAdminApp(
@@ -63,9 +67,11 @@ async function build(
         CustomersService,
         CustomerSyncService,
         CustomerSyncWorker,
+        CustomerReconcileService,
         ShopifyCustomerDirectory,
         { provide: CustomersRepository, useValue: repo },
         { provide: CustomerSyncStatusRepository, useValue: syncStatus },
+        { provide: ShopifyWebhookEventsRepository, useValue: events },
         { provide: ShopifyAdminClient, useValue: shopify.client },
         { provide: AuditService, useValue: audit },
         {
@@ -81,7 +87,7 @@ async function build(
     }),
     (app) => app.enableCors(buildCorsOptions([PORTAL_ORIGIN])),
   );
-  return { app, repo, syncStatus, audit, graphql: shopify.graphql };
+  return { app, repo, syncStatus, events, audit, graphql: shopify.graphql };
 }
 
 const message = (res: request.Response) =>
@@ -400,9 +406,29 @@ describe('customers admin HTTP', () => {
         email: 'mei@example.com',
         phone: '+1 (647) 555-0100',
         shopifyUpdatedAt: null,
+        shopifyDeletedAt: null,
         createdAt: expect.any(String) as unknown,
         updatedAt: expect.any(String) as unknown,
       });
+    });
+
+    it('hides customers deleted in Shopify unless includeDeleted=true', async () => {
+      await ctx.repo.markDeletedInShopify(1, '2026-10-12T00:00:00.000Z');
+      const visible = await get('?q=example.com').expect(200);
+      expect(
+        (visible.body as { shopifyCustomerId: number }[]).map(
+          (c) => c.shopifyCustomerId,
+        ),
+      ).toEqual([3]);
+      expect(visible.headers['x-total-count']).toBe('1');
+      const all = await search('?q=example.com&includeDeleted=true');
+      expect(all.map((c) => c.shopifyCustomerId)).toEqual([3, 1]);
+      expect(all[1]).toMatchObject({
+        shopifyDeletedAt: '2026-10-12T00:00:00.000Z',
+      });
+      await search('?includeDeleted=false');
+      expect(ctx.repo.searches.at(-1)?.includeDeleted).toBe(false);
+      await get('?includeDeleted=maybe').expect(400);
     });
 
     it('passes the limit through with a default of 20 and rejects bad limits', async () => {
@@ -482,6 +508,59 @@ describe('customers admin HTTP', () => {
         lastSuccessAt: '2026-10-13T11:30:04Z',
         lastFetched: 12,
         lastError: 'Shopify request failed',
+        incrementalSince: null,
+        lastWebhookAt: null,
+        webhooksLast24h: 0,
+        lastReconcileAt: null,
+        lastReconcileError: null,
+        deletedCount: 0,
+      });
+    });
+
+    it('reports webhook deliveries, the watermark, the last reconcile and the deleted count', async () => {
+      ctx = await build();
+      const receivedAt = new Date(Date.now() - 60_000).toISOString();
+      ctx.events.rows.push(
+        {
+          webhook_id: 'w-old',
+          topic: 'customers/update',
+          shopify_customer_id: 1,
+          triggered_at: null,
+          received_at: '2026-01-01T00:00:00.000Z',
+          processed_at: '2026-01-01T00:00:00.000Z',
+          error: null,
+        },
+        {
+          webhook_id: 'w-new',
+          topic: 'customers/delete',
+          shopify_customer_id: 1,
+          triggered_at: null,
+          received_at: receivedAt,
+          processed_at: receivedAt,
+          error: null,
+        },
+      );
+      await ctx.repo.upsertIfNewer({
+        shopify_customer_id: 1,
+        first_name: null,
+        last_name: null,
+        email: null,
+        phone: null,
+        shopify_updated_at: '2026-10-01T00:00:00Z',
+      });
+      await ctx.repo.markDeletedInShopify(1, '2026-10-02T00:00:00Z');
+      Object.assign(ctx.syncStatus.row, {
+        incremental_since: '2026-10-13T11:58:00.000Z',
+        last_reconcile_at: '2026-10-13T03:00:00.000Z',
+        last_reconcile_error: null,
+      });
+      expect(await status()).toMatchObject({
+        incrementalSince: '2026-10-13T11:58:00.000Z',
+        lastWebhookAt: receivedAt,
+        webhooksLast24h: 1,
+        lastReconcileAt: '2026-10-13T03:00:00.000Z',
+        lastReconcileError: null,
+        deletedCount: 1,
       });
     });
 

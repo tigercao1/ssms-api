@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ShopifyModule } from '../shopify/shopify.module';
+import { CustomerReconcileService } from './customer-reconcile.service';
 import {
   CustomerSyncStatusRepository,
   SupabaseCustomerSyncStatusRepository,
@@ -13,6 +14,10 @@ import {
 } from './customers.repository';
 import { CustomersService } from './customers.service';
 import { ShopifyCustomerDirectory } from './shopify-customers';
+import {
+  ShopifyWebhookEventsRepository,
+  SupabaseShopifyWebhookEventsRepository,
+} from './shopify-webhook-events.repository';
 
 @Module({
   imports: [ShopifyModule],
@@ -24,9 +29,15 @@ import { ShopifyCustomerDirectory } from './shopify-customers';
       provide: CustomerSyncStatusRepository,
       useClass: SupabaseCustomerSyncStatusRepository,
     },
+    {
+      provide: ShopifyWebhookEventsRepository,
+      useClass: SupabaseShopifyWebhookEventsRepository,
+    },
     CustomerSyncService,
+    CustomerReconcileService,
     CustomerSyncWorker,
     CustomersService,
   ],
+  exports: [CustomersRepository, ShopifyWebhookEventsRepository],
 })
 export class CustomersModule {}

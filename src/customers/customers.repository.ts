@@ -7,7 +7,7 @@ type CountedResult<T> = DbResult<T> & { count: number | null };
 
 export const CUSTOMERS_TABLE = 'customers';
 export const CUSTOMER_COLUMNS =
-  'id, shopify_customer_id, first_name, last_name, email, phone, shopify_updated_at, created_at, updated_at';
+  'id, shopify_customer_id, first_name, last_name, email, phone, shopify_updated_at, shopify_deleted_at, created_at, updated_at';
 
 export interface CustomerRow {
   id: string;
@@ -17,6 +17,7 @@ export interface CustomerRow {
   email: string | null;
   phone: string | null;
   shopify_updated_at: string | null;
+  shopify_deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +34,14 @@ export interface CustomerUpsert {
 export interface CustomerPageRequest {
   limit: number;
   offset: number;
+  includeDeleted?: boolean;
+}
+
+export type CustomerUpsertOutcome = 'inserted' | 'updated' | 'stale';
+
+export interface CustomerReconcileCounts {
+  deleted: number;
+  restored: number;
 }
 
 export interface CustomerRowPage {
@@ -50,6 +59,16 @@ export abstract class CustomersRepository {
   abstract latestShopifyUpdatedAt(): Promise<string | null>;
   abstract upsertMany(rows: CustomerUpsert[]): Promise<void>;
   abstract upsertOne(row: CustomerUpsert): Promise<CustomerRow>;
+  abstract upsertIfNewer(row: CustomerUpsert): Promise<CustomerUpsertOutcome>;
+  abstract markDeletedInShopify(
+    shopifyCustomerId: number,
+    deletedAt: string,
+  ): Promise<boolean>;
+  abstract reconcileDeletions(
+    shopifyCustomerIds: number[],
+    startedAt: string,
+  ): Promise<CustomerReconcileCounts>;
+  abstract countCustomers(deleted: boolean): Promise<number>;
 }
 
 @Injectable()
@@ -62,43 +81,50 @@ export class SupabaseCustomersRepository extends CustomersRepository {
 
   async search(
     tokens: string[],
-    { limit, offset }: CustomerPageRequest,
+    { limit, offset, includeDeleted = false }: CustomerPageRequest,
   ): Promise<CustomerRowPage> {
     const { data, error, count } = (await this.matching(
       this.supabase
         .from(CUSTOMERS_TABLE)
         .select(CUSTOMER_COLUMNS, { count: 'exact' }),
       tokens,
+      includeDeleted,
     )
       .order('last_name', { ascending: true, nullsFirst: false })
       .order('first_name', { ascending: true, nullsFirst: false })
       .order('id', { ascending: true })
       .range(offset, offset + limit - 1)) as CountedResult<CustomerRow[]>;
     if (error?.code === PGRST_RANGE_NOT_SATISFIABLE) {
-      return { rows: [], total: await this.count(tokens) };
+      return { rows: [], total: await this.count(tokens, includeDeleted) };
     }
     check(error, 'search customers');
     return { rows: data ?? [], total: count ?? 0 };
   }
 
-  private async count(tokens: string[]): Promise<number> {
+  private async count(
+    tokens: string[],
+    includeDeleted: boolean,
+  ): Promise<number> {
     const { error, count } = (await this.matching(
       this.supabase
         .from(CUSTOMERS_TABLE)
         .select('id', { count: 'exact', head: true }),
       tokens,
+      includeDeleted,
     )) as CountedResult<null>;
     check(error, 'count customers');
     return count ?? 0;
   }
 
-  private matching<Q extends { ilike(column: string, pattern: string): Q }>(
-    query: Q,
-    tokens: string[],
-  ): Q {
+  private matching<
+    Q extends {
+      ilike(column: string, pattern: string): Q;
+      is(column: string, value: null): Q;
+    },
+  >(query: Q, tokens: string[], includeDeleted: boolean): Q {
     return tokens.reduce(
       (q, token) => q.ilike('search_text', likePattern(token.toLowerCase())),
-      query,
+      includeDeleted ? query : query.is('shopify_deleted_at', null),
     );
   }
 
@@ -135,5 +161,59 @@ export class SupabaseCustomersRepository extends CustomersRepository {
       throw new Error('Failed to save customer: no row returned');
     }
     return data;
+  }
+
+  async upsertIfNewer(row: CustomerUpsert): Promise<CustomerUpsertOutcome> {
+    const { data, error } = (await this.supabase.rpc(
+      'upsert_customer_if_newer',
+      {
+        p_shopify_customer_id: row.shopify_customer_id,
+        p_first_name: row.first_name,
+        p_last_name: row.last_name,
+        p_email: row.email,
+        p_phone: row.phone,
+        p_shopify_updated_at: row.shopify_updated_at,
+      },
+    )) as DbResult<CustomerUpsertOutcome>;
+    check(error, 'save customer from Shopify');
+    if (!data) {
+      throw new Error('Failed to save customer from Shopify: no outcome');
+    }
+    return data;
+  }
+
+  async markDeletedInShopify(
+    shopifyCustomerId: number,
+    deletedAt: string,
+  ): Promise<boolean> {
+    const { data, error } = (await this.supabase.rpc(
+      'mark_customer_deleted_in_shopify',
+      { p_shopify_customer_id: shopifyCustomerId, p_deleted_at: deletedAt },
+    )) as DbResult<boolean>;
+    check(error, 'mark customer deleted');
+    return data === true;
+  }
+
+  async reconcileDeletions(
+    shopifyCustomerIds: number[],
+    startedAt: string,
+  ): Promise<CustomerReconcileCounts> {
+    const { data, error } = (await this.supabase.rpc(
+      'reconcile_customer_deletions',
+      { p_shopify_ids: shopifyCustomerIds, p_started_at: startedAt },
+    )) as DbResult<CustomerReconcileCounts>;
+    check(error, 'reconcile customer deletions');
+    return { deleted: data?.deleted ?? 0, restored: data?.restored ?? 0 };
+  }
+
+  async countCustomers(deleted: boolean): Promise<number> {
+    const query = this.supabase
+      .from(CUSTOMERS_TABLE)
+      .select('id', { count: 'exact', head: true });
+    const { error, count } = (await (deleted
+      ? query.not('shopify_deleted_at', 'is', null)
+      : query.is('shopify_deleted_at', null))) as CountedResult<null>;
+    check(error, 'count customers');
+    return count ?? 0;
   }
 }

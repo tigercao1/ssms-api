@@ -9,6 +9,7 @@ export interface Customer {
   email: string | null;
   phone: string | null;
   shopifyUpdatedAt: string | null;
+  shopifyDeletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -22,6 +23,7 @@ export function toCustomer(row: CustomerRow): Customer {
     email: row.email,
     phone: row.phone,
     shopifyUpdatedAt: row.shopify_updated_at,
+    shopifyDeletedAt: row.shopify_deleted_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

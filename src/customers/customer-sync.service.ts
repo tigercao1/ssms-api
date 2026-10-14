@@ -7,6 +7,7 @@ import {
   syncDisabled,
   toHttpError,
 } from './customer-errors';
+import { CustomerSyncStatusRepository } from './customer-sync-status.repository';
 import { CustomersRepository } from './customers.repository';
 import { toCustomerUpsert } from './customers.types';
 import {
@@ -16,6 +17,7 @@ import {
 
 export const MAX_SYNC_PAGES_PER_RUN = 50;
 export const CURSOR_NEEDS_FULL = 'cursor is only valid with full=true';
+export const INCREMENTAL_OVERLAP_MS = 2 * 60_000;
 
 export interface CustomerSyncOptions {
   full?: boolean;
@@ -48,6 +50,7 @@ export class CustomerSyncService {
     private readonly directory: ShopifyCustomerDirectory,
     private readonly repo: CustomersRepository,
     private readonly audit: AuditService,
+    private readonly statusRepo: CustomerSyncStatusRepository,
   ) {}
 
   isEnabled(): boolean {
@@ -81,13 +84,13 @@ export class CustomerSyncService {
     options: CustomerSyncOptions,
     maxPages: number,
   ): Promise<CustomerSyncResult> {
-    const latest = options.full
-      ? null
-      : await this.repo.latestShopifyUpdatedAt();
-    const updatedSince = latest ? toShopifySearchTime(latest) : null;
+    const startedAt = Date.now();
+    const since = options.full ? null : await this.incrementalSince();
+    const updatedSince = since ? toShopifySearchTime(since) : null;
     let after = options.full ? (options.cursor ?? null) : null;
     let pages = 0;
     let fetched = 0;
+    let newest: number | null = null;
     let page: ShopifyCustomerPage | null = null;
     while (pages < maxPages) {
       try {
@@ -97,6 +100,11 @@ export class CustomerSyncService {
       }
       pages++;
       fetched += page.customers.length;
+      newest = page.customers.reduce(
+        (max, c) =>
+          c.updatedAt ? Math.max(max ?? 0, Date.parse(c.updatedAt)) : max,
+        newest,
+      );
       await this.repo.upsertMany(page.customers.map(toCustomerUpsert));
       if (!page.hasNextPage || !page.endCursor) {
         break;
@@ -104,6 +112,14 @@ export class CustomerSyncService {
       after = page.endCursor;
     }
     const hasMore = Boolean(page?.hasNextPage && page.endCursor);
+    if (!options.full) {
+      const watermark = hasMore ? newest : startedAt - INCREMENTAL_OVERLAP_MS;
+      if (watermark !== null) {
+        await this.statusRepo.setIncrementalSince(
+          new Date(watermark).toISOString(),
+        );
+      }
+    }
     return {
       mode: updatedSince ? 'incremental' : 'backfill',
       updatedSince,
@@ -112,5 +128,12 @@ export class CustomerSyncService {
       hasMore,
       nextCursor: hasMore && options.full ? (page?.endCursor ?? null) : null,
     };
+  }
+
+  private async incrementalSince(): Promise<string | null> {
+    const status = await this.statusRepo.status();
+    return (
+      status?.incremental_since ?? (await this.repo.latestShopifyUpdatedAt())
+    );
   }
 }

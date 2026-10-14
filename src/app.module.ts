@@ -25,6 +25,7 @@ import { BookingModule } from './booking/booking.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { ClassImportModule } from './class-import/class-import.module';
 import { DocumentsModule } from './documents/documents.module';
+import { ShopifyWebhooksModule } from './shopify-webhooks/shopify-webhooks.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { DocumentsModule } from './documents/documents.module';
     PayrollModule,
     ClassImportModule,
     DocumentsModule,
+    ShopifyWebhooksModule,
     AuthHooksModule,
   ],
   controllers: [AppController],

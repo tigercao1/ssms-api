@@ -8,8 +8,6 @@
 #   SSMS_ENV=prod ./scripts/shopify-legacy.sh propose <output.csv> [--snapshot <file>]
 #   SSMS_ENV=dev  ./scripts/shopify-legacy.sh apply <reviewed.csv>            # dry run
 #   SSMS_ENV=dev  ./scripts/shopify-legacy.sh apply <reviewed.csv> --write
-#   SSMS_ENV=dev  ./scripts/shopify-legacy.sh backfill <report.csv> [--snapshot <file>] [--force <handle>]   # dry run
-#   SSMS_ENV=dev  ./scripts/shopify-legacy.sh backfill <report.csv> --write
 #
 # apply/backfill --write against prod also requires SSMS_CONFIRM_PROD=yes.
 set -euo pipefail
@@ -43,7 +41,7 @@ done
 
 if [[ "$cmd" == "apply" || "$cmd" == "backfill" ]] && [[ " $* " == *" --write "* ]]; then
   if [[ "$SSMS_ENV" == "prod" && "${SSMS_CONFIRM_PROD:-}" != "yes" ]]; then
-    echo "ERROR: apply --write against PROD requires SSMS_CONFIRM_PROD=yes." >&2
+    echo "ERROR: $cmd --write against PROD requires SSMS_CONFIRM_PROD=yes." >&2
     exit 1
   fi
 fi

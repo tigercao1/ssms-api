@@ -508,7 +508,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(ctx.mailer.sent).toHaveLength(2);
       });
 
-      it('runs the certification job for the UTC date of the given time', async () => {
+      it('runs the certification job for the Toronto date of the given time', async () => {
         const lin = ctx.subjects.seedInstructor();
         ctx.subjects.certifications.set(lin.id, [
           { org: 'csia', track: 'regular', level: 2 },
@@ -522,16 +522,76 @@ describe('documents emails and reminders HTTP', () => {
         const reminders = ctx.app.get(DocumentRemindersService);
 
         await expect(
-          reminders.run(new Date('2030-12-01T23:30:00Z')),
+          reminders.run(new Date('2031-01-02T04:59:59Z')),
         ).resolves.toMatchObject({
           certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         await expect(
-          reminders.run(new Date('2031-01-02T00:30:00Z')),
+          reminders.run(new Date('2031-01-02T05:00:00Z')),
         ).resolves.toMatchObject({
           certifications: { expiring: 1, expired: 0, failed: 0 },
         });
         expect(ctx.mailer.sentOf('certification.expiring')).toHaveLength(1);
+      });
+
+      it('sends expiring at 22:00 Toronto on the last valid day and expired after Toronto midnight', async () => {
+        const lin = ctx.subjects.seedInstructor();
+        ctx.subjects.certifications.set(lin.id, [
+          { org: 'csia', track: 'regular', level: 2 },
+        ]);
+        ctx.subjects.uploads.push(
+          certificationUploadRow({
+            instructor_id: lin.id,
+            valid_until: '2026-10-13',
+          }),
+        );
+        const reminders = ctx.app.get(DocumentRemindersService);
+
+        await expect(
+          reminders.run(new Date('2026-10-14T02:00:00Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 1, expired: 0, failed: 0 },
+        });
+        await expect(
+          reminders.run(new Date('2026-10-14T03:59:59Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 0, expired: 0, failed: 0 },
+        });
+        await expect(
+          reminders.run(new Date('2026-10-14T04:00:00Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 0, expired: 1, failed: 0 },
+        });
+        expect(ctx.mailer.sent.map((m) => m.template)).toEqual([
+          'certification.expiring',
+          'certification.expired',
+        ]);
+      });
+
+      it('follows Toronto midnight across the DST change on 2026-11-01', async () => {
+        const lin = ctx.subjects.seedInstructor();
+        ctx.subjects.certifications.set(lin.id, [
+          { org: 'csia', track: 'regular', level: 2 },
+        ]);
+        ctx.subjects.uploads.push(
+          certificationUploadRow({
+            instructor_id: lin.id,
+            valid_until: '2026-11-01',
+            expiry_reminder_sent_at: '2026-10-25T14:00:00Z',
+          }),
+        );
+        const reminders = ctx.app.get(DocumentRemindersService);
+
+        await expect(
+          reminders.run(new Date('2026-11-02T04:59:59Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 0, expired: 0, failed: 0 },
+        });
+        await expect(
+          reminders.run(new Date('2026-11-02T05:00:00Z')),
+        ).resolves.toMatchObject({
+          certifications: { expiring: 0, expired: 1, failed: 0 },
+        });
       });
     });
   });

@@ -728,6 +728,105 @@ describe('certification uploads over HTTP', () => {
     });
   });
 
+  describe('on the Toronto date', () => {
+    const TORONTO_22H = new Date('2026-10-14T02:00:00.000Z');
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    const at = (now: Date) => {
+      jest.useFakeTimers({ toFake: ['Date'], now });
+    };
+
+    const approved = (validUntil: string, org: 'csia' | 'casi' = 'csia') => {
+      const row = certificationUploadRow({
+        instructor_id: ctx.instructor.id,
+        org,
+        track: org === 'csia' ? 'regular' : 'park',
+        review_status: 'approved',
+        valid_until: validUntil,
+      });
+      ctx.subjects.uploads.push(row);
+      return row;
+    };
+
+    async function adminStates() {
+      const res = await http()
+        .get(`/admin/instructors/${ctx.instructor.id}/documents`)
+        .set('Authorization', admin)
+        .expect(200);
+      return (
+        (res.body as InstructorDocuments).certificationUploads as {
+          org: string;
+          state: string;
+        }[]
+      ).map((u) => [u.org, u.state]);
+    }
+
+    it('accepts and confirms validUntil = the Toronto date at 22:00 Toronto (02:00 UTC next day)', async () => {
+      at(TORONTO_22H);
+      const confirmed = await uploadAndConfirm({ validUntil: '2026-10-13' });
+      expect(confirmed).toMatchObject({
+        validUntil: '2026-10-13',
+        state: 'pending',
+      });
+      const [item] = (await certItems()).filter((i) => i.org === 'csia');
+      expect(item.state).toBe('pending');
+    });
+
+    it('rejects the previous Toronto date at 22:00 Toronto', async () => {
+      at(TORONTO_22H);
+      const res = await http()
+        .post('/me/certification-uploads/upload-url')
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .send(uploadBody({ validUntil: '2026-10-12' }))
+        .expect(400);
+      expect(messageOf(res)).toBe(VALID_UNTIL_IN_PAST);
+    });
+
+    it('rejects the old Toronto date once Toronto passes midnight', async () => {
+      at(new Date('2026-10-14T04:00:00.000Z'));
+      const res = await http()
+        .post('/me/certification-uploads/upload-url')
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .send(uploadBody({ validUntil: '2026-10-13' }))
+        .expect(400);
+      expect(messageOf(res)).toBe(VALID_UNTIL_IN_PAST);
+    });
+
+    it.each([
+      ['2026-10-14T02:00:00.000Z', 'expiring', 'valid'],
+      ['2026-10-14T03:59:59.999Z', 'expiring', 'valid'],
+      ['2026-10-14T04:00:00.000Z', 'expired', 'expiring'],
+    ])(
+      'at %s an upload valid until 2026-10-13 is %s and one valid until 2026-11-13 is %s',
+      async (now, lastDay, monthOut) => {
+        approved('2026-10-13');
+        approved('2026-11-13', 'casi');
+        at(new Date(now));
+        const states = Object.fromEntries(
+          (await certItems()).map((i) => [i.org, i.state]),
+        );
+        expect(states).toEqual({ csia: lastDay, casi: monthOut });
+        expect(Object.fromEntries(await adminStates())).toEqual(states);
+      },
+    );
+
+    it.each([
+      ['2026-11-02T04:59:59.999Z', 'expiring'],
+      ['2026-11-02T05:00:00.000Z', 'expired'],
+    ])(
+      'follows Toronto midnight after the DST change: at %s an upload valid until 2026-11-01 is %s',
+      async (now, state) => {
+        approved('2026-11-01');
+        at(new Date(now));
+        const [item] = (await certItems()).filter((i) => i.org === 'csia');
+        expect(item.state).toBe(state);
+      },
+    );
+  });
+
   describe('admin review', () => {
     let row: CertificationUploadRow;
 

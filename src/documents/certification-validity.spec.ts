@@ -183,7 +183,11 @@ describe('expiryReminderSent', () => {
     [null, null],
     ['2026-10-31T09:00:00.000Z', 'expiring'],
     ['2026-11-30T23:59:59.000Z', 'expiring'],
-    ['2026-12-01T00:00:00.000Z', 'expired'],
+    ['2026-12-01T00:00:00.000Z', 'expiring'],
+    ['2026-12-01T04:59:59.000Z', 'expiring'],
+    ['2026-12-01T05:00:00.000Z', 'expired'],
+    ['2026-10-31T03:59:59.000Z', null],
+    ['2026-10-31T04:00:00.000Z', 'expiring'],
     ['2026-10-30T12:00:00.000Z', null],
   ])('sent at %s → %s', (sentAt, stage) => {
     expect(expiryReminderSent(sentAt, VALID_UNTIL)).toBe(stage);

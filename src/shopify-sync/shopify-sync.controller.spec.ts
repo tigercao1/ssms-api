@@ -58,7 +58,7 @@ async function build(env: Record<string, string | undefined>) {
     ],
   }).compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
-  await app.init();
+  await app.listen(0, '127.0.0.1');
   return app;
 }
 

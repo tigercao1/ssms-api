@@ -112,7 +112,7 @@ describe('SupabaseAuthGuard with a real ES256 token', () => {
       res.setHeader('content-type', 'application/json');
       res.end(body);
     });
-    await new Promise<void>((resolve) => jwks.listen(0, resolve));
+    await new Promise<void>((resolve) => jwks.listen(0, '127.0.0.1', resolve));
     const { port } = jwks.address() as AddressInfo;
 
     @Global()
@@ -140,7 +140,7 @@ describe('SupabaseAuthGuard with a real ES256 token', () => {
       controllers: [ProbeController],
     }).compile();
     app = moduleRef.createNestApplication();
-    await app.init();
+    await app.listen(0, '127.0.0.1');
   });
 
   afterAll(async () => {

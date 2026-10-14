@@ -79,7 +79,8 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "setupFiles": [
-      "<rootDir>/test-env.setup.ts"
+      "<rootDir>/test-env.setup.ts",
+      "<rootDir>/test-loopback.setup.ts"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
@@ -88,6 +89,7 @@
       "**/*.(t|j)s",
       "!**/*.spec.ts",
       "!test-env.setup.ts",
+      "!test-loopback.setup.ts",
       "!main.ts",
       "!**/*.module.ts"
     ],

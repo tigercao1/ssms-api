@@ -97,7 +97,7 @@ async function build(env: Record<string, string | undefined> = {}) {
       transform: true,
     }),
   );
-  await app.init();
+  await app.listen(0, '127.0.0.1');
   const settings = moduleRef.get(ShopifySyncSettings);
   return { app, syncRepo, settingsRepo, audits, settings };
 }

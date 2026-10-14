@@ -86,7 +86,7 @@ export async function startDocumentsApp(
       transform: true,
     }),
   );
-  await app.init();
+  await app.listen(0, '127.0.0.1');
   return app;
 }
 

@@ -184,7 +184,7 @@ async function build() {
       transform: true,
     }),
   );
-  await app.listen(0);
+  await app.listen(0, '127.0.0.1');
   const address = (app.getHttpServer() as Server).address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
   return { app, repo, storage, url };

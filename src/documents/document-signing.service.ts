@@ -10,6 +10,7 @@ import {
   type DocumentAssignmentWrite,
   DocumentAssignmentsRepository,
 } from './document-assignments.repository';
+import { torontoToday } from './certification-validity';
 import { ASSIGNMENT_NOT_FOUND } from './document-assignments.service';
 import {
   DocumentCompletedHandler,
@@ -64,18 +65,6 @@ export const SIGNING_CONSENT = {
 const OPEN_STATUSES: DocumentAssignmentRow['status'][] = ['assigned', 'viewed'];
 const USER_AGENT_MAX_LENGTH = 512;
 const FILENAME_UNSAFE = /[\\/:*?"<>|\p{Cc}]+/gu;
-
-const TORONTO_DATE = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Toronto',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
-/** The calendar date in America/Toronto as YYYY-MM-DD. */
-export function torontoDate(at: Date): string {
-  return TORONTO_DATE.format(at);
-}
 
 /** Request facts recorded as signing evidence. */
 export interface SigningEvidence {
@@ -229,7 +218,7 @@ export class DocumentSigningService {
     try {
       return parseSigningInput(template.fields, dto, {
         email: instructor.email,
-        dateSigned: torontoDate(now),
+        dateSigned: torontoToday(now),
       });
     } catch (err) {
       if (err instanceof SigningInputError) {

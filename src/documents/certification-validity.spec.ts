@@ -7,7 +7,8 @@ import {
   expiryReminderDue,
   expiryReminderSent,
   isCertificationSatisfied,
-  utcToday,
+  torontoStartOfDay,
+  torontoToday,
 } from './certification-validity';
 
 const TODAY = '2026-10-12';
@@ -91,10 +92,42 @@ describe('certificationState', () => {
   });
 });
 
-describe('utcToday', () => {
-  it('formats the UTC date', () => {
-    expect(utcToday(new Date('2026-10-13T02:30:00Z'))).toBe('2026-10-13');
-    expect(utcToday()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+describe('torontoToday', () => {
+  it('uses the America/Toronto calendar date', () => {
+    expect(torontoToday(new Date('2026-10-13T03:30:00Z'))).toBe('2026-10-12');
+    expect(torontoToday(new Date('2026-10-13T04:30:00Z'))).toBe('2026-10-13');
+    expect(torontoToday(new Date('2027-01-15T04:59:00Z'))).toBe('2027-01-14');
+    expect(torontoToday()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('is still the previous day at 22:00 Toronto when UTC has rolled over', () => {
+    expect(torontoToday(new Date('2026-10-14T02:00:00Z'))).toBe('2026-10-13');
+    expect(torontoToday(new Date('2026-10-14T03:59:59Z'))).toBe('2026-10-13');
+    expect(torontoToday(new Date('2026-10-14T04:00:00Z'))).toBe('2026-10-14');
+  });
+
+  it('follows the DST change on 2026-11-01', () => {
+    expect(torontoToday(new Date('2026-11-01T03:59:59Z'))).toBe('2026-10-31');
+    expect(torontoToday(new Date('2026-11-01T04:00:00Z'))).toBe('2026-11-01');
+    expect(torontoToday(new Date('2026-11-02T04:59:59Z'))).toBe('2026-11-01');
+    expect(torontoToday(new Date('2026-11-02T05:00:00Z'))).toBe('2026-11-02');
+  });
+});
+
+describe('torontoStartOfDay', () => {
+  it.each([
+    ['2026-10-13', '2026-10-13T04:00:00.000Z'],
+    ['2026-11-01', '2026-11-01T04:00:00.000Z'],
+    ['2026-11-02', '2026-11-02T05:00:00.000Z'],
+    ['2027-01-15', '2027-01-15T05:00:00.000Z'],
+    ['2027-03-14', '2027-03-14T05:00:00.000Z'],
+    ['2027-03-15', '2027-03-15T04:00:00.000Z'],
+  ])('starts %s at %s', (date, instant) => {
+    expect(torontoStartOfDay(date)).toBe(instant);
+    expect(torontoToday(new Date(instant))).toBe(date);
+    expect(torontoToday(new Date(Date.parse(instant) - 1))).toBe(
+      addDays(date, -1),
+    );
   });
 });
 

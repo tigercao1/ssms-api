@@ -42,9 +42,61 @@ export function daysBetween(from: string, to: string): number {
   return dayNumber(to) - dayNumber(from);
 }
 
-/** Today's date (YYYY-MM-DD) in UTC, matching Postgres `current_date` on Supabase. */
-export function utcToday(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+/** The time zone the school operates in; certification dates are calendar dates there. */
+export const SCHOOL_TIME_ZONE = 'America/Toronto';
+
+const SCHOOL_CLOCK = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SCHOOL_TIME_ZONE,
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+function wallClock(at: Date): Record<string, number> {
+  const parts: Record<string, number> = {};
+  for (const part of SCHOOL_CLOCK.formatToParts(at)) {
+    if (part.type !== 'literal') {
+      parts[part.type] = Number(part.value);
+    }
+  }
+  return parts;
+}
+
+function offsetMs(instant: number): number {
+  const w = wallClock(new Date(instant));
+  const asUtc = Date.UTC(
+    w.year,
+    w.month - 1,
+    w.day,
+    w.hour,
+    w.minute,
+    w.second,
+  );
+  return asUtc - Math.floor(instant / 1000) * 1000;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * The calendar date (YYYY-MM-DD) in {@link SCHOOL_TIME_ZONE} at `now`. Every
+ * documents date (validity, expiry emails, upload checks, signing date) uses
+ * it; the database runs in UTC, so it is passed in rather than read from
+ * Postgres `current_date`.
+ */
+export function torontoToday(now: Date = new Date()): string {
+  const w = wallClock(now);
+  return `${w.year}-${pad(w.month)}-${pad(w.day)}`;
+}
+
+/** The instant (ISO, UTC) at which `date` (YYYY-MM-DD) starts in {@link SCHOOL_TIME_ZONE}. */
+export function torontoStartOfDay(date: string): string {
+  const wall = dayNumber(date) * MS_PER_DAY;
+  const instant = wall - offsetMs(wall - offsetMs(wall));
+  return new Date(instant).toISOString();
 }
 
 /**
@@ -119,7 +171,7 @@ export function addDays(date: string, days: number): string {
 
 /**
  * Which expiry email `expiry_reminder_sent_at` records, read against the
- * upload's current `validUntil`: sent after `validUntil` → `expired`; sent
+ * upload's current `validUntil` using the Toronto date it was sent: sent after `validUntil` → `expired`; sent
  * within {@link EXPIRING_WITHIN_DAYS} days before it (inclusive) → `expiring`;
  * unset, or sent before that window (the date was moved later) → none.
  */
@@ -130,7 +182,7 @@ export function expiryReminderSent(
   if (!sentAt) {
     return null;
   }
-  const sentDaysAfter = daysBetween(validUntil, utcToday(new Date(sentAt)));
+  const sentDaysAfter = daysBetween(validUntil, torontoToday(new Date(sentAt)));
   if (sentDaysAfter > 0) {
     return 'expired';
   }

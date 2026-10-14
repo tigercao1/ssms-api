@@ -32,7 +32,7 @@ import { AdminDocumentAssignmentsController } from './admin-document-assignments
 import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
 import { CertificationExpiryService } from './certification-expiry.service';
 import { CertificationUploadsRepository } from './certification-uploads.repository';
-import { addDays, utcToday } from './certification-validity';
+import { addDays, torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
@@ -404,7 +404,7 @@ describe('documents emails and reminders HTTP', () => {
             { assignmentIds: [due[0].id, due[1].id] },
           ],
         ]);
-        const today = new Date().toISOString().slice(0, 10);
+        const today = torontoToday();
         expect(ctx.mailer.sent[1].idempotencyKey).toBe(
           `documents.reminder/${zoe.id}/${today}`,
         );
@@ -461,7 +461,7 @@ describe('documents emails and reminders HTTP', () => {
 
       it('emails certification expiry from the same daily run, once per stage', async () => {
         const { subjects } = ctx;
-        const today = utcToday();
+        const today = torontoToday();
         const lin = subjects.seedInstructor({ email: 'lin@example.com' });
         subjects.certifications.set(lin.id, [
           { org: 'csia', track: 'regular', level: 2 },

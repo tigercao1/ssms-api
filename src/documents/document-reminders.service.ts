@@ -11,7 +11,7 @@ import {
   CertificationExpiryService,
   type CertificationExpiryResult,
 } from './certification-expiry.service';
-import { utcToday } from './certification-validity';
+import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { ASSIGNMENT_NOT_FOUND } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
@@ -67,7 +67,10 @@ export class DocumentRemindersService {
   async run(now: Date = new Date()): Promise<DailyRemindersResult> {
     return {
       documents: await this.remindOpenAssignments(now),
-      certifications: await this.certificationExpiry.run(utcToday(now), now),
+      certifications: await this.certificationExpiry.run(
+        torontoToday(now),
+        now,
+      ),
     };
   }
 
@@ -97,7 +100,7 @@ export class DocumentRemindersService {
       reminded: 0,
       emails: 0,
     };
-    const day = utcToday(now);
+    const day = torontoToday(now);
     for (const [instructorId, rows] of byInstructor) {
       try {
         const instructor = await this.subjects.findInstructor(instructorId);

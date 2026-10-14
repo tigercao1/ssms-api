@@ -27,6 +27,7 @@ import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { MailerService } from '../mailer/mailer.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
+import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import {
@@ -37,7 +38,6 @@ import { DocumentNotificationsService } from './document-notifications.service';
 import {
   DocumentSigningService,
   SIGNING_CONSENT,
-  torontoDate,
 } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -188,14 +188,6 @@ const validSign = {
     ini: { mode: 'typed', text: 'AW' },
   },
 };
-
-describe('torontoDate', () => {
-  it('uses the America/Toronto calendar date', () => {
-    expect(torontoDate(new Date('2026-10-13T03:30:00Z'))).toBe('2026-10-12');
-    expect(torontoDate(new Date('2026-10-13T04:30:00Z'))).toBe('2026-10-13');
-    expect(torontoDate(new Date('2027-01-15T04:59:00Z'))).toBe('2027-01-14');
-  });
-});
 
 describe('documents signing HTTP', () => {
   let ctx: Awaited<ReturnType<typeof build>>;
@@ -451,7 +443,7 @@ describe('documents signing HTTP', () => {
           agree: true,
           note: '已存档 on file',
           name: '王小明 Alice Wang',
-          when: torontoDate(new Date(row.completed_at!)),
+          when: torontoToday(new Date(row.completed_at!)),
         },
       });
       expect(row.viewed_at).not.toBe(row.completed_at);

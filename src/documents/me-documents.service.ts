@@ -4,7 +4,7 @@ import {
   certificationKey,
   certificationState,
   currentUploads,
-  utcToday,
+  torontoToday,
 } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -73,7 +73,10 @@ export class MeDocumentsService {
    * The season is `CURRENT_SEASON` when set, else the latest season among the
    * instructor's open assignments.
    */
-  async checklist(authUserId: string, today = utcToday()): Promise<Checklist> {
+  async checklist(
+    authUserId: string,
+    today = torontoToday(),
+  ): Promise<Checklist> {
     const instructor = await this.instructorFor(authUserId);
     const [assignments, certifications, uploads] = await Promise.all([
       this.assignments.listForSubject('instructor', instructor.id),

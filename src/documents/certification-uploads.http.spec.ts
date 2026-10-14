@@ -30,7 +30,7 @@ import {
   CertificationUploadsRepository,
   type NewCertificationUploadRow,
 } from './certification-uploads.repository';
-import { addDays, utcToday } from './certification-validity';
+import { addDays, torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
@@ -113,7 +113,7 @@ async function build() {
 
 type Ctx = Awaited<ReturnType<typeof build>>;
 
-const today = () => utcToday();
+const today = () => torontoToday();
 
 function uploadBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -309,7 +309,7 @@ describe('certification uploads over HTTP', () => {
     it.each([
       [
         'validUntil yesterday',
-        { validUntil: addDays(utcToday(), -1) },
+        { validUntil: addDays(torontoToday(), -1) },
         VALID_UNTIL_IN_PAST,
       ],
       [
@@ -708,7 +708,7 @@ describe('certification uploads over HTTP', () => {
         certificationUploadRow({
           instructor_id: ctx.instructor.id,
           review_status: review,
-          valid_until: addDays(utcToday(), days),
+          valid_until: addDays(torontoToday(), days),
         }),
       );
 
@@ -735,7 +735,7 @@ describe('certification uploads over HTTP', () => {
       row = certificationUploadRow({
         instructor_id: ctx.instructor.id,
         review_status: 'pending',
-        valid_until: addDays(utcToday(), 20),
+        valid_until: addDays(torontoToday(), 20),
         expiry_reminder_sent_at: new Date().toISOString(),
       });
       ctx.subjects.uploads.push(row);
@@ -801,7 +801,7 @@ describe('certification uploads over HTTP', () => {
     });
 
     it('corrects validUntil (even to a past date) and resets the expiry reminder', async () => {
-      const corrected = addDays(utcToday(), -3);
+      const corrected = addDays(torontoToday(), -3);
       const res = await http()
         .patch(`/admin/certification-uploads/${row.id}`)
         .set('Authorization', admin)

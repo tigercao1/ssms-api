@@ -140,7 +140,11 @@ describe('BioDraftService', () => {
 
   const ok = () =>
     makeTranslator(() =>
-      Promise.resolve({ en: 'I teach skiing.', zh: '我教滑雪。' }),
+      Promise.resolve({
+        en: 'I teach skiing.',
+        zh: '我教滑雪。',
+        sourceLangs: ['en'],
+      }),
     );
 
   it('returns usage for the caller', async () => {
@@ -177,6 +181,7 @@ describe('BioDraftService', () => {
     ).resolves.toEqual({
       en: 'I teach skiing.',
       zh: '我教滑雪。',
+      sourceLangs: ['en'],
       model: 'gemini-test',
       usage: {
         limit: 5,
@@ -282,7 +287,7 @@ describe('BioDraftService', () => {
     const translator = makeTranslator(() =>
       fail
         ? Promise.reject(new Error('timeout'))
-        : Promise.resolve({ en: 'a', zh: 'b' }),
+        : Promise.resolve({ en: 'a', zh: 'b', sourceLangs: ['en'] }),
     );
     const service = build(translator);
     for (let i = 0; i < 6; i++) {
@@ -294,6 +299,33 @@ describe('BioDraftService', () => {
     await expect(
       service.draft('auth-1', { text: 'Hi', mode: 'refine' }),
     ).resolves.toMatchObject({ usage: { used: 1, remaining: 4 } });
+  });
+
+  it.each([[[]], [['fr']], [undefined]])(
+    'answers 503 and releases the slot when sourceLangs is %j',
+    async (sourceLangs) => {
+      const translator = makeTranslator(() =>
+        Promise.resolve({
+          en: 'a',
+          zh: 'b',
+          sourceLangs: sourceLangs as unknown as BioDraft['sourceLangs'],
+        }),
+      );
+      await expect(
+        build(translator).draft('auth-1', { text: 'Hi', mode: 'refine' }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(quota.released).toEqual(['req-1']);
+      expect(quota.rows).toEqual([]);
+    },
+  );
+
+  it('returns mixed-input sourceLangs in canonical order', async () => {
+    const translator = makeTranslator(() =>
+      Promise.resolve({ en: 'a', zh: 'b', sourceLangs: ['zh-CN', 'en'] }),
+    );
+    await expect(
+      build(translator).draft('auth-1', { text: 'Hi 你好', mode: 'translate' }),
+    ).resolves.toMatchObject({ sourceLangs: ['en', 'zh-CN'] });
   });
 
   it('still answers 503 when the release itself fails', async () => {

@@ -5,6 +5,7 @@ import {
   GeminiTranslationError,
   buildDraftInstruction,
   buildTranslationInstruction,
+  parseSourceLangs,
   type FetchLike,
 } from './gemini-bio-translator';
 import { PRESERVED_TERMS, TRANSLATION_GLOSSARY } from './translation-glossary';
@@ -309,7 +310,11 @@ describe('GeminiBioTranslator.draft', () => {
     'makes one structured-JSON call in %s mode and returns both languages',
     async (mode) => {
       const fetchImpl = jest.fn<ReturnType<FetchLike>, FetchCall>(() =>
-        jsonReply({ en: ' I teach skiing. ', zh: '我教滑雪。' }),
+        jsonReply({
+          en: ' I teach skiing. ',
+          zh: '我教滑雪。',
+          sourceLangs: ['en'],
+        }),
       );
 
       await expect(
@@ -318,7 +323,11 @@ describe('GeminiBioTranslator.draft', () => {
           mode,
           maxLength: 1000,
         }),
-      ).resolves.toEqual({ en: 'I teach skiing.', zh: '我教滑雪。' });
+      ).resolves.toEqual({
+        en: 'I teach skiing.',
+        zh: '我教滑雪。',
+        sourceLangs: ['en'],
+      });
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       const [url, init] = fetchImpl.mock.calls[0];
@@ -331,6 +340,7 @@ describe('GeminiBioTranslator.draft', () => {
       expect(body.generationConfig.responseSchema.required).toEqual([
         'en',
         'zh',
+        'sourceLangs',
       ]);
       expect(body.systemInstruction.parts[0].text).toBe(
         buildDraftInstruction(mode, 1000),
@@ -340,9 +350,37 @@ describe('GeminiBioTranslator.draft', () => {
 
   it.each([
     ['invalid JSON', 'not json', /invalid JSON/],
-    ['a missing language', { en: 'Hi' }, /missing en or zh/],
-    ['an empty language', { en: 'Hi', zh: '  ' }, /empty language/],
-    ['an over-limit language', { en: 'x'.repeat(11), zh: '好' }, /exceeds 10/],
+    [
+      'a missing language',
+      { en: 'Hi', sourceLangs: ['en'] },
+      /missing en or zh/,
+    ],
+    [
+      'an empty language',
+      { en: 'Hi', zh: '  ', sourceLangs: ['en'] },
+      /empty language/,
+    ],
+    [
+      'an over-limit language',
+      { en: 'x'.repeat(11), zh: '好', sourceLangs: ['en'] },
+      /exceeds 10/,
+    ],
+    ['missing sourceLangs', { en: 'Hi', zh: '嗨' }, /invalid sourceLangs/],
+    [
+      'empty sourceLangs',
+      { en: 'Hi', zh: '嗨', sourceLangs: [] },
+      /invalid sourceLangs/,
+    ],
+    [
+      'an unknown source language',
+      { en: 'Hi', zh: '嗨', sourceLangs: ['en', 'fr'] },
+      /invalid sourceLangs/,
+    ],
+    [
+      'a non-array sourceLangs',
+      { en: 'Hi', zh: '嗨', sourceLangs: 'en' },
+      /invalid sourceLangs/,
+    ],
   ])('rejects %s without retrying', async (_label, reply, message) => {
     const fetchImpl = jest.fn<ReturnType<FetchLike>, FetchCall>(() =>
       jsonReply(reply),
@@ -391,6 +429,27 @@ describe('GeminiBioTranslator.draft', () => {
   });
 });
 
+describe('parseSourceLangs', () => {
+  it.each([
+    [['en'], ['en']],
+    [['zh-CN'], ['zh-CN']],
+    [
+      ['zh-CN', 'en'],
+      ['en', 'zh-CN'],
+    ],
+    [['en', 'en'], ['en']],
+  ])('accepts %j as %j', (input, expected) => {
+    expect(parseSourceLangs(input)).toEqual(expected);
+  });
+
+  it.each([[[]], [['zh']], [['EN']], [[null]], ['en'], [undefined], [{}]])(
+    'rejects %j',
+    (input) => {
+      expect(() => parseSourceLangs(input)).toThrow(GeminiTranslationError);
+    },
+  );
+});
+
 describe('buildDraftInstruction', () => {
   it('asks refine to polish and produce both languages', () => {
     const prompt = buildDraftInstruction('refine', 1000);
@@ -416,6 +475,7 @@ describe('buildDraftInstruction', () => {
       expect(prompt).toContain(PRESERVED_TERMS.join(', '));
       expect(prompt).toContain('at most 1000 characters');
       expect(prompt).toMatch(/mix of both/);
+      expect(prompt).toContain('"sourceLangs"');
     },
   );
 });

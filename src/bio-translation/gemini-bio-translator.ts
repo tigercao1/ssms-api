@@ -97,10 +97,19 @@ const DRAFT_TASKS: Record<BioDraftMode, string[]> = {
 
 const DRAFT_RESPONSE_SCHEMA = {
   type: 'OBJECT',
-  properties: { en: { type: 'STRING' }, zh: { type: 'STRING' } },
-  required: ['en', 'zh'],
-  propertyOrdering: ['en', 'zh'],
+  properties: {
+    en: { type: 'STRING' },
+    zh: { type: 'STRING' },
+    sourceLangs: {
+      type: 'ARRAY',
+      items: { type: 'STRING', enum: ['en', 'zh-CN'] },
+    },
+  },
+  required: ['en', 'zh', 'sourceLangs'],
+  propertyOrdering: ['en', 'zh', 'sourceLangs'],
 };
+
+const BIO_LANGS: readonly BioLang[] = ['en', 'zh-CN'];
 
 export function buildDraftInstruction(
   mode: BioDraftMode,
@@ -118,7 +127,8 @@ export function buildDraftInstruction(
     'Use this glossary in both directions:',
     glossary,
     `Each of "en" and "zh" must be at most ${maxLength} characters.`,
-    'Respond with JSON only: {"en": "...", "zh": "..."}.',
+    '"sourceLangs" lists the languages the user message is written in: ["en"], ["zh-CN"] or ["en", "zh-CN"] for mixed text.',
+    'Respond with JSON only: {"en": "...", "zh": "...", "sourceLangs": [...]}.',
   ].join('\n');
 }
 
@@ -258,11 +268,15 @@ function parseDraft(text: string, maxLength: number): BioDraft {
   } catch {
     throw new GeminiTranslationError('Gemini returned invalid JSON', false);
   }
-  const { en, zh } = (parsed ?? {}) as Record<string, unknown>;
+  const { en, zh, sourceLangs } = (parsed ?? {}) as Record<string, unknown>;
   if (typeof en !== 'string' || typeof zh !== 'string') {
     throw new GeminiTranslationError('Gemini draft is missing en or zh', false);
   }
-  const draft = { en: en.trim(), zh: zh.trim() };
+  const draft = {
+    en: en.trim(),
+    zh: zh.trim(),
+    sourceLangs: parseSourceLangs(sourceLangs),
+  };
   if (draft.en === '' || draft.zh === '') {
     throw new GeminiTranslationError(
       'Gemini draft has an empty language',
@@ -276,6 +290,21 @@ function parseDraft(text: string, maxLength: number): BioDraft {
     );
   }
   return draft;
+}
+
+/** A non-empty subset of the bio languages, returned in canonical order. */
+export function parseSourceLangs(value: unknown): BioLang[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((lang) => BIO_LANGS.includes(lang as BioLang))
+  ) {
+    throw new GeminiTranslationError(
+      'Gemini draft has invalid sourceLangs',
+      false,
+    );
+  }
+  return BIO_LANGS.filter((lang) => value.includes(lang));
 }
 
 function extractText(body: GeminiResponse): string {

@@ -30,6 +30,8 @@ export interface BioDraftInput {
 export interface BioDraft {
   en: string;
   zh: string;
+  /** Languages present in the input text; non-empty. */
+  sourceLangs: BioLang[];
 }
 
 /**

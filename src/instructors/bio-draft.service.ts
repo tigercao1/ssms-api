@@ -8,7 +8,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
-import type { BioTranslator } from '../bio-translation/bio-translator.interface';
+import type {
+  BioLang,
+  BioTranslator,
+} from '../bio-translation/bio-translator.interface';
+import { parseSourceLangs } from '../bio-translation/gemini-bio-translator';
 import { BioAiQuotaRepository, BioAiWindow } from './bio-ai-quota.repository';
 import { BioDraftDto } from './dto/bio-draft.dto';
 import { InstructorsRepository } from './instructors.repository';
@@ -27,6 +31,7 @@ export interface BioAiUsage {
 export interface BioDraftResponse {
   en: string;
   zh: string;
+  sourceLangs: BioLang[];
   model: string | null;
   usage: BioAiUsage;
 }
@@ -87,7 +92,13 @@ export class BioDraftService {
         mode: dto.mode,
         maxLength: BIO_DRAFT_MAX_LENGTH,
       });
-      return { ...draft, model: this.translator.modelId, usage };
+      return {
+        en: draft.en,
+        zh: draft.zh,
+        sourceLangs: parseSourceLangs(draft.sourceLangs),
+        model: this.translator.modelId,
+        usage,
+      };
     } catch (err) {
       this.logger.warn(
         `Bio ${dto.mode} draft failed for instructor ${instructorId}: ` +

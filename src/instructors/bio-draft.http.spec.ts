@@ -193,7 +193,11 @@ describe('bio draft routes (HTTP)', () => {
 
   beforeEach(async () => {
     draft.mockReset();
-    draft.mockResolvedValue({ en: 'I teach skiing.', zh: '我教滑雪。' });
+    draft.mockResolvedValue({
+      en: 'I teach skiing.',
+      zh: '我教滑雪。',
+      sourceLangs: ['en'],
+    });
     ctx = await build(gemini);
   });
   afterEach(async () => {
@@ -219,6 +223,7 @@ describe('bio draft routes (HTTP)', () => {
     expect(res.body).toEqual({
       en: 'I teach skiing.',
       zh: '我教滑雪。',
+      sourceLangs: ['en'],
       model: 'gemini-server',
       usage: {
         limit: 5,

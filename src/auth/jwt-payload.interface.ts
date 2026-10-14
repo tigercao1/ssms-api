@@ -14,6 +14,8 @@ export interface SupabaseJwtPayload {
   user_metadata?: { email_verified?: boolean; [key: string]: unknown };
   aud?: string;
   exp?: number;
+  /** auth.sessions.id; checked against the DB on every request. */
+  session_id?: string;
 }
 
 /** What request.user is after the guard runs. */

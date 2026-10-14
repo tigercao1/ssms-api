@@ -500,14 +500,10 @@ export function normalizeCertifications(
     }
   }
   for (const marker of markers) {
-    if (marker.components.size === 0) {
-      unresolved.push(...marker.values);
-    } else {
-      certs.push({
-        ...partialOrFull(marker.org, marker.level, marker.components),
-        source: 'rule',
-      });
-    }
+    certs.push({
+      ...partialOrFull(marker.org, marker.level, marker.components),
+      source: 'rule',
+    });
   }
   return {
     certifications: keepHighest(certs),
@@ -586,7 +582,7 @@ export function validateCertification(
   if (isPartial && certTrack !== 'regular') {
     return null;
   }
-  if (isPartial !== components.length > 0) {
+  if (!isPartial && components.length > 0) {
     return null;
   }
   if (

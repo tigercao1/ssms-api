@@ -4,7 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ilikeAny, searchTokens } from '../database/db-result';
+import { DbResult, ilikeAny, searchTokens } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import {
   AdminInstructorPatch,
@@ -75,6 +75,8 @@ export abstract class AdminRepository {
   abstract getUserRole(authUserId: string): Promise<AuthUserRole>;
   /** Set an auth user's `app_metadata.role`, preserving other metadata keys. */
   abstract setUserRole(authUserId: string, role: UserRole): Promise<void>;
+  /** Delete every auth session of a user; returns how many were revoked. */
+  abstract revokeSessions(authUserId: string): Promise<number>;
 }
 
 /** Narrow an arbitrary `app_metadata.role` claim to a known {@link UserRole}. */
@@ -286,5 +288,17 @@ export class SupabaseAdminRepository extends AdminRepository {
         `Failed to update user role: ${error.message}`,
       );
     }
+  }
+
+  async revokeSessions(authUserId: string): Promise<number> {
+    const { data, error } = (await this.supabase.rpc('revoke_user_sessions', {
+      p_user_id: authUserId,
+    })) as DbResult<number>;
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to revoke user sessions: ${error.message}`,
+      );
+    }
+    return data ?? 0;
   }
 }

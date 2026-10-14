@@ -8,6 +8,7 @@
 --   * roles    anon / authenticated / service_role
 --   * schema   auth
 --   * table    auth.users (id, email) — FK target for instructors.auth_user_id
+--   * table    auth.sessions (id, user_id, not_after)
 --   * funcs    auth.uid(), auth.jwt(), auth.role()
 --
 -- Keep this in sync with whatever Supabase objects the migrations touch.
@@ -37,6 +38,12 @@ grant usage on schema auth to anon, authenticated, service_role;
 create table if not exists auth.users (
   id    uuid primary key default gen_random_uuid(),
   email text
+);
+
+create table if not exists auth.sessions (
+  id        uuid primary key default gen_random_uuid(),
+  user_id   uuid not null references auth.users (id) on delete cascade,
+  not_after timestamptz
 );
 
 -- ── auth helpers, reading the same GUC Supabase uses ──

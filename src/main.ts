@@ -2,9 +2,11 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { buildCorsOptions, parseAllowedOrigins } from './config/cors';
+import { signingBodyParser } from './documents/signing-body-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  app.use(signingBodyParser);
 
   // Global validation — see backend-architecture.md §4.
   app.useGlobalPipes(

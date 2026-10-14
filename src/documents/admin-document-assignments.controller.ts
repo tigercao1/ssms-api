@@ -16,10 +16,12 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentSigningService } from './document-signing.service';
 import type {
   Assignment,
   AssignmentResult,
   InstructorDocuments,
+  SignedUrl,
 } from './documents.types';
 import { CreateAssignmentsDto } from './dto/assignment.dto';
 
@@ -28,7 +30,10 @@ import { CreateAssignmentsDto } from './dto/assignment.dto';
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminDocumentAssignmentsController {
-  constructor(private readonly assignments: DocumentAssignmentsService) {}
+  constructor(
+    private readonly assignments: DocumentAssignmentsService,
+    private readonly signing: DocumentSigningService,
+  ) {}
 
   @Post('documents/assignments')
   create(
@@ -47,6 +52,11 @@ export class AdminDocumentAssignmentsController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<Assignment> {
     return this.assignments.archive(id, toActor(user, userAgent));
+  }
+
+  @Get('documents/assignments/:id/signed-url')
+  signedUrl(@Param('id', new ParseUUIDPipe()) id: string): Promise<SignedUrl> {
+    return this.signing.adminSignedUrl(id);
   }
 
   @Get('instructors/:id/documents')

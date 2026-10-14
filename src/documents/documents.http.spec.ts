@@ -23,6 +23,7 @@ import { AdminDocumentTemplatesController } from './admin-document-templates.con
 import { utcToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
@@ -60,6 +61,7 @@ async function build(env: Record<string, string> = {}) {
         DocumentTemplatesService,
         DocumentAssignmentsService,
         MeDocumentsService,
+        DocumentSigningService,
         PdfWorkQueue,
         { provide: PrivateStorageClient, useValue: storage },
         { provide: DocumentTemplatesRepository, useValue: templates },
@@ -555,7 +557,11 @@ describe('documents HTTP', () => {
       };
 
       it('stores fields and returns them', async () => {
-        const t = ctx.templates.seed({ page_count: 2, source_key: 'k' });
+        const t = ctx.templates.seed({
+          page_count: 2,
+          pages: [LETTER, LETTER],
+          source_key: 'k',
+        });
         const res = await put(t.id, [apiField]).expect(200);
         expect((res.body as { fields: unknown }).fields).toEqual([
           { ...apiField, labelZh: null },
@@ -584,7 +590,11 @@ describe('documents HTTP', () => {
       it('rejects fields before a source, duplicate ids, missing pages and bad shapes', async () => {
         const noSource = ctx.templates.seed();
         await put(noSource.id, [apiField]).expect(400);
-        const t = ctx.templates.seed({ page_count: 1, source_key: 'k' });
+        const t = ctx.templates.seed({
+          page_count: 1,
+          pages: [LETTER],
+          source_key: 'k',
+        });
         await put(t.id, [
           { ...apiField, page: 1 },
           { ...apiField, page: 1 },
@@ -596,6 +606,12 @@ describe('documents HTTP', () => {
         await put(t.id, [{ ...apiField, page: 1, type: 'stamp' }]).expect(400);
         await put(t.id, [{ ...apiField, page: 1, w: 0 }]).expect(400);
         await put(t.id, [{ ...apiField, page: 1, labelEn: '' }]).expect(400);
+        const outside = await put(t.id, [
+          { ...apiField, page: 1, x: 500, w: 200 },
+        ]).expect(400);
+        expect((outside.body as { message: string }).message).toMatch(
+          /outside page 1/,
+        );
         await put(UNKNOWN_ID, []).expect(404);
       });
     });

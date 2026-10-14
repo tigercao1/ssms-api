@@ -28,6 +28,7 @@ import {
   PrivateStorageClient,
 } from './private-storage.client';
 import { storageKeys } from './storage-keys';
+import { TemplateFieldError, validateTemplateFields } from './template-fields';
 import {
   MAX_TEMPLATE_BYTES,
   normaliseTemplatePdf,
@@ -45,7 +46,6 @@ export const SOURCE_NOT_PDF =
   'The uploaded file must be sent as application/pdf';
 export const TEMPLATE_HAS_NO_SOURCE =
   'Upload the template PDF before placing fields';
-export const FIELD_IDS_NOT_UNIQUE = 'Field ids must be unique';
 
 const UPDATE_FIELDS: [keyof UpdateTemplateDto, keyof DocumentTemplateWrite][] =
   [
@@ -240,7 +240,10 @@ export class DocumentTemplatesService {
     return { ...(await this.present(row)), fieldsCleared };
   }
 
-  /** Replaces the placed fields. Checks ids are unique and pages exist. */
+  /**
+   * Replaces the placed fields after {@link validateTemplateFields}: unique
+   * ids, known types, labels, and every rect inside its page's visible box.
+   */
   async putFields(
     id: string,
     fields: TemplateField[],
@@ -250,14 +253,13 @@ export class DocumentTemplatesService {
     if (!before.page_count) {
       throw new BadRequestException(TEMPLATE_HAS_NO_SOURCE);
     }
-    if (new Set(fields.map((f) => f.id)).size !== fields.length) {
-      throw new BadRequestException(FIELD_IDS_NOT_UNIQUE);
-    }
-    const offPage = fields.find((f) => f.page > (before.page_count ?? 0));
-    if (offPage) {
-      throw new BadRequestException(
-        `Field ${offPage.id} is on page ${offPage.page}, but the PDF has ${before.page_count} page(s)`,
-      );
+    try {
+      validateTemplateFields(fields, before.pages);
+    } catch (err) {
+      if (err instanceof TemplateFieldError) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
     }
     const row = await this.repo.update(id, {
       fields: fields.map(toTemplateFieldRow),

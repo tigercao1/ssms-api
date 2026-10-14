@@ -334,3 +334,38 @@ export interface UploadUrl {
   uploadUrl: string;
   expiresAt: string;
 }
+
+/** What the signer needs to render a template and fill its fields. */
+export interface SigningTemplate {
+  id: string;
+  kind: DocumentKind;
+  titleEn: string;
+  titleZh: string | null;
+  descriptionEn: string | null;
+  descriptionZh: string | null;
+  pageCount: number | null;
+  pages: PageGeometry[];
+  fields: TemplateField[];
+}
+
+/** `GET /me/documents/:assignmentId`. */
+export interface SigningDocument {
+  assignment: Assignment;
+  template: SigningTemplate;
+  sourceUrl: string | null;
+  /** The consent wording to show; the same text is printed on the audit page. */
+  consentText: { en: string; zh: string };
+}
+
+/** `POST /me/documents/:assignmentId/complete`; `signedUrl` only for `sign` documents. */
+export interface CompletedDocument {
+  assignment: Assignment;
+  signedUrl?: string;
+}
+
+/** Presigned download of a signed copy, with the copy's SHA-256. */
+export interface SignedUrl {
+  url: string;
+  expiresAt: string;
+  sha256: string | null;
+}

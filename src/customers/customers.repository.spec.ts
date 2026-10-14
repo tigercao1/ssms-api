@@ -16,23 +16,78 @@ const row = {
 const fail = { data: null, error: { message: 'boom' } };
 
 describe('SupabaseCustomersRepository', () => {
-  it('searches search_text with one escaped ilike per token', async () => {
+  it('searches search_text with one escaped ilike per token, one page at a time, with an exact count', async () => {
     const { client, queries } = recordingSupabase({
-      customers: { data: [row], error: null },
+      customers: { data: [row], error: null, count: 41 },
     });
     await expect(
-      new SupabaseCustomersRepository(client).search(['Wang', '50%'], 20),
-    ).resolves.toEqual([row]);
+      new SupabaseCustomersRepository(client).search(['Wang', '50%'], {
+        limit: 20,
+        offset: 40,
+      }),
+    ).resolves.toEqual({ rows: [row], total: 41 });
     expect(queries[0].ops).toEqual([
-      ['select', CUSTOMER_COLUMNS],
+      ['select', CUSTOMER_COLUMNS, { count: 'exact' }],
       ['ilike', 'search_text', '%wang%'],
       ['ilike', 'search_text', '%50\\%%'],
       ['order', 'last_name', { ascending: true, nullsFirst: false }],
       ['order', 'first_name', { ascending: true, nullsFirst: false }],
       ['order', 'id', { ascending: true }],
-      ['limit', 20],
+      ['range', 40, 59],
     ]);
     expect(CUSTOMER_COLUMNS).not.toMatch(/wechat/);
+  });
+
+  it('answers a page past the end with no rows and the real total', async () => {
+    const { client, queries } = recordingSupabase({
+      customers: [
+        {
+          data: null,
+          error: {
+            message: 'Requested range not satisfiable',
+            code: 'PGRST103',
+          },
+        },
+        { data: null, error: null, count: 3 },
+      ],
+    });
+    await expect(
+      new SupabaseCustomersRepository(client).search(['wang'], {
+        limit: 50,
+        offset: 500,
+      }),
+    ).resolves.toEqual({ rows: [], total: 3 });
+    expect(queries[1].ops).toEqual([
+      ['select', 'id', { count: 'exact', head: true }],
+      ['ilike', 'search_text', '%wang%'],
+    ]);
+  });
+
+  it('surfaces a failing count for a page past the end', async () => {
+    const { client } = recordingSupabase({
+      customers: [
+        { data: null, error: { message: 'range', code: 'PGRST103' } },
+        fail,
+      ],
+    });
+    await expect(
+      new SupabaseCustomersRepository(client).search([], {
+        limit: 1,
+        offset: 9,
+      }),
+    ).rejects.toThrow('Failed to count customers');
+  });
+
+  it('treats a missing count as zero', async () => {
+    const { client } = recordingSupabase({
+      customers: { data: [], error: null },
+    });
+    await expect(
+      new SupabaseCustomersRepository(client).search([], {
+        limit: 1,
+        offset: 0,
+      }),
+    ).resolves.toEqual({ rows: [], total: 0 });
   });
 
   it('reads the newest Shopify update as the sync cursor', async () => {
@@ -89,7 +144,10 @@ describe('SupabaseCustomersRepository', () => {
   });
 
   it.each([
-    ['search', (r: SupabaseCustomersRepository) => r.search([], 1)],
+    [
+      'search',
+      (r: SupabaseCustomersRepository) => r.search([], { limit: 1, offset: 0 }),
+    ],
     [
       'latestShopifyUpdatedAt',
       (r: SupabaseCustomersRepository) => r.latestShopifyUpdatedAt(),

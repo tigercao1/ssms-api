@@ -1,5 +1,12 @@
 import {
+  type CustomerSyncOutcome,
+  CustomerSyncStatusRepository,
+  type CustomerSyncStatusRow,
+} from '../../src/customers/customer-sync-status.repository';
+import {
+  type CustomerPageRequest,
   type CustomerRow,
+  type CustomerRowPage,
   CustomersRepository,
   type CustomerUpsert,
 } from '../../src/customers/customers.repository';
@@ -77,10 +84,13 @@ const nextId = () =>
 export class InMemoryCustomersRepository extends CustomersRepository {
   rows: CustomerRow[] = [];
   upsertCalls: CustomerUpsert[][] = [];
-  searches: { tokens: string[]; limit: number }[] = [];
+  searches: ({ tokens: string[] } & CustomerPageRequest)[] = [];
 
-  search(tokens: string[], limit: number): Promise<CustomerRow[]> {
-    this.searches.push({ tokens, limit });
+  search(
+    tokens: string[],
+    { limit, offset }: CustomerPageRequest,
+  ): Promise<CustomerRowPage> {
+    this.searches.push({ tokens, limit, offset });
     const text = (r: CustomerRow) =>
       [
         r.first_name,
@@ -92,12 +102,15 @@ export class InMemoryCustomersRepository extends CustomersRepository {
       ]
         .join(' ')
         .toLowerCase();
-    return Promise.resolve(
-      this.rows
-        .filter((r) => tokens.every((t) => text(r).includes(t.toLowerCase())))
-        .slice(0, limit)
-        .map((r) => ({ ...r })),
-    );
+    const key = (r: CustomerRow) =>
+      [r.last_name ?? '\uffff', r.first_name ?? '\uffff', r.id].join('\u0000');
+    const matches = this.rows
+      .filter((r) => tokens.every((t) => text(r).includes(t.toLowerCase())))
+      .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+    return Promise.resolve({
+      rows: matches.slice(offset, offset + limit).map((r) => ({ ...r })),
+      total: matches.length,
+    });
   }
 
   latestShopifyUpdatedAt(): Promise<string | null> {
@@ -134,5 +147,51 @@ export class InMemoryCustomersRepository extends CustomersRepository {
     };
     this.rows.push(created);
     return created;
+  }
+}
+
+export class InMemoryCustomerSyncStatusRepository extends CustomerSyncStatusRepository {
+  row: CustomerSyncStatusRow & { lock_token: string | null } = {
+    lock_token: null,
+    last_started_at: null,
+    last_finished_at: null,
+    last_success_at: null,
+    last_fetched: null,
+    last_error: null,
+  };
+  leases: number[] = [];
+  private tokens = 0;
+
+  tryLock(leaseSeconds: number): Promise<string | null> {
+    this.leases.push(leaseSeconds);
+    if (this.row.lock_token) {
+      return Promise.resolve(null);
+    }
+    this.row.lock_token = `lock-${++this.tokens}`;
+    this.row.last_started_at = '2026-10-13T12:00:00Z';
+    return Promise.resolve(this.row.lock_token);
+  }
+
+  finish(token: string, outcome: CustomerSyncOutcome): Promise<void> {
+    if (this.row.lock_token === token) {
+      this.row.lock_token = null;
+      this.row.last_finished_at = '2026-10-13T12:01:00Z';
+      this.row.last_error = outcome.error;
+      if (outcome.error === null) {
+        this.row.last_fetched = outcome.fetched;
+        this.row.last_success_at = '2026-10-13T12:01:00Z';
+      }
+    }
+    return Promise.resolve();
+  }
+
+  status(): Promise<CustomerSyncStatusRow | null> {
+    return Promise.resolve({
+      last_started_at: this.row.last_started_at,
+      last_finished_at: this.row.last_finished_at,
+      last_success_at: this.row.last_success_at,
+      last_fetched: this.row.last_fetched,
+      last_error: this.row.last_error,
+    });
   }
 }

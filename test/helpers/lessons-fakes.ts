@@ -48,6 +48,7 @@ class Clock {
 export interface FakeResult {
   data: unknown;
   error: { message: string; code?: string } | null;
+  count?: number | null;
 }
 
 export interface RecordedQuery {
@@ -84,6 +85,7 @@ export function recordingSupabase(
       'gte',
       'lt',
       'limit',
+      'range',
       'order',
       'insert',
       'update',
@@ -104,6 +106,14 @@ export function recordingSupabase(
       const query: RecordedQuery = { table, ops: [] };
       queries.push(query);
       return builderFor(table, query);
+    },
+    rpc(name: string, args?: unknown) {
+      const query: RecordedQuery = {
+        table: `rpc:${name}`,
+        ops: [['rpc', args]],
+      };
+      queries.push(query);
+      return Promise.resolve(next(`rpc:${name}`));
     },
   };
   return { client: client as never, queries };

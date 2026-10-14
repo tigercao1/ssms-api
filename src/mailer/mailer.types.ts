@@ -35,7 +35,12 @@ export type EmailTemplate =
   | 'auth.generic'
   | 'invite.season'
   | 'invite.reminder'
-  | 'admin.instructor_pending';
+  | 'certification.expiring'
+  | 'certification.expired'
+  | 'admin.instructor_pending'
+  | 'documents.assigned'
+  | 'documents.reminder'
+  | 'documents.completed';
 
 interface GreetingVars {
   /** Recipient's display name for the greeting; omitted or blank → "Hi there". */
@@ -47,6 +52,26 @@ interface InviteVars extends GreetingVars {
   season: string;
   activateUrl: string;
   validDays: number;
+}
+
+/** A document title in both languages; zh-CN emails fall back to `titleEn`. */
+export interface EmailDocumentTitle {
+  titleEn: string;
+  titleZh?: string | null;
+}
+
+interface DocumentListVars extends GreetingVars {
+  documents: EmailDocumentTitle[];
+  onboardingUrl: string;
+}
+
+interface CertificationExpiryVars extends GreetingVars {
+  org: 'csia' | 'casi';
+  track: 'regular' | 'park' | 'carving';
+  level: number;
+  /** Last valid day, YYYY-MM-DD. */
+  validUntil: string;
+  uploadUrl: string;
 }
 
 /** Variables each template needs, keyed by template. */
@@ -75,7 +100,18 @@ export interface EmailTemplateVars {
   'auth.generic': { actionUrl?: string | null };
   'invite.season': InviteVars;
   'invite.reminder': InviteVars;
+  'certification.expiring': CertificationExpiryVars;
+  'certification.expired': CertificationExpiryVars;
   'admin.instructor_pending': { instructorEmail: string; reviewUrl: string };
+  'documents.assigned': DocumentListVars;
+  'documents.reminder': DocumentListVars;
+  'documents.completed': GreetingVars & {
+    document: EmailDocumentTitle;
+    /** SHA-256 (hex) of the attached signed PDF. */
+    sha256: string;
+    /** Portal link for instructors; omitted for recipients without a login. */
+    onboardingUrl?: string | null;
+  };
 }
 
 /**
@@ -97,7 +133,22 @@ export interface SendEmailRequest<T extends EmailTemplate = EmailTemplate> {
   metadata?: Record<string, unknown>;
   /** Provider idempotency key: repeats of the same key within 24 h send once. */
   idempotencyKey?: string;
+  /** Files attached to the email; at most {@link MAX_ATTACHMENT_BYTES} in total. */
+  attachments?: EmailAttachment[];
 }
+
+/** A file attached to an email. */
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
+/**
+ * Total attachment size allowed per email, before base64. Resend caps an email
+ * at 40 MB after base64 encoding, which inflates content by a third.
+ */
+export const MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024;
 
 /** Result of a send (for callers / tests / observability). */
 export type SendOutcome = 'sent' | 'skipped' | 'failed';
@@ -125,7 +176,11 @@ export interface EmailMessage {
   idempotencyKey?: string;
   /** Abort the provider request after this many milliseconds. */
   timeoutMs?: number;
+  attachments?: EmailAttachment[];
 }
 
 /** A rendered email before it is addressed. */
-export type RenderedEmail = Omit<EmailMessage, 'to' | 'idempotencyKey'>;
+export type RenderedEmail = Omit<
+  EmailMessage,
+  'to' | 'idempotencyKey' | 'attachments'
+>;

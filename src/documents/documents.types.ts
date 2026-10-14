@@ -189,6 +189,7 @@ export interface DocumentInstructorRow {
   display_name_en: string;
   approval_status: string;
   is_active: boolean;
+  preferred_language: string | null;
 }
 
 /** One `instructor_certifications` row. */
@@ -281,6 +282,18 @@ export interface CertUpload {
   aiCheckedAt: string | null;
   insertedAt: string;
   updatedAt: string;
+}
+
+/** `POST /me/certification-uploads/upload-url`: PUT the file to `uploadUrl`, then confirm `uploadId`. */
+export interface CertificationUploadUrl extends UploadUrl {
+  uploadId: string;
+}
+
+/** Presigned GET of an uploaded certification file. */
+export interface CertificationFileUrl {
+  url: string;
+  expiresAt: string;
+  sha256: string;
 }
 
 export interface AssignmentResult {

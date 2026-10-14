@@ -5,7 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { RedeemedInvite } from './activation.types';
+import { DocumentOnboardingService } from '../documents/document-onboarding.service';
+import type { InviteRow, RedeemedInvite } from './activation.types';
 import { ActivationAuth } from './activation-auth';
 import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken, isInviteExpired } from './invite-token';
@@ -31,6 +32,7 @@ export class ActivationService {
     private readonly invites: InvitesRepository,
     private readonly auth: ActivationAuth,
     private readonly dispatcher: InviteDispatcher,
+    private readonly onboarding: DocumentOnboardingService,
   ) {}
 
   /**
@@ -103,8 +105,30 @@ export class ActivationService {
     });
   }
 
-  /** Stamps `activated_at` on the caller's invites; a no-op when already set or absent. */
+  /**
+   * Stamps `activated_at` on the caller's invites (a no-op when already set or
+   * absent), then assigns the required onboarding documents for the invite's
+   * season. Assignment failures are logged and never fail activation.
+   */
   async complete(authUserId: string): Promise<void> {
     await this.invites.markActivated(authUserId, new Date());
+    await this.assignOnboardingDocuments(authUserId);
+  }
+
+  private async assignOnboardingDocuments(authUserId: string): Promise<void> {
+    let invite: InviteRow | null = null;
+    try {
+      invite = await this.invites.findLatestByAuthUser(authUserId);
+    } catch (err) {
+      this.logger.error(
+        `Could not load the invite for onboarding documents: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (invite) {
+      await this.onboarding.assignRequired(invite.instructor_id, invite.season);
+    } else {
+      await this.onboarding.assignRequiredForAuthUser(authUserId);
+    }
   }
 }

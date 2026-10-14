@@ -9,7 +9,8 @@ import type {
 } from './documents.types';
 
 export const DOCUMENT_INSTRUCTOR_COLUMNS =
-  'id, auth_user_id, email, display_name_en, approval_status, is_active';
+  'id, auth_user_id, email, display_name_en, approval_status, is_active, ' +
+  'preferred_language';
 export const CERTIFICATION_UPLOADS_TABLE = 'certification_uploads';
 export const CERTIFICATION_UPLOAD_COLUMNS =
   'id, instructor_id, org, track, file_key, sha256, content_type, size_bytes, ' +

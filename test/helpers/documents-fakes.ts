@@ -401,6 +401,25 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
       ? this.update(id, patch)
       : Promise.resolve(null);
   }
+
+  listDueForReminder(
+    subjectType: SubjectType,
+    cutoff: Date,
+  ): Promise<DocumentAssignmentRow[]> {
+    const at = cutoff.toISOString();
+    return Promise.resolve(
+      [...this.rows.values()]
+        .filter(
+          (r) =>
+            r.subject_type === subjectType &&
+            (r.status === 'assigned' || r.status === 'viewed') &&
+            r.assigned_at < at &&
+            (r.reminder_sent_at === null || r.reminder_sent_at < at),
+        )
+        .sort((a, b) => a.assigned_at.localeCompare(b.assigned_at))
+        .map((r) => this.withTemplate(r)),
+    );
+  }
 }
 
 /** A certification upload row with sensible defaults. */
@@ -447,6 +466,7 @@ export class InMemoryDocumentSubjectsRepository extends DocumentSubjectsReposito
       display_name_en: 'Eddie',
       approval_status: 'approved',
       is_active: true,
+      preferred_language: 'en',
       ...overrides,
     };
     this.instructors.set(row.id, row);

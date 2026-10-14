@@ -2,8 +2,11 @@ import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import { CertificationExpiryService } from './certification-expiry.service';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentCompletedEmailHandler } from './document-completed-email.handler';
+import { DocumentCompletedHandler } from './document-completed.handler';
 import { MeDocumentsService } from './me-documents.service';
 import {
   PrivateStorageClient,
@@ -33,6 +36,12 @@ describe('DocumentsModule in the app', () => {
     );
     expect(moduleRef.get(MeDocumentsService)).toBeInstanceOf(
       MeDocumentsService,
+    );
+    expect(moduleRef.get(DocumentCompletedHandler)).toBeInstanceOf(
+      DocumentCompletedEmailHandler,
+    );
+    expect(moduleRef.get(CertificationExpiryService)).toBeInstanceOf(
+      CertificationExpiryService,
     );
     await moduleRef.close();
   });

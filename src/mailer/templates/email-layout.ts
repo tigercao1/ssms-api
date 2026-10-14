@@ -127,6 +127,11 @@ function sectionHtml({ language, blocks, layout }: EmailSection): string {
   for (const paragraph of blocks.paragraphs) {
     parts.push(paragraphHtml(paragraph));
   }
+  if (blocks.fingerprint) {
+    parts.push(
+      `<p style="margin:0 0 16px;font-size:13px;line-height:20px;color:${MUTED};">${escapeHtml(blocks.fingerprint.label)}<br><span style="font-family:${MONO_STACK};color:${HEADING};word-break:break-all;">${escapeHtml(blocks.fingerprint.value)}</span></p>`,
+    );
+  }
   if (blocks.button) {
     parts.push(buttonHtml(blocks.button.label, blocks.button.url));
     parts.push(
@@ -211,6 +216,9 @@ function sectionText({ blocks, layout }: EmailSection): string {
     parts.push(blocks.greeting);
   }
   parts.push(...blocks.paragraphs);
+  if (blocks.fingerprint) {
+    parts.push(`${blocks.fingerprint.label}\n${blocks.fingerprint.value}`);
+  }
   if (blocks.button) {
     parts.push(
       interpolate(layout.buttonLine, {

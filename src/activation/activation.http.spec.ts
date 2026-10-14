@@ -13,7 +13,9 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import type { Request } from 'express';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { AuditService } from '../audit/audit.service';
 import { EmailVerifiedGuard } from '../auth/email-verified.guard';
+import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { ActivationAuth } from './activation-auth';
@@ -28,8 +30,11 @@ const EXPIRED_TOKEN = 'c'.repeat(43);
 
 @Global()
 @Module({
-  providers: [{ provide: SUPABASE_CLIENT, useValue: {} }],
-  exports: [SUPABASE_CLIENT],
+  providers: [
+    { provide: SUPABASE_CLIENT, useValue: {} },
+    { provide: AuditService, useValue: {} },
+  ],
+  exports: [SUPABASE_CLIENT, AuditService],
 })
 class FakeDatabaseModule {}
 
@@ -80,6 +85,13 @@ describe('Activation HTTP', () => {
     ),
     markRedeemed: jest.fn().mockResolvedValue(undefined),
     markActivated: jest.fn().mockResolvedValue(undefined),
+    findLatestByAuthUser: jest.fn(
+      (): Promise<InviteRow | null> => Promise.resolve(invite()),
+    ),
+  };
+  const onboarding = {
+    assignRequired: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
+    assignRequiredForAuthUser: jest.fn().mockResolvedValue(null),
   };
   const auth = {
     findEmail: jest.fn().mockResolvedValue('jane@example.test'),
@@ -103,6 +115,8 @@ describe('Activation HTTP', () => {
       .useValue(auth)
       .overrideProvider(InviteDispatcher)
       .useValue(dispatcher)
+      .overrideProvider(DocumentOnboardingService)
+      .useValue(onboarding)
       .overrideGuard(SupabaseAuthGuard)
       .useClass(FakeJwtGuard)
       .overrideGuard(EmailVerifiedGuard)
@@ -217,7 +231,7 @@ describe('Activation HTTP', () => {
   });
 
   describe('POST /me/activation/complete', () => {
-    it('204 and stamps activated_at for the caller', async () => {
+    it('204, stamps activated_at and assigns onboarding documents for the invite season', async () => {
       await request(app.getHttpServer())
         .post('/me/activation/complete')
         .set('Authorization', 'Bearer good')
@@ -226,6 +240,21 @@ describe('Activation HTTP', () => {
         'auth-1',
         expect.any(Date),
       );
+      expect(onboarding.assignRequired).toHaveBeenCalledWith(
+        'ins-1',
+        '2026/27',
+      );
+    });
+
+    it('204 even when auto-assign finds nothing to assign', async () => {
+      invites.findLatestByAuthUser.mockResolvedValueOnce(null);
+      await request(app.getHttpServer())
+        .post('/me/activation/complete')
+        .set('Authorization', 'Bearer good')
+        .expect(204);
+      expect(onboarding.assignRequiredForAuthUser).toHaveBeenCalledWith(
+        'auth-1',
+      );
     });
 
     it('401 without a session', async () => {
@@ -233,6 +262,7 @@ describe('Activation HTTP', () => {
         .post('/me/activation/complete')
         .expect(401);
       expect(invites.markActivated).not.toHaveBeenCalled();
+      expect(onboarding.assignRequired).not.toHaveBeenCalled();
     });
   });
 });

@@ -158,8 +158,22 @@ export interface EmailMessages {
     season: EmailButtonCopy;
     reminder: EmailButtonCopy;
   };
+  certification: {
+    /** Certification name per track; uses `{org}` and `{level}`. */
+    labels: { regular: string; park: string; carving: string };
+    expiring: EmailButtonCopy;
+    expired: EmailButtonCopy;
+  };
   admin: {
     instructorPending: EmailButtonCopy;
+  };
+  documents: {
+    /** The first paragraph introduces the document list; `{count}` = documents. */
+    assigned: EmailButtonCopy;
+    /** The first paragraph introduces the document list; `{count}` = documents. */
+    reminder: EmailButtonCopy;
+    /** Uses `{title}`; the button (portal link) is shown to instructors only. */
+    completed: EmailDocumentCompletedCopy;
   };
 }
 
@@ -194,6 +208,11 @@ export interface EmailButtonCopy extends EmailCopy {
 export interface EmailGenericCopy extends EmailButtonCopy {
   /** Shown above the button, only when the email has a link. */
   linkParagraph: string;
+}
+
+export interface EmailDocumentCompletedCopy extends EmailButtonCopy {
+  /** Label above the signed PDF's SHA-256. */
+  fingerprintLabel: string;
 }
 
 export interface EmailRejectedCopy extends EmailCopy {

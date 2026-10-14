@@ -68,6 +68,9 @@ export const AUDIT_ACTIONS = {
   documentTemplateFieldsUpdate: 'document_template.fields_update',
   documentAssignmentCreate: 'document_assignment.create',
   documentAssignmentArchive: 'document_assignment.archive',
+  documentAssignmentRemind: 'document_assignment.remind',
+  certificationUploadReview: 'certification_upload.review',
+  certificationUploadView: 'certification_upload.view',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -106,6 +109,7 @@ export interface AuditEntry {
     | 'class_import'
     | 'document_template'
     | 'document_assignment'
+    | 'certification_upload'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

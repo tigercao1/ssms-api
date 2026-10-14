@@ -30,7 +30,7 @@ export class EmailRenderer {
     const languages = language === 'bilingual' ? BILINGUAL_ORDER : [language];
     const sections: EmailSection[] = languages.map((lang) => ({
       language: lang,
-      blocks: definition.build(catalogs[lang], vars),
+      blocks: definition.build(catalogs[lang], vars, lang),
       layout: catalogs[lang].email.layout,
     }));
     const { html, text } = renderEmailLayout(sections, {

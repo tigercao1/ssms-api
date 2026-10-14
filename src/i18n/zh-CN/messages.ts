@@ -319,6 +319,35 @@ export const zhCN: MessageCatalog = {
           '这是一条新的激活链接，{validDays} 天内有效。如果链接过期，可以在打开的页面上申请新的链接。',
       },
     },
+    certification: {
+      labels: {
+        regular: '{org} {level} 级',
+        park: '{org} 公园 {level} 级',
+        carving: '{org} 刻滑 {level} 级',
+      },
+      expiring: {
+        subject: '您的 {certification} 证书将于 {validUntil} 到期',
+        preheader: '请上传续期后的证书，以便继续安排教学。',
+        heading: '您的证书即将到期',
+        paragraphs: [
+          '您教练资料中的 {certification} 证书有效期至 {validUntil}。',
+          '续费会员后，请在教练平台上传新的证书，以便我们继续为您安排课程。',
+        ],
+        button: '上传续期证书',
+        finePrint: '如果您已经上传了续期后的证书，请忽略这封邮件。',
+      },
+      expired: {
+        subject: '您的 {certification} 证书已过期',
+        preheader: '请上传续期后的证书，以便继续教学。',
+        heading: '您的证书已过期',
+        paragraphs: [
+          '您教练资料中的 {certification} 证书有效期至 {validUntil}，现已过期。',
+          '请续费会员，并在教练平台上传新的证书。',
+        ],
+        button: '上传新证书',
+        finePrint: '如果您已经上传了续期后的证书，请忽略这封邮件。',
+      },
+    },
     admin: {
       instructorPending: {
         subject: '新教练待审核：{instructorEmail}',
@@ -329,6 +358,43 @@ export const zhCN: MessageCatalog = {
         ],
         button: '查看资料',
         finePrint: '您收到这封邮件，是因为您是 SSnow 的管理员。',
+      },
+    },
+    documents: {
+      assigned: {
+        subject: '请完成您的入职资料',
+        preheader: '请阅读并签署您的入职资料。',
+        heading: '您的入职资料',
+        paragraphs: [
+          '请在教练平台阅读并完成以下资料：',
+          '只需几分钟，用手机也可以完成。',
+        ],
+        button: '查看我的资料',
+        finePrint: '您收到这封邮件，是因为您是 SSnow 的教练。',
+      },
+      reminder: {
+        subject: '提醒：您还有入职资料待完成',
+        preheader: '您还有入职资料尚未完成。',
+        heading: '还有资料待完成',
+        paragraphs: [
+          '温馨提醒：以下资料还在教练平台等您完成：',
+          '请在第一节课之前完成。',
+        ],
+        button: '查看我的资料',
+        finePrint:
+          '您收到这封邮件，是因为您是 SSnow 的教练。我们每周最多发送一次提醒。',
+      },
+      completed: {
+        subject: '您签署的文件：{title}',
+        preheader: '附件是您签署的文件。',
+        heading: '感谢您的签署',
+        paragraphs: [
+          '您已签署《{title}》。签署后的文件以 PDF 附件形式随本邮件发送。',
+        ],
+        fingerprintLabel: '附件 PDF 的 SHA-256：',
+        button: '查看我的资料',
+        finePrint:
+          '请保留这封邮件。通过 SHA-256 可以核对附件在您签署后没有被改动。',
       },
     },
   },

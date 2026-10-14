@@ -35,7 +35,12 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'auth.generic',
   'invite.season',
   'invite.reminder',
+  'certification.expiring',
+  'certification.expired',
   'admin.instructor_pending',
+  'documents.assigned',
+  'documents.reminder',
+  'documents.completed',
 ];
 
 describe('EmailRenderer', () => {
@@ -213,5 +218,64 @@ describe('EmailRenderer', () => {
     expect(html).toContain(
       'href="https://portal.example.com/admin/instructors/abc"',
     );
+  });
+
+  describe('documents', () => {
+    const documents = [
+      { titleEn: 'Instructor agreement', titleZh: '教练协议' },
+      { titleEn: 'Safety <policy>', titleZh: null },
+    ];
+    const onboardingUrl = 'https://portal.example.com/onboarding';
+
+    it.each(['documents.assigned', 'documents.reminder'] as const)(
+      '%s lists each document in the recipient language and links to onboarding',
+      (template) => {
+        const vars = { displayName: 'Lin', documents, onboardingUrl };
+        const english = renderer.render(template, 'en', vars);
+        expect(english.text).toContain('• Instructor agreement');
+        expect(english.html).toContain('• Safety &lt;policy&gt;');
+        expect(english.html).toContain(`href="${onboardingUrl}"`);
+        expect(english.text).toContain(onboardingUrl);
+
+        const zh = renderer.render(template, 'zh-CN', vars);
+        expect(zh.text).toContain('• 教练协议');
+        expect(zh.text).toContain('• Safety <policy>');
+        expect(zh.text).not.toContain('Instructor agreement');
+
+        const both = renderer.render(template, 'bilingual', vars);
+        expect(both.text).toContain('• Instructor agreement');
+        expect(both.text).toContain('• 教练协议');
+      },
+    );
+
+    it('documents.completed shows the title and SHA-256, and the portal link only when given', () => {
+      const sha256 = 'ab'.repeat(32);
+      const vars = {
+        displayName: 'Lin',
+        document: documents[0],
+        sha256,
+        onboardingUrl,
+      };
+      const english = renderer.render('documents.completed', 'en', vars);
+      expect(english.subject).toBe('Your signed copy: Instructor agreement');
+      expect(english.html).toContain(sha256);
+      expect(english.html).toContain('word-break:break-all');
+      expect(english.text).toContain(
+        `${en.email.documents.completed.fingerprintLabel}\n${sha256}`,
+      );
+      expect(english.html).toContain(`href="${onboardingUrl}"`);
+
+      const zh = renderer.render('documents.completed', 'zh-CN', vars);
+      expect(zh.subject).toBe('您签署的文件：教练协议');
+      expect(zh.text).toContain(sha256);
+
+      const customer = renderer.render('documents.completed', 'bilingual', {
+        ...vars,
+        onboardingUrl: null,
+      });
+      expect(customer.html).toContain(sha256);
+      expect(customer.html).not.toContain(onboardingUrl);
+      expect(customer.text).not.toContain(en.email.documents.completed.button);
+    });
   });
 });

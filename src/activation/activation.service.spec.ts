@@ -9,6 +9,7 @@ import { ActivationService, normalizeEmail } from './activation.service';
 import type { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
 import type { InvitesRepository } from './invites.repository';
+import type { DocumentOnboardingService } from '../documents/document-onboarding.service';
 
 const NOW = new Date('2026-10-11T04:00:00Z');
 const TOKEN = 'A'.repeat(43);
@@ -41,18 +42,26 @@ function setup() {
     findLatestByEmail: jest.fn<Promise<InviteRecipient | null>, [string]>(),
     markRedeemed: jest.fn().mockResolvedValue(undefined),
     markActivated: jest.fn().mockResolvedValue(undefined),
+    findLatestByAuthUser: jest
+      .fn<Promise<InviteRow | null>, [string]>()
+      .mockResolvedValue(null),
   };
   const auth = {
     findEmail: jest.fn().mockResolvedValue('Jane@Example.test'),
     magicLinkTokenHash: jest.fn().mockResolvedValue('hashed-otp'),
   };
   const dispatcher = { dispatch: jest.fn().mockResolvedValue('sent') };
+  const onboarding = {
+    assignRequired: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
+    assignRequiredForAuthUser: jest.fn().mockResolvedValue(null),
+  };
   const service = new ActivationService(
     invites as unknown as InvitesRepository,
     auth,
     dispatcher as unknown as InviteDispatcher,
+    onboarding as unknown as DocumentOnboardingService,
   );
-  return { service, invites, auth, dispatcher };
+  return { service, invites, auth, dispatcher, onboarding };
 }
 
 beforeEach(() => {
@@ -231,5 +240,30 @@ describe('ActivationService.complete', () => {
     const { service, invites } = setup();
     await service.complete('auth-1');
     expect(invites.markActivated).toHaveBeenCalledWith('auth-1', NOW);
+  });
+
+  it("assigns onboarding documents for the invite's instructor and season", async () => {
+    const { service, invites, onboarding } = setup();
+    invites.findLatestByAuthUser.mockResolvedValueOnce(row());
+    await service.complete('auth-1');
+    expect(invites.findLatestByAuthUser).toHaveBeenCalledWith('auth-1');
+    expect(onboarding.assignRequired).toHaveBeenCalledWith('ins-1', '2026/27');
+    expect(onboarding.assignRequiredForAuthUser).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the caller (and CURRENT_SEASON) without an invite', async () => {
+    const { service, onboarding } = setup();
+    await service.complete('auth-1');
+    expect(onboarding.assignRequiredForAuthUser).toHaveBeenCalledWith('auth-1');
+    expect(onboarding.assignRequired).not.toHaveBeenCalled();
+  });
+
+  it('still assigns, from the caller, when the invite lookup fails', async () => {
+    const { service, invites, onboarding } = setup();
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    invites.findLatestByAuthUser.mockRejectedValueOnce(new Error('db down'));
+    await expect(service.complete('auth-1')).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    expect(onboarding.assignRequiredForAuthUser).toHaveBeenCalledWith('auth-1');
   });
 });

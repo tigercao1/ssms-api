@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
@@ -8,6 +9,10 @@ import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { hasCode, PG_UNIQUE_VIOLATION } from '../database/db-result';
 import { utcToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
+import {
+  DocumentNotificationsService,
+  type DocumentEmailTemplate,
+} from './document-notifications.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import type {
@@ -27,18 +32,29 @@ export const ASSIGN_TARGET_REQUIRED =
 export const TEMPLATE_NOT_ASSIGNABLE =
   'Only active instructor templates with an uploaded PDF can be assigned';
 
+/** Which instructors {@link DocumentAssignmentsService.assignTemplateTo} newly assigned. */
+export interface TemplateAssignmentOutcome {
+  createdSubjectIds: string[];
+  skipped: number;
+}
+
 /**
  * Admin side of document assignments: create per season (idempotent), list
  * per instructor, archive. Other modules can call {@link assignTemplate}
- * directly to assign without going through HTTP.
+ * directly to assign without going through HTTP. Each instructor who gets a
+ * new assignment from the admin route is emailed `documents.assigned` in the
+ * background; instructors who already held it are not.
  */
 @Injectable()
 export class DocumentAssignmentsService {
+  private readonly logger = new Logger(DocumentAssignmentsService.name);
+
   constructor(
     private readonly assignments: DocumentAssignmentsRepository,
     private readonly templates: DocumentTemplatesRepository,
     private readonly subjects: DocumentSubjectsRepository,
     private readonly audit: AuditService,
+    private readonly notifications: DocumentNotificationsService,
   ) {}
 
   /** `POST /admin/documents/assignments`. */
@@ -64,11 +80,12 @@ export class DocumentAssignmentsService {
     const instructorIds = all
       ? await this.subjects.listActiveApprovedInstructorIds()
       : await this.knownInstructors(dto.instructorIds ?? []);
-    const result = await this.assignTemplate(
+    const outcome = await this.assignTemplateTo(
       dto.templateId,
       dto.season,
       instructorIds,
     );
+    const result = toResult(outcome);
     await this.audit.record({
       action: AUDIT_ACTIONS.documentAssignmentCreate,
       actor: { ...actor, role: 'admin' },
@@ -81,6 +98,7 @@ export class DocumentAssignmentsService {
         ...result,
       },
     });
+    void this.notifyAssigned(template, dto.season, outcome.createdSubjectIds);
     return result;
   }
 
@@ -95,6 +113,17 @@ export class DocumentAssignmentsService {
     season: string,
     instructorIds: string[],
   ): Promise<AssignmentResult> {
+    return toResult(
+      await this.assignTemplateTo(templateId, season, instructorIds),
+    );
+  }
+
+  /** {@link assignTemplate}, returning which instructors were newly assigned. */
+  async assignTemplateTo(
+    templateId: string,
+    season: string,
+    instructorIds: string[],
+  ): Promise<TemplateAssignmentOutcome> {
     const unique = [...new Set(instructorIds)];
     const open = await this.assignments.findOpenSubjectIds(
       templateId,
@@ -110,21 +139,25 @@ export class DocumentAssignmentsService {
         subject_id: subjectId,
         season,
       }));
-    let created: number;
+    let created: string[];
     try {
-      created = await this.assignments.insertMany(rows);
+      await this.assignments.insertMany(rows);
+      created = rows.map((row) => row.subject_id);
     } catch (err) {
       if (!hasCode(err, PG_UNIQUE_VIOLATION)) {
         throw err;
       }
-      created = 0;
+      created = [];
       for (const row of rows) {
         if (await this.assignments.insertIfAbsent(row)) {
-          created += 1;
+          created.push(row.subject_id);
         }
       }
     }
-    return { created, skipped: unique.length - created };
+    return {
+      createdSubjectIds: created,
+      skipped: unique.length - created.length,
+    };
   }
 
   /** `GET /admin/instructors/:id/documents`. */
@@ -172,6 +205,26 @@ export class DocumentAssignmentsService {
     return toAssignment(row);
   }
 
+  private async notifyAssigned(
+    template: DocumentEmailTemplate,
+    season: string,
+    instructorIds: string[],
+  ): Promise<void> {
+    for (const id of instructorIds) {
+      try {
+        const instructor = await this.subjects.findInstructor(id);
+        if (instructor) {
+          await this.notifications.sendAssigned(instructor, [template], season);
+        }
+      } catch (err) {
+        this.logger.error(
+          `Could not email instructor ${id} about template ${template.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   private async knownInstructors(ids: string[]): Promise<string[]> {
     const unique = [...new Set(ids)];
     const found = await this.subjects.existingInstructorIds(unique);
@@ -183,4 +236,11 @@ export class DocumentAssignmentsService {
     }
     return unique;
   }
+}
+
+function toResult(outcome: TemplateAssignmentOutcome): AssignmentResult {
+  return {
+    created: outcome.createdSubjectIds.length,
+    skipped: outcome.skipped,
+  };
 }

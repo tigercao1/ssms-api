@@ -35,13 +35,23 @@ await this.mailer.send({
   block; subject `"<en> / <zh>"`). Chinese copy brands the club as SSnow; the
   footer keeps "Serendipity Snow Club" in both languages.
 
+## Attachments
+
+`send` takes optional `attachments: { filename, content: Buffer, contentType }[]`.
+They are sent base64-encoded through Resend. More than 30 MB in total (before
+base64; Resend's limit is 40 MB after it) fails without a send attempt. The
+`email_log` row records each file's `filename`, `contentType`, `sizeBytes` and
+`sha256` under `metadata.attachments`; the content itself is never logged.
+
 ## Templates
 
 `EmailTemplate` (`mailer.types.ts`) lists every email; `EmailTemplateVars`
 maps each one to its vars. `templates/email-templates.ts` turns vars into
 content blocks (heading, greeting, paragraphs, optional red button, optional
-code, fine print) and holds the sample vars used by the previews. The copy lives
-in the i18n catalog under `email.*` (`src/i18n/en`, `src/i18n/zh-CN`).
+code, optional monospaced fingerprint such as a SHA-256, fine print) and holds
+the sample vars used by the previews. Each `build` also gets the block's
+language, for vars that carry both an English and a Chinese value (document
+titles). The copy lives in the i18n catalog under `email.*` (`src/i18n/en`, `src/i18n/zh-CN`).
 
 To add an email:
 

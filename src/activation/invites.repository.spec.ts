@@ -46,6 +46,20 @@ describe('SupabaseInvitesRepository', () => {
     ]);
   });
 
+  it('finds the latest invite of an auth user', async () => {
+    const { db, repo } = setup(
+      { data: [RECORD], error: null },
+      { data: null, error: null },
+    );
+    expect(await repo.findLatestByAuthUser('auth-1')).toEqual(RECORD);
+    expect(await repo.findLatestByAuthUser('auth-2')).toBeNull();
+    expect(db.ops(0).slice(1)).toEqual([
+      ['eq', ['auth_user_id', 'auth-1']],
+      ['order', ['created_at', { ascending: false }]],
+      ['limit', [1]],
+    ]);
+  });
+
   it('finds the latest invite by email with instructor fields', async () => {
     const { db, repo } = setup(
       {
@@ -274,6 +288,10 @@ describe('SupabaseInvitesRepository', () => {
     [
       'markActivated',
       (r: SupabaseInvitesRepository) => r.markActivated('a', NOW),
+    ],
+    [
+      'findLatestByAuthUser',
+      (r: SupabaseInvitesRepository) => r.findLatestByAuthUser('a'),
     ],
   ])('%s surfaces database errors', async (_name, call) => {
     const { repo } = setup(ERR);

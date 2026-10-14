@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { createBioTranslator } from '../bio-translation/bio-translation.module';
 import { Test } from '@nestjs/testing';
@@ -69,6 +70,9 @@ describe('AdminService', () => {
     send: jest.fn().mockResolvedValue('sent'),
     portalLink: jest.fn((path: string) => `https://portal.example.com${path}`),
   };
+  const onboarding = {
+    assignRequired: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
+  };
   const translator = {
     modelId: 'gemini-test',
     translate: jest.fn<Promise<string>, [Record<string, unknown>]>(),
@@ -84,6 +88,7 @@ describe('AdminService', () => {
         { provide: InstructorsService, useValue: instructors },
         { provide: AuditService, useValue: audit },
         { provide: MailerService, useValue: mailer },
+        { provide: DocumentOnboardingService, useValue: onboarding },
         { provide: BIO_TRANSLATOR, useValue: translator },
       ],
     }).compile();
@@ -166,6 +171,20 @@ describe('AdminService', () => {
           }) as unknown,
         }),
       );
+      expect(onboarding.assignRequired).toHaveBeenCalledWith('id');
+    });
+
+    it('still approves when assigning onboarding documents resolves null (failed)', async () => {
+      repo.findInstructorById.mockResolvedValue(makeRow());
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved' }),
+      );
+      onboarding.assignRequired.mockResolvedValueOnce(null);
+
+      const result = await service.setApprovalStatus('id', 'approved');
+
+      expect(result.approvalStatus).toBe('approved');
+      expect(onboarding.assignRequired).toHaveBeenCalledTimes(1);
     });
 
     it('rejects a pending instructor', async () => {
@@ -190,6 +209,7 @@ describe('AdminService', () => {
           vars: expect.objectContaining({ reason: 'why' }) as unknown,
         }),
       );
+      expect(onboarding.assignRequired).not.toHaveBeenCalled();
     });
 
     it('refuses an invalid transition from a non-pending state (400)', async () => {
@@ -453,6 +473,7 @@ describe('AdminService', () => {
           { provide: AdminRepository, useValue: repo },
           { provide: AuditService, useValue: audit },
           { provide: MailerService, useValue: mailer },
+          { provide: DocumentOnboardingService, useValue: onboarding },
           { provide: BIO_TRANSLATOR, useValue: translator },
         ],
       }).compile();
@@ -1065,6 +1086,7 @@ describe('AdminService reference translation gate', () => {
         { provide: InstructorsService, useValue: {} },
         { provide: AuditService, useValue: { record: jest.fn() } },
         { provide: MailerService, useValue: {} },
+        { provide: DocumentOnboardingService, useValue: {} },
         {
           provide: BIO_TRANSLATOR,
           useFactory: createBioTranslator,

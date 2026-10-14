@@ -12,6 +12,7 @@ import type { App } from 'supertest/types';
 import { AuditService } from '../audit/audit.service';
 import type { AuditEntry } from '../audit/audit.types';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { InstructorsService } from '../instructors/instructors.service';
 import { MailerService } from '../mailer/mailer.service';
@@ -89,6 +90,7 @@ async function build(initial: AdminInstructorRow = makeRow()) {
       { provide: AdminRepository, useValue: repo },
       { provide: InstructorsService, useValue: {} },
       { provide: MailerService, useValue: {} },
+      { provide: DocumentOnboardingService, useValue: {} },
       { provide: BIO_TRANSLATOR, useValue: {} },
       { provide: AuditService, useValue: audit },
     ],

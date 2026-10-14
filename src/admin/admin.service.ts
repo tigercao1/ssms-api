@@ -16,6 +16,7 @@ import { InstructorsService } from '../instructors/instructors.service';
 import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AuditService } from '../audit/audit.service';
+import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
@@ -78,6 +79,7 @@ export class AdminService {
      */
     private readonly mailer: MailerService,
     @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
+    private readonly onboarding: DocumentOnboardingService,
   ) {}
 
   /**
@@ -143,7 +145,8 @@ export class AdminService {
    *
    * On success appends an `instructor.approve` / `instructor.reject` row to
    * `audit_log` (T6.8); `reason` is carried into the audit metadata (and the
-   * rejection email — T8.1).
+   * rejection email — T8.1). Approval also assigns the required onboarding
+   * documents for `CURRENT_SEASON`; that never fails the approval.
    */
   async setApprovalStatus(
     id: string,
@@ -190,6 +193,7 @@ export class AdminService {
       this.notifyInstructor(updated, 'approved', {
         loginUrl: this.mailer.portalLink('/login'),
       });
+      await this.onboarding.assignRequired(id);
     } else {
       this.notifyInstructor(updated, 'rejected', { reason: reason ?? null });
     }

@@ -1,0 +1,28 @@
+name: Document reminders
+
+on:
+  schedule:
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: document-reminders
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    name: Remind instructors about open onboarding documents
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: POST /internal/documents/reminders
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          DOCUMENT_REMINDERS_TOKEN: ${{ secrets.DOCUMENT_REMINDERS_TOKEN }}
+        run: |
+          set -euo pipefail
+          status="$(curl -sS --max-time 120 -o response.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${DOCUMENT_REMINDERS_TOKEN}" \
+            "${API_BASE_URL%/}/internal/documents/reminders")"
+          cat response.json; echo
+          [[ "$status" == 2* ]] || { echo "::error::reminders returned HTTP $status"; exit 1; }

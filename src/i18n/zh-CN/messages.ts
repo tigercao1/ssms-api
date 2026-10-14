@@ -331,6 +331,43 @@ export const zhCN: MessageCatalog = {
         finePrint: '您收到这封邮件，是因为您是 SSnow 的管理员。',
       },
     },
+    documents: {
+      assigned: {
+        subject: '请完成您的入职资料',
+        preheader: '请阅读并签署您的入职资料。',
+        heading: '您的入职资料',
+        paragraphs: [
+          '请在教练平台阅读并完成以下资料：',
+          '只需几分钟，用手机也可以完成。',
+        ],
+        button: '查看我的资料',
+        finePrint: '您收到这封邮件，是因为您是 SSnow 的教练。',
+      },
+      reminder: {
+        subject: '提醒：您还有入职资料待完成',
+        preheader: '您还有入职资料尚未完成。',
+        heading: '还有资料待完成',
+        paragraphs: [
+          '温馨提醒：以下资料还在教练平台等您完成：',
+          '请在第一节课之前完成。',
+        ],
+        button: '查看我的资料',
+        finePrint:
+          '您收到这封邮件，是因为您是 SSnow 的教练。我们每周最多发送一次提醒。',
+      },
+      completed: {
+        subject: '您签署的文件：{title}',
+        preheader: '附件是您签署的文件。',
+        heading: '感谢您的签署',
+        paragraphs: [
+          '您已签署《{title}》。签署后的文件以 PDF 附件形式随本邮件发送。',
+        ],
+        fingerprintLabel: '附件 PDF 的 SHA-256：',
+        button: '查看我的资料',
+        finePrint:
+          '请保留这封邮件。通过 SHA-256 可以核对附件在您签署后没有被改动。',
+      },
+    },
   },
 };
 

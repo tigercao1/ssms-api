@@ -161,6 +161,14 @@ export interface EmailMessages {
   admin: {
     instructorPending: EmailButtonCopy;
   };
+  documents: {
+    /** The first paragraph introduces the document list; `{count}` = documents. */
+    assigned: EmailButtonCopy;
+    /** The first paragraph introduces the document list; `{count}` = documents. */
+    reminder: EmailButtonCopy;
+    /** Uses `{title}`; the button (portal link) is shown to instructors only. */
+    completed: EmailDocumentCompletedCopy;
+  };
 }
 
 /** Strings shared by every email: greeting, sign-off, footer, link fallbacks. */
@@ -194,6 +202,11 @@ export interface EmailButtonCopy extends EmailCopy {
 export interface EmailGenericCopy extends EmailButtonCopy {
   /** Shown above the button, only when the email has a link. */
   linkParagraph: string;
+}
+
+export interface EmailDocumentCompletedCopy extends EmailButtonCopy {
+  /** Label above the signed PDF's SHA-256. */
+  fingerprintLabel: string;
 }
 
 export interface EmailRejectedCopy extends EmailCopy {

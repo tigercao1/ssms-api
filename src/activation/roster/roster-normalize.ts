@@ -15,11 +15,11 @@ export interface ProposedCertification extends RosterCertification {
   source: ValueSource;
 }
 
-/** An `instructor_trainer_status` row; trainer development gives trainer level 1. */
+/** An `instructor_trainer_status` row; trainer development means the trainer exam was passed, giving trainer level 1. */
 export interface RosterTrainerStatus {
   discipline: TrainerDiscipline;
   rookieSessionCompleted: true;
-  trainerExamPassed: false;
+  trainerExamPassed: true;
   trainerLevel: 1;
 }
 
@@ -391,7 +391,7 @@ function trainerStatusFor(discipline: TrainerDiscipline): RosterTrainerStatus {
   return {
     discipline,
     rookieSessionCompleted: true,
-    trainerExamPassed: false,
+    trainerExamPassed: true,
     trainerLevel: 1,
   };
 }
@@ -620,7 +620,7 @@ export function validateTrainerStatus(
   return allowedDiscipline !== null &&
     discipline === allowedDiscipline &&
     rookieSessionCompleted === true &&
-    trainerExamPassed === false &&
+    trainerExamPassed === true &&
     trainerLevel === 1
     ? trainerStatusFor(allowedDiscipline)
     : null;

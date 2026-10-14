@@ -162,7 +162,7 @@ describe('parseRosterCsv', () => {
           {
             discipline: 'snowboard',
             rookieSessionCompleted: true,
-            trainerExamPassed: false,
+            trainerExamPassed: true,
             trainerLevel: 1,
             source: 'rule',
           },

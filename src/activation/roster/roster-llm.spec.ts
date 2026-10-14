@@ -115,7 +115,7 @@ describe('validateLlmResult', () => {
     const TRAINER = {
       discipline: 'snowboard',
       rookieSessionCompleted: true,
-      trainerExamPassed: false,
+      trainerExamPassed: true,
       trainerLevel: 1,
     };
     const answer = (trainer: unknown, certification: unknown = null) => ({
@@ -147,7 +147,7 @@ describe('validateLlmResult', () => {
       ['another discipline', { ...TRAINER, discipline: 'ski' }],
       ['trainer level 2', { ...TRAINER, trainerLevel: 2 }],
       ['no rookie session', { ...TRAINER, rookieSessionCompleted: false }],
-      ['trainer exam passed', { ...TRAINER, trainerExamPassed: true }],
+      ['trainer exam not passed', { ...TRAINER, trainerExamPassed: false }],
       ['not an object', 'TD'],
     ])('rejects %s', (_label, trainer) => {
       const result = validateLlmResult(answer(trainer), REQUEST);

@@ -272,7 +272,7 @@ describe('SupabaseRosterWriter', () => {
         {
           discipline: 'snowboard',
           rookieSessionCompleted: true,
-          trainerExamPassed: false,
+          trainerExamPassed: true,
           trainerLevel: 1,
         },
       ],
@@ -288,7 +288,7 @@ describe('SupabaseRosterWriter', () => {
             {
               discipline: 'snowboard',
               rookie_session_completed: true,
-              trainer_exam_passed: false,
+              trainer_exam_passed: true,
               trainer_level: 1,
             },
           ],

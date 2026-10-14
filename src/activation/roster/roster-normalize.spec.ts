@@ -432,7 +432,7 @@ function trainer(
   return {
     discipline,
     rookieSessionCompleted: true as const,
-    trainerExamPassed: false as const,
+    trainerExamPassed: true as const,
     trainerLevel: 1 as const,
     source,
   };
@@ -557,7 +557,7 @@ describe('validateTrainerStatus', () => {
     ['other discipline', ok, 'snowboard'],
     ['unknown discipline', { ...ok, discipline: 'telemark' }, 'ski'],
     ['rookie session missing', { ...ok, rookieSessionCompleted: false }, 'ski'],
-    ['trainer exam passed', { ...ok, trainerExamPassed: true }, 'ski'],
+    ['trainer exam not passed', { ...ok, trainerExamPassed: false }, 'ski'],
     ['trainer level 2', { ...ok, trainerLevel: 2 }, 'ski'],
     ['trainer level null', { ...ok, trainerLevel: null }, 'ski'],
   ] as const)('rejects %s', (_label, value, allowed) => {

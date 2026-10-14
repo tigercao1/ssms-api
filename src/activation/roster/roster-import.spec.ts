@@ -1257,7 +1257,7 @@ function trainer(discipline: string, source = 'rule') {
   return {
     discipline,
     rookieSessionCompleted: true,
-    trainerExamPassed: false,
+    trainerExamPassed: true,
     trainerLevel: 1,
     source,
   };
@@ -1436,7 +1436,7 @@ describe('runRosterCli trainer development', () => {
                 trainer: {
                   discipline: 'ski',
                   rookieSessionCompleted: true,
-                  trainerExamPassed: false,
+                  trainerExamPassed: true,
                   trainerLevel: 1,
                 },
                 confidence: 0.9,

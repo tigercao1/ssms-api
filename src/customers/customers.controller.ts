@@ -52,6 +52,7 @@ export class CustomersController {
       query.q,
       query.limit,
       query.page,
+      query.includeDeleted,
     );
     res.setHeader(TOTAL_COUNT_HEADER, String(total));
     return customers;

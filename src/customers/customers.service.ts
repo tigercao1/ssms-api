@@ -45,10 +45,12 @@ export class CustomersService {
     q: string | undefined,
     limit = CUSTOMER_SEARCH_DEFAULT_LIMIT,
     page = 1,
+    includeDeleted = false,
   ): Promise<CustomerSearchPage> {
     const { rows, total } = await this.repo.search(customerSearchTokens(q), {
       limit,
       offset: (page - 1) * limit,
+      includeDeleted,
     });
     return { customers: rows.map(toCustomer), total };
   }

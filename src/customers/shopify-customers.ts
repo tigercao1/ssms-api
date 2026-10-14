@@ -8,6 +8,7 @@ import {
 import { assertNoUserErrors } from '../shopify/shopify-user-errors';
 
 export const CUSTOMERS_PAGE_SIZE = 100;
+export const CUSTOMER_IDS_PAGE_SIZE = 250;
 
 const CUSTOMER_FIELDS = `
   legacyResourceId
@@ -30,6 +31,20 @@ export const CUSTOMERS_PAGE_QUERY = `
         endCursor
       }
       nodes {${CUSTOMER_FIELDS}}
+    }
+  }
+`;
+
+export const CUSTOMER_IDS_PAGE_QUERY = `
+  query CustomerIdsPage($first: Int!, $after: String) {
+    customers(first: $first, after: $after, sortKey: ID) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        legacyResourceId
+      }
     }
   }
 `;
@@ -57,6 +72,12 @@ export interface ShopifyCustomer {
 
 export interface ShopifyCustomerPage {
   customers: ShopifyCustomer[];
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+export interface ShopifyCustomerIdPage {
+  ids: number[];
   hasNextPage: boolean;
   endCursor: string | null;
 }
@@ -90,6 +111,13 @@ interface CustomersPageData {
   };
 }
 
+interface CustomerIdsPageData {
+  customers: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: { legacyResourceId: string }[];
+  };
+}
+
 interface CustomerCreateData {
   customerCreate: {
     customer: CustomerNode | null;
@@ -97,20 +125,65 @@ interface CustomerCreateData {
   } | null;
 }
 
-function toCustomer(node: CustomerNode): ShopifyCustomer {
-  const id = Number(node.legacyResourceId);
-  if (!Number.isSafeInteger(id) || id <= 0) {
-    throw new ShopifyError(
-      `Unexpected Shopify customer id '${node.legacyResourceId}'`,
-    );
+function toCustomerId(value: unknown): number {
+  const id =
+    typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+    throw new ShopifyError(`Unexpected Shopify customer id '${String(value)}'`);
   }
+  return id;
+}
+
+function toCustomer(node: CustomerNode): ShopifyCustomer {
   return {
-    shopifyCustomerId: id,
+    shopifyCustomerId: toCustomerId(node.legacyResourceId),
     firstName: node.firstName || null,
     lastName: node.lastName || null,
     email: node.defaultEmailAddress?.emailAddress || null,
     phone: node.defaultPhoneNumber?.phoneNumber || null,
     updatedAt: node.updatedAt ?? null,
+  };
+}
+
+const CUSTOMER_GID = /^gid:\/\/shopify\/Customer\/(\d+)$/;
+
+function field(payload: Record<string, unknown>, key: string): string | null {
+  const value = payload[key];
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function asPayload(payload: unknown): Record<string, unknown> {
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
+    throw new ShopifyError('Shopify webhook payload is not a JSON object');
+  }
+  return payload as Record<string, unknown>;
+}
+
+export function webhookCustomerId(payload: unknown): number {
+  const body = asPayload(payload);
+  const gid = field(body, 'admin_graphql_api_id')?.match(CUSTOMER_GID);
+  return toCustomerId(gid ? gid[1] : body.id);
+}
+
+export function fromWebhookPayload(payload: unknown): ShopifyCustomer {
+  const body = asPayload(payload);
+  const updatedAt = field(body, 'updated_at');
+  if (!updatedAt || Number.isNaN(Date.parse(updatedAt))) {
+    throw new ShopifyError(
+      `Unexpected Shopify customer updated_at '${String(body.updated_at)}'`,
+    );
+  }
+  return {
+    shopifyCustomerId: webhookCustomerId(body),
+    firstName: field(body, 'first_name'),
+    lastName: field(body, 'last_name'),
+    email: field(body, 'email'),
+    phone: field(body, 'phone'),
+    updatedAt,
   };
 }
 
@@ -150,6 +223,26 @@ export class ShopifyCustomerDirectory {
     }
     return {
       customers: data.customers.nodes.map(toCustomer),
+      hasNextPage: data.customers.pageInfo.hasNextPage,
+      endCursor: data.customers.pageInfo.endCursor ?? null,
+    };
+  }
+
+  async idsPage(after: string | null): Promise<ShopifyCustomerIdPage> {
+    let data: CustomerIdsPageData;
+    try {
+      data = await this.shopify.graphql<CustomerIdsPageData>(
+        CUSTOMER_IDS_PAGE_QUERY,
+        { first: CUSTOMER_IDS_PAGE_SIZE, after },
+      );
+    } catch (err) {
+      if (isAccessDenied(err, 'read_customers')) {
+        throw new ShopifyScopeMissingError('read_customers');
+      }
+      throw err;
+    }
+    return {
+      ids: data.customers.nodes.map((n) => toCustomerId(n.legacyResourceId)),
       hasNextPage: data.customers.pageInfo.hasNextPage,
       endCursor: data.customers.pageInfo.endCursor ?? null,
     };

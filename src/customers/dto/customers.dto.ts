@@ -20,6 +20,12 @@ export const CUSTOMER_NAME_MAX_LENGTH = 255;
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+const toBoolean = ({ value }: { value: unknown }) => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+};
+
 const blankToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
@@ -46,6 +52,11 @@ export class SearchCustomersQueryDto {
   @Min(1)
   @Max(CUSTOMER_SEARCH_MAX_PAGE)
   page?: number;
+
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  includeDeleted?: boolean;
 }
 
 export class CreateCustomerDto {

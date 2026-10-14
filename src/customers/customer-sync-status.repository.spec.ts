@@ -62,7 +62,44 @@ describe('SupabaseCustomerSyncStatusRepository', () => {
     ]);
   });
 
+  it('stores the incremental watermark and the reconcile outcome under the lock token', async () => {
+    const { client, queries } = recordingSupabase();
+    const repo = new SupabaseCustomerSyncStatusRepository(client);
+    await repo.setIncrementalSince('2026-10-13T11:58:00.000Z');
+    await repo.finishReconcile('token-1', '2026-10-14T03:00:00.000Z', 'nope');
+    expect(queries.map((q) => [q.table, ...q.ops])).toEqual([
+      [
+        'customer_sync_status',
+        ['update', { incremental_since: '2026-10-13T11:58:00.000Z' }],
+        ['eq', 'id', true],
+      ],
+      [
+        'customer_sync_status',
+        [
+          'update',
+          {
+            last_reconcile_at: '2026-10-14T03:00:00.000Z',
+            last_reconcile_error: 'nope',
+          },
+        ],
+        ['eq', 'id', true],
+        ['eq', 'lock_token', 'token-1'],
+      ],
+    ]);
+  });
+
   it.each([
+    [
+      'setIncrementalSince',
+      (r: SupabaseCustomerSyncStatusRepository) => r.setIncrementalSince('x'),
+      'customer_sync_status',
+    ],
+    [
+      'finishReconcile',
+      (r: SupabaseCustomerSyncStatusRepository) =>
+        r.finishReconcile('t', 'x', null),
+      'customer_sync_status',
+    ],
     [
       'tryLock',
       (r: SupabaseCustomerSyncStatusRepository) => r.tryLock(1),

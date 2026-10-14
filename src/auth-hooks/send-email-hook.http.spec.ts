@@ -130,7 +130,7 @@ async function createApp(
       transform: true,
     }),
   );
-  await app.listen(0, '127.0.0.1');
+  await app.listen(0);
   const address = (app.getHttpServer() as Server).address() as AddressInfo;
   return {
     app,

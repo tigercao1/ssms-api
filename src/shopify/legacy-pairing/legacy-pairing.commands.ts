@@ -7,13 +7,27 @@ import {
   type LegacySnapshot,
   legacyEntryName,
 } from './legacy-our-team';
+import {
+  applyInstructorBackfill,
+  BACKFILL_AUDIT_ACTION,
+  type BackfillInstructor,
+  type ExistingTrainerStatus,
+  formatBackfillReport,
+  type InstructorBackfillPlan,
+  planInstructorBackfill,
+  type PhotoResult,
+  preparePhotos,
+} from './legacy-backfill';
 import { proposePairs } from './name-matching';
+import type { CompressedPhoto } from './photo-compression';
 import { formatPairingCsv, parsePairingCsv } from './pairing-csv';
 
 export interface PairingDeps {
   graphql: () => GraphqlFn;
   supabase: () => SupabaseClient;
   readFile: (file: string) => Promise<string>;
+  fetchBytes: (url: string) => Promise<Buffer>;
+  compressPhoto: (bytes: Buffer) => Promise<CompressedPhoto>;
   writeFile: (file: string, contents: string) => Promise<void>;
   isDirectory: (dir: string) => Promise<boolean>;
   log: (line: string) => void;
@@ -286,11 +300,190 @@ export async function runApply(
   return pairs.length;
 }
 
+const BACKFILL_INSTRUCTOR_COLUMNS =
+  'id, display_name_en, display_name_zh, bio_en, bio_zh, display_order, ' +
+  'profile_photo_url, photo_2_url, photo_3_url';
+
+export async function runBackfill(
+  deps: PairingDeps,
+  reportCsv: string | undefined,
+  options: { write: boolean; snapshot?: string; force: string[] },
+): Promise<number> {
+  if (!reportCsv) {
+    throw new PairingCommandError(
+      'Usage: backfill <report.csv> [--snapshot <snapshot.json>] [--force <handle>]... [--write]',
+    );
+  }
+  if (
+    options.write &&
+    deps.env.SSMS_ENV === 'prod' &&
+    deps.env.SSMS_CONFIRM_PROD !== 'yes'
+  ) {
+    throw new PairingCommandError(
+      'Refusing to write to PROD without SSMS_CONFIRM_PROD=yes.',
+    );
+  }
+  const report = assertOutsideRepo(deps, reportCsv);
+  const snapshot = options.snapshot
+    ? (JSON.parse(await deps.readFile(options.snapshot)) as LegacySnapshot)
+    : await fetchLegacySnapshot(deps.graphql(), deps.now);
+  const entries = new Map(snapshot.entries.map((e) => [e.handle, e]));
+  const supabase = deps.supabase();
+
+  const pairs = await supabase
+    .from('instructor_shopify_state')
+    .select('instructor_id, shopify_handle')
+    .not('shopify_handle', 'is', null);
+  if (pairs.error) {
+    throw new PairingCommandError(
+      `Failed to read instructor_shopify_state: ${pairs.error.message}`,
+    );
+  }
+  const paired = (
+    (pairs.data ?? []) as { instructor_id: string; shopify_handle: string }[]
+  ).filter((p) => entries.has(p.shopify_handle));
+  const unknownForce = options.force.filter(
+    (h) => !paired.some((p) => p.shopify_handle === h),
+  );
+  if (unknownForce.length > 0) {
+    throw new PairingCommandError(
+      `--force handle(s) not paired with an instructor: ${unknownForce.join(', ')}`,
+    );
+  }
+  const ids = paired.map((p) => p.instructor_id);
+  if (ids.length === 0) {
+    deps.log('No paired instructors with a legacy entry; nothing to do.');
+    return 0;
+  }
+
+  const done = await supabase
+    .from('audit_log')
+    .select('target_id')
+    .eq('action', BACKFILL_AUDIT_ACTION)
+    .in('target_id', ids);
+  if (done.error) {
+    throw new PairingCommandError(
+      `Failed to read audit_log: ${done.error.message}`,
+    );
+  }
+  const alreadyBackfilled = new Set(
+    ((done.data ?? []) as { target_id: string }[]).map((r) => r.target_id),
+  );
+
+  const rows = await supabase
+    .from('instructors')
+    .select(BACKFILL_INSTRUCTOR_COLUMNS)
+    .in('id', ids);
+  if (rows.error) {
+    throw new PairingCommandError(
+      `Failed to read instructors: ${rows.error.message}`,
+    );
+  }
+  const instructors = new Map(
+    ((rows.data ?? []) as unknown as BackfillInstructor[]).map((i) => [
+      i.id,
+      i,
+    ]),
+  );
+
+  const trainer = await supabase
+    .from('instructor_trainer_status')
+    .select('instructor_id, discipline, trainer_level')
+    .in('instructor_id', ids);
+  if (trainer.error) {
+    throw new PairingCommandError(
+      `Failed to read instructor_trainer_status: ${trainer.error.message}`,
+    );
+  }
+  const trainerRows = (trainer.data ?? []) as (ExistingTrainerStatus & {
+    instructor_id: string;
+  })[];
+
+  const io = {
+    supabase,
+    bucket: deps.env.SUPABASE_STORAGE_BUCKET?.trim() || 'instructor-public',
+    fetchBytes: deps.fetchBytes,
+    compress: deps.compressPhoto,
+    log: deps.log,
+  };
+
+  const planned: {
+    plan: InstructorBackfillPlan;
+    instructor: BackfillInstructor;
+    photos: PhotoResult[];
+  }[] = [];
+  for (const pair of paired) {
+    const instructor = instructors.get(pair.instructor_id);
+    if (!instructor) {
+      continue;
+    }
+    if (
+      alreadyBackfilled.has(pair.instructor_id) &&
+      !options.force.includes(pair.shopify_handle)
+    ) {
+      deps.log(`SKIP ${pair.shopify_handle}: already backfilled`);
+      continue;
+    }
+    const plan = planInstructorBackfill(
+      entries.get(pair.shopify_handle)!,
+      instructor,
+      trainerRows.filter((t) => t.instructor_id === pair.instructor_id),
+    );
+    const photos = await preparePhotos(io, plan);
+    planned.push({ plan, instructor, photos });
+    const sizes = photos
+      .map(
+        (p) =>
+          `${p.field} ${Math.round(p.originalBytes / 1024)}->${Math.round(p.compressedBytes / 1024)} KB`,
+      )
+      .join(', ');
+    deps.log(
+      `${options.write ? 'BACKFILL' : 'WOULD BACKFILL'} ${plan.handle} [${plan.name}]: ` +
+        `${photos.length} photo(s)${sizes ? ` (${sizes})` : ''}; ` +
+        `fields: ${
+          Object.keys(plan.update)
+            .filter((k) => !k.includes('translat'))
+            .join(', ') || 'none'
+        }` +
+        `${plan.translateBioToEn ? '; bio_en translation queued' : ''}` +
+        `${plan.trainer ? `; trainer ${plan.trainer.discipline} L${plan.trainer.level}` : ''}`,
+    );
+  }
+
+  await deps.writeFile(report, formatBackfillReport(planned));
+  const original = planned.reduce(
+    (sum, p) => sum + p.photos.reduce((s, x) => s + x.originalBytes, 0),
+    0,
+  );
+  const stored = planned.reduce(
+    (sum, p) => sum + p.photos.reduce((s, x) => s + x.compressedBytes, 0),
+    0,
+  );
+  deps.log(
+    `Photos: ${(original / 1e6).toFixed(1)} MB original -> ${(stored / 1e6).toFixed(1)} MB stored. Report: ${report}`,
+  );
+
+  if (!options.write) {
+    deps.log(
+      `Dry run: ${planned.length} instructor(s). Re-run with --write to apply.`,
+    );
+    return 0;
+  }
+
+  for (const { plan, instructor, photos } of planned) {
+    await applyInstructorBackfill(io, plan, instructor, photos, deps.now());
+    deps.log(`Done ${plan.handle}`);
+  }
+  deps.log(`Backfilled ${planned.length} instructor(s).`);
+  return planned.length;
+}
+
 export interface ParsedArgs {
   command: string | undefined;
   positional: string[];
   write: boolean;
   snapshot?: string;
+  force: string[];
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -298,6 +491,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   let write = false;
   let snapshot: string | undefined;
+  const force: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--write') {
@@ -307,13 +501,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (!snapshot) {
         throw new PairingCommandError('--snapshot needs a file path');
       }
+    } else if (arg === '--force') {
+      const handle = rest[++i];
+      if (!handle) {
+        throw new PairingCommandError('--force needs a legacy handle');
+      }
+      force.push(handle);
     } else if (arg.startsWith('--')) {
       throw new PairingCommandError(`Unknown option: ${arg}`);
     } else {
       positional.push(arg);
     }
   }
-  return { command, positional, write, snapshot };
+  return { command, positional, write, snapshot, force };
 }
 
 export async function runPairingCli(
@@ -321,8 +521,13 @@ export async function runPairingCli(
   argv: string[],
 ): Promise<void> {
   const args = parseArgs(argv);
-  if (args.write && args.command !== 'apply') {
-    throw new PairingCommandError('--write is only valid for apply');
+  if (args.write && args.command !== 'apply' && args.command !== 'backfill') {
+    throw new PairingCommandError(
+      '--write is only valid for apply and backfill',
+    );
+  }
+  if (args.force.length > 0 && args.command !== 'backfill') {
+    throw new PairingCommandError('--force is only valid for backfill');
   }
   switch (args.command) {
     case 'snapshot':
@@ -334,9 +539,16 @@ export async function runPairingCli(
     case 'apply':
       await runApply(deps, args.positional[0], args.write);
       return;
+    case 'backfill':
+      await runBackfill(deps, args.positional[0], {
+        write: args.write,
+        snapshot: args.snapshot,
+        force: args.force,
+      });
+      return;
     default:
       throw new PairingCommandError(
-        'Use one of: snapshot <output-dir> | propose <output.csv> [--snapshot <file>] | apply <reviewed.csv> [--write]',
+        'Use one of: snapshot <output-dir> | propose <output.csv> [--snapshot <file>] | apply <reviewed.csv> [--write] | backfill <report.csv> [--snapshot <file>] [--force <handle>]... [--write]',
       );
   }
 }

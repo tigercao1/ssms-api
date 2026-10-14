@@ -212,6 +212,8 @@ function makeDeps(
       written[file] = contents;
       return Promise.resolve();
     },
+    fetchBytes: () => Promise.reject(new Error('fetchBytes not stubbed')),
+    compressPhoto: () => Promise.reject(new Error('compressPhoto not stubbed')),
     isDirectory: (dir) => Promise.resolve(dir === '/backups'),
     log: (line) => logs.push(line),
     now: () => NOW,
@@ -569,18 +571,23 @@ describe('CLI parsing', () => {
       positional: ['r.csv'],
       write: true,
       snapshot: undefined,
+      force: [],
     });
     expect(parseArgs(['propose', 'p.csv', '--snapshot', 's.json'])).toEqual({
       command: 'propose',
       positional: ['p.csv'],
       write: false,
       snapshot: 's.json',
+      force: [],
     });
+    expect(
+      parseArgs(['backfill', 'b.csv', '--force', 'tiger', '--force', 'elaine']),
+    ).toMatchObject({ command: 'backfill', force: ['tiger', 'elaine'] });
     expect(() => parseArgs(['propose', '--snapshot'])).toThrow(
       '--snapshot needs a file path',
     );
-    expect(() => parseArgs(['apply', '--force'])).toThrow(
-      'Unknown option: --force',
+    expect(() => parseArgs(['apply', '--bogus'])).toThrow(
+      'Unknown option: --bogus',
     );
   });
 
@@ -593,7 +600,10 @@ describe('CLI parsing', () => {
     expect(Object.keys(written)).toHaveLength(2);
     await expect(
       runPairingCli(deps, ['snapshot', '/backups', '--write']),
-    ).rejects.toThrow('--write is only valid for apply');
+    ).rejects.toThrow('--write is only valid for apply and backfill');
+    await expect(
+      runPairingCli(deps, ['apply', '/r.csv', '--force', 'tiger']),
+    ).rejects.toThrow('--force is only valid for backfill');
     await expect(runPairingCli(deps, ['push'])).rejects.toThrow(
       PairingCommandError,
     );

@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
 import { ShopifyAdminClient } from '../src/shopify/shopify-admin.client';
 import { runPairingCli } from '../src/shopify/legacy-pairing/legacy-pairing.commands';
+import { compressPhoto } from '../src/shopify/legacy-pairing/photo-compression';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -29,6 +30,14 @@ async function main(): Promise<void> {
           { auth: { persistSession: false, autoRefreshToken: false } },
         ),
       readFile: (file) => fs.readFile(file, 'utf8'),
+      fetchBytes: async (url) => {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`GET ${url} failed with ${response.status}`);
+        }
+        return Buffer.from(await response.arrayBuffer());
+      },
+      compressPhoto,
       writeFile: (file, contents) =>
         fs.writeFile(file, contents, {
           encoding: 'utf8',

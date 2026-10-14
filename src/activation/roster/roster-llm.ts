@@ -79,7 +79,7 @@ export function buildNormalizationInstruction(
     'Certification rules:',
     '- org is "csia" (ski) or "casi" (snowboard).',
     '- track is "regular" (levels 1-4), "park" (levels 1-2, never partial) or "carving" (CASI only, level 1 only, never partial). Carving with no stated level is level 1.',
-    `- A partial regular certification has isPartial true and at least one partialComponents entry from: csia ${JSON.stringify(PARTIAL_COMPONENTS.csia)}, casi ${JSON.stringify(PARTIAL_COMPONENTS.casi)}. Pedagogy/teaching is "teach" for CSIA and "teaching" for CASI; skiing is "ski" (CSIA); riding is "riding" (CASI).`,
+    `- A partial regular certification has isPartial true. Its partialComponents lists the components the answer names, from: csia ${JSON.stringify(PARTIAL_COMPONENTS.csia)}, casi ${JSON.stringify(PARTIAL_COMPONENTS.casi)}; it is [] when the answer names none. Pedagogy/teaching is "teach" for CSIA and "teaching" for CASI; skiing is "ski" (CSIA); riding is "riding" (CASI).`,
     '- A full certification has isPartial false and partialComponents [].',
     '- A fragment that only names a component (for example "Teaching") describes the partial certification named elsewhere in the same answer; return that partial certification with the component.',
     '- "TD" or "Trainer Development" means the person passed the trainer exam (trainer development): return certification null and trainer {"discipline":"ski|snowboard","rookieSessionCompleted":true,"trainerExamPassed":true,"trainerLevel":1}. The discipline is "ski" for CSIA and "snowboard" for CASI, from the org named in the value itself, else the only org named in "certifications". If neither settles it, return trainer null.',

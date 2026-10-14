@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ValidationPipe,
+} from '@nestjs/common';
 import { InstructorsService } from './instructors.service';
 import type { MailerService } from '../mailer/mailer.service';
 import {
@@ -442,6 +446,35 @@ describe('InstructorsService', () => {
           trainer_level: 2,
         },
       ]);
+    });
+
+    it('accepts a partial with no components and sends partial_components []', async () => {
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      });
+      const dto = (await pipe.transform(
+        {
+          certifications: [
+            { org: 'casi', track: 'regular', level: 3, isPartial: true },
+          ],
+        },
+        { type: 'body', metatype: UpdateInstructorProfileDto },
+      )) as UpdateInstructorProfileDto;
+      await service.updateOwnProfile('auth-1', dto);
+      expect(repo.lastPatch).toEqual({
+        certifications: [
+          {
+            org: 'casi',
+            track: 'regular',
+            level: 3,
+            is_partial: true,
+            partial_components: [],
+            achieved_on: null,
+          },
+        ],
+      });
     });
 
     it('maps Postgres constraint errors to 400 BadRequest', async () => {

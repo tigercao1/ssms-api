@@ -873,6 +873,7 @@ describe('runRosterCli --release-stale-claims', () => {
 
 const PARTIAL_CASI = 'CASI L3 Partial (Please specify in "Other")';
 const PARTIAL_CSIA = 'CSIA L3 Partial (Please specify in "Other")';
+const UNRESOLVED_CSIA = 'CSIA L3 hill done';
 
 const NORMALIZE_CSV = rosterCsv([
   {
@@ -886,7 +887,7 @@ const NORMALIZE_CSV = rosterCsv([
   {
     preferred: 'Sky',
     email: 'sky@example.test',
-    certs: `${PARTIAL_CSIA}, Trainer course`,
+    certs: `${UNRESOLVED_CSIA}, Trainer course`,
     details: 'CSIA L3 hill 2026',
     locations: 'MSL, Ottawa Region',
   },
@@ -912,11 +913,11 @@ function normalizeHarness(llmAnswers?: (request: RosterLlmRequest) => unknown) {
 }
 
 const SKY_ANSWERS = (request: RosterLlmRequest) =>
-  request.unresolvedCertifications.includes(PARTIAL_CSIA)
+  request.unresolvedCertifications.includes(UNRESOLVED_CSIA)
     ? {
         certifications: [
           {
-            value: PARTIAL_CSIA,
+            value: UNRESOLVED_CSIA,
             certification: {
               org: 'csia',
               track: 'regular',
@@ -1001,7 +1002,7 @@ describe('runRosterCli normalisation review', () => {
       ],
     });
     expect(report.rows[1].unmappedCertifications).toEqual([
-      PARTIAL_CSIA,
+      UNRESOLVED_CSIA,
       'Trainer course',
     ]);
     expect(report.rows[2].review).toBeUndefined();
@@ -1046,10 +1047,10 @@ describe('runRosterCli normalisation review', () => {
       ],
       [
         {
-          certifications: `${PARTIAL_CSIA}, Trainer course`,
+          certifications: `${UNRESOLVED_CSIA}, Trainer course`,
           certificationDetails: 'CSIA L3 hill 2026',
           locations: 'MSL, Ottawa Region',
-          unresolvedCertifications: [PARTIAL_CSIA, 'Trainer course'],
+          unresolvedCertifications: [UNRESOLVED_CSIA, 'Trainer course'],
           unresolvedLocations: ['Ottawa Region'],
         },
       ],
@@ -1158,12 +1159,12 @@ describe('runRosterCli normalisation review', () => {
       '--normalize-with-llm',
     ])) as ImportReport;
     expect(report.rows[1].unmappedCertifications).toEqual([
-      PARTIAL_CSIA,
+      UNRESOLVED_CSIA,
       'Trainer course',
     ]);
     expect(report.rows[1].review?.unresolved[0]).toEqual({
       kind: 'certification',
-      value: PARTIAL_CSIA,
+      value: UNRESOLVED_CSIA,
       note: 'LLM: request failed',
     });
     expect(h.logs).toContain('  line 3: LLM request failed: Gemini HTTP 503');
@@ -1220,6 +1221,27 @@ describe('runRosterCli normalisation review', () => {
     expect(h.logs).toContain(
       'LLM-derived values written by this run: 0 certification(s), 0 trainer status(es), 0 location(s). Unresolved values were not written.',
     );
+  });
+
+  it('--apply writes a partial that names no component as a partial without components', async () => {
+    const h = normalizeHarness();
+    (h.deps.readFile as jest.Mock).mockResolvedValue(
+      rosterCsv([{ email: 'una@example.test', certs: PARTIAL_CSIA }]),
+    );
+    const report = (await runRosterCli(h.deps, [
+      '--apply',
+      '--csv',
+      'roster.csv',
+    ])) as ImportReport;
+    expect(report.rows[0].unmappedCertifications).toEqual([]);
+    expect(h.writer.setProfileRelations.mock.calls).toEqual([
+      [
+        'ins-for-auth-new-1',
+        [{ ...full('csia', 'regular', 3), isPartial: true }],
+        [],
+        [],
+      ],
+    ]);
   });
 
   it('--apply with the flag writes the validated LLM results of the same run and counts them', async () => {
@@ -1456,7 +1478,7 @@ describe('runRosterCli trainer development', () => {
     expect(report.rows[1]).toMatchObject({
       trainerStatus: 1,
       llmTrainerStatus: 1,
-      unmappedCertifications: [PARTIAL_CSIA],
+      unmappedCertifications: [UNRESOLVED_CSIA],
     });
     expect(report.rows[1].review).toMatchObject({
       trainerStatus: [

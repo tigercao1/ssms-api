@@ -33,6 +33,13 @@ function cert(
   };
 }
 
+function componentlessPartial(
+  org: 'csia' | 'casi',
+  level: number,
+): ProposedCertification {
+  return { ...cert(org, 'regular', level), isPartial: true };
+}
+
 describe('normalizeCertifications: canonical values', () => {
   it.each([
     ['CSIA L1', cert('csia', 'regular', 1)],
@@ -181,7 +188,10 @@ describe('normalizeCertifications: partials from the same row', () => {
         PARTIAL_FORM_CSIA,
         'Ski club 2024, CSIA L2 ski school, CASI L3 riding',
       ),
-    ).toMatchObject({ certifications: [], unresolved: [PARTIAL_FORM_CSIA] });
+    ).toMatchObject({
+      certifications: [componentlessPartial('csia', 3)],
+      unresolved: [],
+    });
   });
 
   it('ignores "when and where" text when the row has no partial', () => {
@@ -199,15 +209,19 @@ describe('normalizeCertifications: partials from the same row', () => {
     });
   });
 
-  it('a partial with no identifiable component stays unresolved', () => {
+  it('a partial with no identifiable component is a partial without components', () => {
     expect(
       normalizeCertifications(
         `CSIA L1, ${PARTIAL_FORM_CASI}, CASI Park 1`,
         'CSIA lv1 hill!  Casi l3 partial BM',
       ),
     ).toEqual({
-      certifications: [cert('csia', 'regular', 1), cert('casi', 'park', 1)],
-      unresolved: [PARTIAL_FORM_CASI],
+      certifications: [
+        cert('csia', 'regular', 1),
+        cert('casi', 'park', 1),
+        componentlessPartial('casi', 3),
+      ],
+      unresolved: [],
       trainerStatus: [],
       normalized: true,
     });
@@ -215,14 +229,14 @@ describe('normalizeCertifications: partials from the same row', () => {
 
   it('rejects components outside the org vocabulary', () => {
     expect(normalizeCertifications(`${PARTIAL_FORM_CASI}, Ski`)).toMatchObject({
-      certifications: [],
-      unresolved: [PARTIAL_FORM_CASI, 'Ski'],
+      certifications: [componentlessPartial('casi', 3)],
+      unresolved: ['Ski'],
     });
     expect(
       normalizeCertifications(`${PARTIAL_FORM_CSIA}, riding`),
     ).toMatchObject({
-      certifications: [],
-      unresolved: [PARTIAL_FORM_CSIA, 'riding'],
+      certifications: [componentlessPartial('csia', 3)],
+      unresolved: ['riding'],
     });
   });
 
@@ -239,8 +253,11 @@ describe('normalizeCertifications: partials from the same row', () => {
         `${PARTIAL_FORM_CSIA}, ${PARTIAL_FORM_CASI}, Teaching`,
       ),
     ).toEqual({
-      certifications: [],
-      unresolved: [PARTIAL_FORM_CSIA, PARTIAL_FORM_CASI, 'Teaching'],
+      certifications: [
+        componentlessPartial('csia', 3),
+        componentlessPartial('casi', 3),
+      ],
+      unresolved: ['Teaching'],
       trainerStatus: [],
       normalized: true,
     });
@@ -277,7 +294,10 @@ describe('normalizeCertifications: partials from the same row', () => {
   it('a fragment with a component and a park or carving word is unresolved', () => {
     expect(
       normalizeCertifications(`${PARTIAL_FORM_CASI}, Park riding`),
-    ).toMatchObject({ unresolved: [PARTIAL_FORM_CASI, 'Park riding'] });
+    ).toMatchObject({
+      certifications: [componentlessPartial('casi', 3)],
+      unresolved: ['Park riding'],
+    });
   });
 });
 
@@ -487,11 +507,11 @@ describe('normalizeCertifications: trainer development', () => {
     },
   );
 
-  it('takes the org from an unresolved value in the same cell', () => {
+  it('takes the org from another value in the same cell', () => {
     expect(normalizeCertifications(`${PARTIAL_FORM_CASI}, Td`)).toEqual({
-      certifications: [],
+      certifications: [componentlessPartial('casi', 3)],
       trainerStatus: [trainer('snowboard')],
-      unresolved: [PARTIAL_FORM_CASI],
+      unresolved: [],
       normalized: true,
     });
   });
@@ -577,6 +597,7 @@ describe('validateCertification', () => {
     strip(cert('casi', 'regular', 4, ['riding', 'teaching'])),
     strip(cert('casi', 'park', 2)),
     strip(cert('casi', 'carving', 1)),
+    strip(componentlessPartial('csia', 3)),
   ])('accepts %j', (value) => {
     expect(validateCertification(value)).toEqual(value);
   });
@@ -616,7 +637,6 @@ describe('validateCertification', () => {
       },
     ],
     ['carving level 2', strip(cert('casi', 'carving', 2))],
-    ['partial without components', { ...ok, partialComponents: [] }],
     ['full with components', { ...ok, isPartial: false }],
     [
       'component outside csia vocabulary',
@@ -645,6 +665,7 @@ describe('describeCertification', () => {
       cert('casi', 'regular', 3, ['riding', 'teaching']),
       'CASI Level 3 Partial [riding, teaching]',
     ],
+    [componentlessPartial('csia', 3), 'CSIA Level 3 Partial'],
     [cert('csia', 'park', 1), 'CSIA Park Level 1'],
     [cert('casi', 'carving', 1), 'CASI Carving Level 1'],
   ])('%j → %s', (value, label) => {

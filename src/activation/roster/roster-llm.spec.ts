@@ -12,13 +12,10 @@ import {
 } from './roster-llm';
 
 const REQUEST: RosterLlmRequest = {
-  certifications: 'CASI L3 Partial (Please specify in "Other"), Td',
+  certifications: 'CASI L3 riding done, Td',
   certificationDetails: '2025 hill',
   locations: 'MSL, Ottawa Region',
-  unresolvedCertifications: [
-    'CASI L3 Partial (Please specify in "Other")',
-    'Td',
-  ],
+  unresolvedCertifications: ['CASI L3 riding done', 'Td'],
   unresolvedLocations: ['Ottawa Region'],
 };
 
@@ -66,11 +63,20 @@ describe('validateLlmResult', () => {
     });
   });
 
+  it('accepts a partial without components', () => {
+    const componentless = { ...PARTIAL, partialComponents: [] };
+    expect(
+      validateLlmResult(
+        { certifications: [item('Td', componentless)], locations: [] },
+        REQUEST,
+      ).certifications,
+    ).toEqual([{ value: 'Td', certification: componentless }]);
+  });
+
   it.each([
     ['partial park', { ...PARTIAL, track: 'park', level: 1 }],
     ['level 5', { ...PARTIAL, level: 5 }],
     ['csia component on casi', { ...PARTIAL, partialComponents: ['ski'] }],
-    ['partial without components', { ...PARTIAL, partialComponents: [] }],
     [
       'carving for csia',
       {
@@ -266,6 +272,12 @@ describe('buildNormalizationInstruction', () => {
     expect(text).toContain('"teaching_location.moonstone"');
     expect(text).toContain('"teaching_location.glen_eden"');
   });
+
+  it('allows a partial without components', () => {
+    expect(buildNormalizationInstruction()).toContain(
+      'it is [] when the answer names none',
+    );
+  });
 });
 
 type Init = { method: string; headers: Record<string, string>; body: string };
@@ -313,7 +325,7 @@ describe('GeminiRosterNormalizer', () => {
           legal: 'Quinn Zebulon Testperson',
           email: 'quinn.private@example.test',
           dob: '4/5/1991',
-          certs: 'CSIA L3 Partial (Please specify in "Other"), Td',
+          certs: 'CSIA L3 ski done, Td',
           details: 'CSIA L3 2025',
           locations: 'MSL, Ottawa Region',
         },
@@ -359,10 +371,10 @@ describe('GeminiRosterNormalizer', () => {
     expect(body.contents).toHaveLength(1);
     expect(body.contents[0].parts).toHaveLength(1);
     expect(JSON.parse(body.contents[0].parts[0].text)).toEqual({
-      certifications: 'CSIA L3 Partial (Please specify in "Other"), Td',
+      certifications: 'CSIA L3 ski done, Td',
       certificationDetails: 'CSIA L3 2025',
       locations: 'MSL, Ottawa Region',
-      unresolvedCertifications: ['CSIA L3 Partial (Please specify in "Other")'],
+      unresolvedCertifications: ['CSIA L3 ski done'],
       unresolvedLocations: ['Ottawa Region'],
     });
     for (const secret of [

@@ -83,6 +83,8 @@ class InMemoryInstructors extends InstructorsRepository {
   }
   applyProfilePatch(_id: string, patch: InstructorProfilePatch) {
     this.patches.push(patch);
+    if (patch.first_name !== undefined) this.row.first_name = patch.first_name;
+    if (patch.last_name !== undefined) this.row.last_name = patch.last_name;
     if (patch.bio_zh !== undefined) {
       this.row.bio_zh = patch.bio_zh;
       this.row.bio_zh_machine_translated =
@@ -320,6 +322,49 @@ describe('bio draft routes (HTTP)', () => {
     ['a non-boolean flag', { bioZh: '你好', bioZhMachineTranslated: 'yes' }],
     ['a client translated_by', { bioZh: '你好', bioZhTranslatedBy: 'x' }],
   ])('PATCH rejects %s with 400', async (_label, body) => {
+    await ctx.http().patch('/me/instructor').send(body).expect(400);
+    expect(ctx.repo.patches).toEqual([]);
+  });
+});
+
+describe('PATCH /me/instructor legal name (HTTP)', () => {
+  let ctx: Awaited<ReturnType<typeof build>>;
+
+  beforeEach(async () => {
+    ctx = await build({ modelId: null, translate: jest.fn() });
+  });
+  afterEach(async () => {
+    await ctx.app.close();
+  });
+
+  it('stores the trimmed names and returns them with the legal name', async () => {
+    const res = await ctx
+      .http()
+      .patch('/me/instructor')
+      .send({ firstName: ' Edward ', lastName: 'Lee ' })
+      .expect(200);
+    expect(ctx.repo.patches).toEqual([
+      { first_name: 'Edward', last_name: 'Lee' },
+    ]);
+    expect(res.body).toMatchObject({
+      firstName: 'Edward',
+      lastName: 'Lee',
+      legalName: 'Edward Lee',
+      displayNameEn: 'Eddie',
+    });
+    const again = await ctx.http().get('/me/instructor').expect(200);
+    expect(again.body).toMatchObject({
+      firstName: 'Edward',
+      lastName: 'Lee',
+      legalName: 'Edward Lee',
+    });
+  });
+
+  it.each([
+    ['a blank first name', { firstName: '  ' }],
+    ['a null last name', { lastName: null }],
+    ['a last name over 100 characters', { lastName: 'x'.repeat(101) }],
+  ])('rejects %s with 400', async (_label, body) => {
     await ctx.http().patch('/me/instructor').send(body).expect(400);
     expect(ctx.repo.patches).toEqual([]);
   });

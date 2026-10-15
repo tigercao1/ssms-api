@@ -197,6 +197,8 @@ export interface DocumentInstructorRow {
   id: string;
   auth_user_id: string;
   email: string;
+  first_name: string | null;
+  last_name: string | null;
   display_name_en: string;
   approval_status: string;
   is_active: boolean;

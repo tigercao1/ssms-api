@@ -387,6 +387,20 @@ describe('documents signing HTTP', () => {
       await complete(ctx.readAssignment.id, { acknowledged: true }).expect(409);
     });
 
+    it('records the legal name as the signer when both names are set', async () => {
+      ctx.instructor.first_name = 'Alice';
+      ctx.instructor.last_name = 'Wang-Li';
+      const res = await complete(ctx.readAssignment.id, {
+        acknowledged: true,
+      }).expect(200);
+      expect(res.body).toMatchObject({
+        assignment: { signerName: 'Alice Wang-Li' },
+      });
+      expect(ctx.assignments.rows.get(ctx.readAssignment.id)).toMatchObject({
+        signer_name: 'Alice Wang-Li',
+      });
+    });
+
     it('rejects unknown body keys', async () => {
       await complete(ctx.readAssignment.id, {
         acknowledged: true,

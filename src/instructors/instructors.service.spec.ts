@@ -135,6 +135,8 @@ class FakeRepo extends InstructorsRepository {
       }
       if (patch.display_name_en !== undefined)
         row.display_name_en = patch.display_name_en;
+      if (patch.first_name !== undefined) row.first_name = patch.first_name;
+      if (patch.last_name !== undefined) row.last_name = patch.last_name;
       if (patch.min_student_age !== undefined)
         row.min_student_age = patch.min_student_age;
     }
@@ -220,6 +222,7 @@ describe('InstructorsService', () => {
       });
       expect(profile.firstName).toBe('Jane');
       expect(profile.lastName).toBe('Doe');
+      expect(profile.legalName).toBe('Jane Doe');
       expect(profile.displayNameEn).toBe('JJ');
       expect(profile.displayNameZh).toBeNull();
       expect(repo.rows[0]).toMatchObject({
@@ -243,6 +246,7 @@ describe('InstructorsService', () => {
       });
       expect(profile.firstName).toBeNull();
       expect(profile.lastName).toBeNull();
+      expect(profile.legalName).toBe('');
       expect(profile.displayNameEn).toBe('');
     });
 
@@ -558,6 +562,27 @@ describe('InstructorsService', () => {
           displayNameEn: 'x',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('trims the legal name into the patch and returns it on the profile', async () => {
+      const result = await service.updateOwnProfile('auth-1', {
+        firstName: '  Jane ',
+        lastName: ' Doe  ',
+      });
+      expect(repo.lastPatch).toEqual({ first_name: 'Jane', last_name: 'Doe' });
+      expect(result).toMatchObject({
+        firstName: 'Jane',
+        lastName: 'Doe',
+        legalName: 'Jane Doe',
+      });
+    });
+
+    it('updates the legal name by id (admin path)', async () => {
+      const result = await service.updateProfileById('inst-1', {
+        lastName: ' Smith ',
+      });
+      expect(repo.lastPatch).toEqual({ last_name: 'Smith' });
+      expect(result.lastName).toBe('Smith');
     });
 
     it('is reusable by id (admin path) — updateProfileById', async () => {

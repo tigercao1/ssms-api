@@ -67,6 +67,7 @@ export interface InstructorProfile {
   email: string;
   firstName: string | null;
   lastName: string | null;
+  legalName: string;
   displayNameEn: string;
   displayNameZh: string | null;
   bioEn: string | null;
@@ -114,6 +115,8 @@ export interface InstructorProfile {
  */
 export interface InstructorProfilePatch {
   display_name_en?: string;
+  first_name?: string;
+  last_name?: string;
   display_name_zh?: string | null;
   bio_en?: string | null;
   bio_zh?: string | null;

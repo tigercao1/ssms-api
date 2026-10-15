@@ -521,6 +521,8 @@ export class InMemoryDocumentSubjectsRepository extends DocumentSubjectsReposito
       id: randomUUID(),
       auth_user_id: randomUUID(),
       email: 'eddie@example.com',
+      first_name: null,
+      last_name: null,
       display_name_en: 'Eddie',
       approval_status: 'approved',
       is_active: true,

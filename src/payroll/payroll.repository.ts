@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type { ClassStatus } from '../lessons/lessons.types';
+import type { RateUnit } from '../lessons/pay-rates';
 import {
   PAY_RATE_COLUMNS,
   PAY_RATES_TABLE,
@@ -19,7 +20,7 @@ export const PAYROLL_SETTINGS_COLUMNS = 'anchor_date, period_days, updated_at';
 export const PAYROLL_PERIOD_COLUMNS =
   'id, starts_on, ends_on, status, finalized_at, finalized_by';
 export const PAYROLL_LINE_COLUMNS = [
-  'id, period_id, instructor_id, class_id, kind, description, lesson_type_id, class_status, starts_at, ends_at, customer_names, minutes, hourly_rate, currency, amount, flags, created_at',
+  'id, period_id, instructor_id, class_id, kind, description, lesson_type_id, class_status, starts_at, ends_at, customer_names, minutes, hourly_rate, rate_unit, currency, amount, flags, created_at',
   'instructor:instructors(display_name_en, display_name_zh, email)',
   'lesson_type:lesson_types(name_zh)',
 ].join(', ');
@@ -67,6 +68,7 @@ export interface PayrollLineRow {
   customer_names: string[];
   minutes: number | null;
   hourly_rate: number | string | null;
+  rate_unit: RateUnit;
   currency: string;
   amount: number | string;
   flags: string[];
@@ -115,6 +117,7 @@ export interface SnapshotLine {
   customer_names: string[];
   minutes: number;
   hourly_rate: number | null;
+  rate_unit: RateUnit;
   currency: string;
   amount: number;
   flags: string[];

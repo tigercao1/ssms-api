@@ -1,3 +1,4 @@
+import { ALREADY_PAID } from './payroll-lines';
 import type { PayrollPeriodDetail } from './payroll.service';
 
 export const CSV_BOM = '\uFEFF';
@@ -8,6 +9,7 @@ export const PAYROLL_SHEET_COLUMNS = [
   'Email',
   'Lessons',
   'Hours',
+  'Rate unit',
   'Amount',
   'Currency',
 ];
@@ -22,6 +24,7 @@ export const PAYROLL_DETAIL_COLUMNS = [
   'Status',
   'Minutes',
   'Rate',
+  'Rate unit',
   'Amount',
   'Currency',
   'Flags',
@@ -55,6 +58,25 @@ const raw = (value: string) => ({ raw: value });
 const money = (value: number) => raw(value.toFixed(2));
 const hours = (minutes: number) => raw((minutes / 60).toFixed(2));
 
+function rateUnits(
+  detail: PayrollPeriodDetail,
+  instructorId: string,
+  currency: string,
+): string {
+  const units = new Set(
+    detail.lines
+      .filter(
+        (line) =>
+          line.instructorId === instructorId &&
+          line.currency === currency &&
+          line.hourlyRate !== null &&
+          !line.flags.includes(ALREADY_PAID),
+      )
+      .map((line) => line.rateUnit),
+  );
+  return [...units].sort().join('; ');
+}
+
 export function payrollSheetCsv(detail: PayrollPeriodDetail): string {
   return toCsv(
     PAYROLL_SHEET_COLUMNS,
@@ -64,6 +86,7 @@ export function payrollSheetCsv(detail: PayrollPeriodDetail): string {
       total.email,
       raw(String(total.lessons)),
       hours(total.minutes),
+      rateUnits(detail, total.instructorId, total.currency),
       money(total.total),
       total.currency,
     ]),
@@ -81,6 +104,7 @@ export function payrollDetailCsv(detail: PayrollPeriodDetail): string {
     line.classStatus,
     raw(String(line.minutes)),
     line.hourlyRate === null ? '' : money(line.hourlyRate),
+    line.hourlyRate === null ? '' : line.rateUnit,
     money(line.amount),
     line.currency,
     line.flags.join('; '),
@@ -92,6 +116,7 @@ export function payrollDetailCsv(detail: PayrollPeriodDetail): string {
       '',
       'adjustment',
       adjustment.description,
+      '',
       '',
       '',
       '',

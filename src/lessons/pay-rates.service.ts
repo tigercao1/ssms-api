@@ -13,7 +13,7 @@ import {
   PG_FOREIGN_KEY_VIOLATION,
 } from '../database/db-result';
 import type { CreatePayRateDto, UpdatePayRateDto } from './dto/pay-rate.dto';
-import { resolveRate } from './pay-rates';
+import { type RateUnit, resolveRate } from './pay-rates';
 import {
   type PayRateFilter,
   type PayRatePatch,
@@ -35,6 +35,7 @@ export interface PayRate {
   lessonTypeId: string;
   instructorId: string | null;
   hourlyRate: number;
+  rateUnit: RateUnit;
   currency: string;
   effectiveFrom: string;
   effectiveTo: string | null;
@@ -53,6 +54,7 @@ export function toPayRate(row: PayRateRow): PayRate {
     lessonTypeId: row.lesson_type_id,
     instructorId: row.instructor_id,
     hourlyRate: Number(row.hourly_rate),
+    rateUnit: row.rate_unit,
     currency: row.currency,
     effectiveFrom: row.effective_from,
     effectiveTo: row.effective_to,
@@ -122,6 +124,7 @@ export class PayRatesService {
         lesson_type_id: dto.lessonTypeId,
         instructor_id: dto.instructorId ?? null,
         hourly_rate: dto.hourlyRate,
+        ...(dto.rateUnit ? { rate_unit: dto.rateUnit } : {}),
         ...(dto.currency ? { currency: dto.currency } : {}),
         effective_from: dto.effectiveFrom,
         effective_to: effectiveTo,
@@ -148,6 +151,7 @@ export class PayRatesService {
   ): Promise<PayRate> {
     const patch: PayRatePatch = {};
     if (dto.hourlyRate !== undefined) patch.hourly_rate = dto.hourlyRate;
+    if (dto.rateUnit !== undefined) patch.rate_unit = dto.rateUnit;
     if (dto.currency !== undefined) patch.currency = dto.currency;
     if (dto.effectiveFrom !== undefined)
       patch.effective_from = dto.effectiveFrom;

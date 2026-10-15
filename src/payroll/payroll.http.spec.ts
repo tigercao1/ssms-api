@@ -278,6 +278,44 @@ describe('payroll admin HTTP', () => {
       );
     });
 
+    it('pays a daily rate once per lesson whatever its length', async () => {
+      ctx.repo.addRate({
+        lessonTypeId: GROUP_60,
+        hourlyRate: 400,
+        rateUnit: 'day',
+        from: '2025-01-01',
+      });
+      for (const [day, minutes] of [
+        ['02', 30],
+        ['03', 90],
+        ['04', 480],
+      ] as const) {
+        ctx.repo.addClass({
+          startsAt: `2026-01-${day}T15:00:00Z`,
+          lessonTypeId: GROUP_60,
+          minutes,
+        });
+      }
+      const detail = await detailFor('2026-01-07');
+      expect(
+        detail.lines.map((l) => [
+          l.minutes,
+          l.hourlyRate,
+          l.rateUnit,
+          l.amount,
+        ]),
+      ).toEqual([
+        [30, 400, 'day', 400],
+        [90, 400, 'day', 400],
+        [480, 400, 'day', 400],
+      ]);
+      expect(detail.instructors[0]).toMatchObject({
+        lessons: 3,
+        minutes: 600,
+        total: 1200,
+      });
+    });
+
     it('prices a 90-minute lesson as rate × 1.5 rounded to cents', async () => {
       ctx.repo.addClass({
         startsAt: '2026-01-02T15:00:00Z',
@@ -290,6 +328,7 @@ describe('payroll admin HTTP', () => {
       expect(line).toMatchObject({
         minutes: 90,
         hourlyRate: 37.33,
+        rateUnit: 'hour',
         amount: 56,
         currency: 'CAD',
         flags: [],
@@ -568,6 +607,48 @@ describe('payroll admin HTTP', () => {
       ]);
     });
 
+    it('stores the rate unit with each line and keeps it after the rate changes', async () => {
+      ctx.repo.addRate({
+        lessonTypeId: GROUP_60,
+        hourlyRate: 400,
+        rateUnit: 'day',
+        from: '2025-01-01',
+      });
+      ctx.repo.addClass({
+        startsAt: '2026-01-03T15:00:00Z',
+        lessonTypeId: GROUP_60,
+        minutes: 300,
+      });
+      const frozen = (
+        await post(`/admin/payroll/periods/${period.id}/finalize`).expect(200)
+      ).body as PayrollPeriodDetail;
+      expect(
+        frozen.lines.map((l) => [
+          l.hourlyRate,
+          l.rateUnit,
+          l.minutes,
+          l.amount,
+        ]),
+      ).toEqual([
+        [40, 'hour', 90, 60],
+        [400, 'day', 300, 400],
+      ]);
+      expect(
+        ctx.repo.lineRows
+          .filter((l) => l.kind === 'class')
+          .map((l) => [l.rate_unit, l.amount]),
+      ).toEqual([
+        ['hour', '60.00'],
+        ['day', '400.00'],
+      ]);
+      ctx.repo.rates[1].rate_unit = 'hour';
+      const after = (
+        await get(`/admin/payroll/periods/${period.id}`).expect(200)
+      ).body as PayrollPeriodDetail;
+      expect(after.lines[1]).toMatchObject({ rateUnit: 'day', amount: 400 });
+      expect(after.instructors[0]).toMatchObject({ total: 460 });
+    });
+
     it('does not pay a class again after it moves out of a finalized period', async () => {
       await post(`/admin/payroll/periods/${period.id}/finalize`).expect(200);
       ctx.repo.classes[0].starts_at = '2026-01-13T15:00:00.000Z';
@@ -676,9 +757,9 @@ describe('payroll admin HTTP', () => {
       );
       expect(res.text.startsWith('\uFEFF')).toBe(true);
       expect(res.text.slice(1).split('\r\n')).toEqual([
-        'Instructor,Instructor (中文),Email,Lessons,Hours,Amount,Currency',
-        'Ada Lin,林艾达,ada@example.com,1,1.50,47.50,CAD',
-        'Bo Chen,,bo@example.com,1,1.50,0.00,CAD',
+        'Instructor,Instructor (中文),Email,Lessons,Hours,Rate unit,Amount,Currency',
+        'Ada Lin,林艾达,ada@example.com,1,1.50,hour,47.50,CAD',
+        'Bo Chen,,bo@example.com,1,1.50,,0.00,CAD',
         '',
       ]);
     });
@@ -691,15 +772,53 @@ describe('payroll admin HTTP', () => {
         'payroll-detail-2025-12-29-to-2026-01-11.csv',
       );
       expect(res.text.slice(1).split('\r\n')).toEqual([
-        'Instructor,Date,Time,Type,Lesson type / description,Customers,Status,Minutes,Rate,Amount,Currency,Flags',
-        `Ada Lin,2026-01-02,10:00,lesson,Private 90,"'=Kai Wong, Jr",completed,90,40.00,60.00,CAD,`,
-        'Bo Chen,2026-01-03,10:00,lesson,,,completed,90,,0.00,CAD,needs_rate',
-        'Ada Lin,,,adjustment,Advance,,,,,-12.50,CAD,',
+        'Instructor,Date,Time,Type,Lesson type / description,Customers,Status,Minutes,Rate,Rate unit,Amount,Currency,Flags',
+        `Ada Lin,2026-01-02,10:00,lesson,Private 90,"'=Kai Wong, Jr",completed,90,40.00,hour,60.00,CAD,`,
+        'Bo Chen,2026-01-03,10:00,lesson,,,completed,90,,,0.00,CAD,needs_rate',
+        'Ada Lin,,,adjustment,Advance,,,,,,-12.50,CAD,',
         '',
       ]);
       await get(
         `/admin/payroll/periods/${period.id}/export.csv?detail=yes`,
       ).expect(400);
+    });
+
+    it('labels daily and mixed rate units in both sheets', async () => {
+      ctx.repo.addRate({
+        lessonTypeId: GROUP_60,
+        hourlyRate: 400,
+        rateUnit: 'day',
+        from: '2025-01-01',
+      });
+      ctx.repo.addClass({
+        startsAt: '2026-01-05T15:00:00Z',
+        lessonTypeId: GROUP_60,
+        minutes: 240,
+      });
+      ctx.repo.addClass({
+        instructorId: BO_ID,
+        startsAt: '2026-01-06T15:00:00Z',
+        lessonTypeId: GROUP_60,
+        minutes: 60,
+      });
+      const sheet = await get(
+        `/admin/payroll/periods/${period.id}/export.csv`,
+      ).expect(200);
+      expect(sheet.text.slice(1).split('\r\n')).toEqual([
+        'Instructor,Instructor (中文),Email,Lessons,Hours,Rate unit,Amount,Currency',
+        'Ada Lin,林艾达,ada@example.com,2,5.50,day; hour,447.50,CAD',
+        'Bo Chen,,bo@example.com,2,2.50,day,400.00,CAD',
+        '',
+      ]);
+      const detail = await get(
+        `/admin/payroll/periods/${period.id}/export.csv?detail=1`,
+      ).expect(200);
+      expect(detail.text.slice(1).split('\r\n')).toEqual(
+        expect.arrayContaining([
+          'Ada Lin,2026-01-05,10:00,lesson,Group 60,,completed,240,400.00,day,400.00,CAD,',
+          'Bo Chen,2026-01-06,10:00,lesson,Group 60,,completed,60,400.00,day,400.00,CAD,',
+        ]),
+      );
     });
   });
 });

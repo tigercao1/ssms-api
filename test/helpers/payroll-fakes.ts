@@ -3,6 +3,7 @@ import {
   PG_FOREIGN_KEY_VIOLATION,
 } from '../../src/database/db-result';
 import type { ClassStatus } from '../../src/lessons/lessons.types';
+import type { RateUnit } from '../../src/lessons/pay-rates';
 import type { PayRateRow } from '../../src/lessons/pay-rates.repository';
 import { daysBetween } from '../../src/payroll/payroll-time';
 import {
@@ -103,6 +104,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     lessonTypeId?: string;
     instructorId?: string | null;
     hourlyRate: number | string;
+    rateUnit?: RateUnit;
     from: string;
     to?: string | null;
     currency?: string;
@@ -112,6 +114,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       lesson_type_id: input.lessonTypeId ?? PRIVATE_90,
       instructor_id: input.instructorId ?? null,
       hourly_rate: input.hourlyRate,
+      rate_unit: input.rateUnit ?? 'hour',
       currency: input.currency ?? 'CAD',
       effective_from: input.from,
       effective_to: input.to ?? null,
@@ -244,6 +247,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       customer_names: [],
       minutes: null,
       hourly_rate: null,
+      rate_unit: 'hour',
       currency: input.currency,
       amount: input.amount.toFixed(2),
       flags: [],

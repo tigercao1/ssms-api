@@ -2,16 +2,18 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import type { RateUnit } from './pay-rates';
 
 export const PAY_RATES_TABLE = 'pay_rates';
 export const PAY_RATE_COLUMNS =
-  'id, lesson_type_id, instructor_id, hourly_rate, currency, effective_from, effective_to, created_at, updated_at';
+  'id, lesson_type_id, instructor_id, hourly_rate, rate_unit, currency, effective_from, effective_to, created_at, updated_at';
 
 export interface PayRateRow {
   id: string;
   lesson_type_id: string;
   instructor_id: string | null;
   hourly_rate: number | string;
+  rate_unit: RateUnit;
   currency: string;
   effective_from: string;
   effective_to: string | null;
@@ -29,6 +31,7 @@ export interface PayRateInsert {
   lesson_type_id: string;
   instructor_id: string | null;
   hourly_rate: number;
+  rate_unit?: RateUnit;
   currency?: string;
   effective_from: string;
   effective_to: string | null;
@@ -37,6 +40,7 @@ export interface PayRateInsert {
 
 export interface PayRatePatch {
   hourly_rate?: number;
+  rate_unit?: RateUnit;
   currency?: string;
   effective_from?: string;
   effective_to?: string | null;

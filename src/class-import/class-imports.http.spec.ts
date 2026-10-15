@@ -17,6 +17,7 @@ import {
 } from '../../test/helpers/class-import-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { DatabaseError } from '../database/db-result';
 import type {
   ClassImportDetail,
@@ -427,6 +428,137 @@ describe('class imports admin HTTP', () => {
         .set('Authorization', admin)
         .send({ instructorId: BEN_ID })
         .expect(404);
+    });
+  });
+
+  describe('paging rows', () => {
+    const LARGE = importCsv(
+      Array.from({ length: 60 }, (_, i) => ({
+        id: String(9100001 + i),
+        instructor: (i + 1) % 4 === 0 ? 'Nobody Known' : 'Anna Example',
+        event: (i + 1) % 10 === 0 ? 'Group Lesson 2h' : 'Private Lesson 2h',
+      })),
+    );
+    const range = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => from + i);
+    const lostInstructor = (n: number) => n % 4 === 0;
+
+    let draftId: string;
+    beforeEach(async () => {
+      draftId = (await uploaded(LARGE)).import.id;
+    });
+
+    const get = (query: Record<string, string | number> = {}) =>
+      http()
+        .get(`/admin/class-imports/${draftId}`)
+        .query(query)
+        .set('Authorization', admin);
+    const detail = (res: request.Response) => res.body as ClassImportDetail;
+    const rowNos = (res: request.Response) =>
+      detail(res).rows.map((r) => r.rowNo);
+    const total = (res: request.Response) =>
+      res.headers[TOTAL_COUNT_HEADER.toLowerCase()];
+
+    it('returns every row with the total when no page or limit is given', async () => {
+      const res = await get().expect(200);
+      expect(rowNos(res)).toEqual(range(1, 60));
+      expect(total(res)).toBe('60');
+    });
+
+    it('returns every filtered row with the filtered total when unpaged', async () => {
+      const res = await get({ problem: 'instructor_not_found' }).expect(200);
+      expect(rowNos(res)).toEqual(range(1, 60).filter(lostInstructor));
+      expect(total(res)).toBe('15');
+    });
+
+    it('defaults to 50 per page when only page is given', async () => {
+      const first = await get({ page: 1 }).expect(200);
+      expect(rowNos(first)).toEqual(range(1, 50));
+      expect(total(first)).toBe('60');
+      const second = await get({ page: 2 }).expect(200);
+      expect(rowNos(second)).toEqual(range(51, 60));
+      expect(total(second)).toBe('60');
+    });
+
+    it('defaults to the first page when only limit is given', async () => {
+      const res = await get({ limit: 5 }).expect(200);
+      expect(rowNos(res)).toEqual(range(1, 5));
+      expect(total(res)).toBe('60');
+    });
+
+    it('returns the requested slice for page and limit', async () => {
+      const res = await get({ page: 3, limit: 25 }).expect(200);
+      expect(rowNos(res)).toEqual(range(51, 60));
+      expect(total(res)).toBe('60');
+    });
+
+    it('filters by problem before paging, with the filtered total', async () => {
+      const res = await get({
+        problem: 'instructor_not_found',
+        page: 2,
+        limit: 4,
+      }).expect(200);
+      expect(rowNos(res)).toEqual([20, 24, 28, 32]);
+      expect(total(res)).toBe('15');
+    });
+
+    it('keeps the summary and event names over every row of the import', async () => {
+      const unpaged = detail(await get().expect(200));
+      const paged = detail(
+        await get({
+          problem: 'instructor_not_found',
+          page: 2,
+          limit: 3,
+        }).expect(200),
+      );
+      expect(paged.import).toEqual(unpaged.import);
+      expect(paged.summary).toEqual(unpaged.summary);
+      expect(paged.summary).toMatchObject({ total: 60, needsInstructor: 15 });
+      expect(paged.eventNames).toEqual([
+        { eventName: 'Group Lesson 2h', rows: 6, lessonTypeId: null },
+        { eventName: 'Private Lesson 2h', rows: 54, lessonTypeId: null },
+      ]);
+    });
+
+    it('answers a page past the end with no rows and the real total', async () => {
+      const res = await get({ page: 4, limit: 20 }).expect(200);
+      expect(detail(res).rows).toEqual([]);
+      expect(detail(res).summary.total).toBe(60);
+      expect(total(res)).toBe('60');
+    });
+
+    it('accepts the largest page and page size', async () => {
+      const res = await get({ page: 10000, limit: 100 }).expect(200);
+      expect(detail(res).rows).toEqual([]);
+      expect(total(res)).toBe('60');
+    });
+
+    it('leaves the row fix response unpaged', async () => {
+      const res = await http()
+        .patch(`/admin/class-imports/${draftId}/rows/2`)
+        .query({ page: 1, limit: 5 })
+        .set('Authorization', admin)
+        .send({ lessonTypeId: PRIVATE_2H_ID })
+        .expect(200);
+      expect(rowNos(res)).toEqual(range(1, 60));
+      expect(total(res)).toBeUndefined();
+    });
+
+    it.each([
+      'page=0',
+      'page=-1',
+      'page=10001',
+      'page=1.5',
+      'page=abc',
+      'limit=0',
+      'limit=101',
+      'limit=2.5',
+      'limit=abc',
+    ])('rejects %s with 400', async (query) => {
+      await http()
+        .get(`/admin/class-imports/${draftId}?${query}`)
+        .set('Authorization', admin)
+        .expect(400);
     });
   });
 

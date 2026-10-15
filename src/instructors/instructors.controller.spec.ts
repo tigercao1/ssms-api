@@ -43,17 +43,25 @@ describe('InstructorsController', () => {
 
   const user = { sub: 'auth-1', email: 'a@b.com' } as SupabaseJwtPayload;
 
-  it('GET /me/instructor → getOrCreateForUser(sub, email)', async () => {
-    await expect(controller.getMe(user)).resolves.toBe(fakeProfile);
+  it('GET /me/instructor → getOrCreateForUser(sub, email, user_metadata)', async () => {
+    const metadata = { first_name: 'Jane', last_name: 'Doe', nickname: 'JJ' };
+    await expect(
+      controller.getMe({ ...user, user_metadata: metadata }),
+    ).resolves.toBe(fakeProfile);
     expect(service.getOrCreateForUser).toHaveBeenCalledWith(
       'auth-1',
       'a@b.com',
+      metadata,
     );
   });
 
   it('GET passes empty string when token has no email claim', async () => {
     await controller.getMe({ sub: 'auth-2' });
-    expect(service.getOrCreateForUser).toHaveBeenCalledWith('auth-2', '');
+    expect(service.getOrCreateForUser).toHaveBeenCalledWith(
+      'auth-2',
+      '',
+      undefined,
+    );
   });
 
   it('PATCH /me/instructor → updateOwnProfile(sub, dto)', async () => {

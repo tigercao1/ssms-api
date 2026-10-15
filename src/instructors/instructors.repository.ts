@@ -13,6 +13,7 @@ import {
   ReferenceRow,
   TrainerStatusRow,
 } from './instructors.types';
+import { SignupNames } from './signup-names';
 
 /** Postgres unique-violation; surfaced when two first-calls race the insert. */
 export const PG_UNIQUE_VIOLATION = '23505';
@@ -38,6 +39,7 @@ export abstract class InstructorsRepository {
   abstract insertPending(
     authUserId: string,
     email: string,
+    names: SignupNames,
   ): Promise<InstructorRow | null>;
   abstract getTeachingLocations(instructorId: string): Promise<ReferenceRow[]>;
   abstract getLanguages(instructorId: string): Promise<ReferenceRow[]>;
@@ -60,7 +62,8 @@ export abstract class InstructorsRepository {
 }
 
 const INSTRUCTOR_COLUMNS =
-  'id, auth_user_id, email, display_name_en, display_name_zh, bio_en, bio_zh, ' +
+  'id, auth_user_id, email, first_name, last_name, ' +
+  'display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'bio_en_machine_translated, bio_zh_machine_translated, ' +
   'bio_en_translated_by, bio_zh_translated_by, ' +
   'bio_en_updated_at, bio_zh_updated_at, date_of_birth, ' +
@@ -107,10 +110,19 @@ export class SupabaseInstructorsRepository extends InstructorsRepository {
   async insertPending(
     authUserId: string,
     email: string,
+    names: SignupNames,
   ): Promise<InstructorRow | null> {
     const { data, error } = await this.supabase
       .from('instructors')
-      .insert({ auth_user_id: authUserId, email })
+      .insert({
+        auth_user_id: authUserId,
+        email,
+        first_name: names.firstName,
+        last_name: names.lastName,
+        ...(names.displayNameEn === null
+          ? {}
+          : { display_name_en: names.displayNameEn }),
+      })
       .select(INSTRUCTOR_COLUMNS)
       .single();
     if (error) {

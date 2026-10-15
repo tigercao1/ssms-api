@@ -43,7 +43,11 @@ export class InstructorsController {
    */
   @Get()
   getMe(@CurrentUser() user: SupabaseJwtPayload): Promise<InstructorProfile> {
-    return this.instructors.getOrCreateForUser(user.sub, user.email ?? '');
+    return this.instructors.getOrCreateForUser(
+      user.sub,
+      user.email ?? '',
+      user.user_metadata,
+    );
   }
 
   /**

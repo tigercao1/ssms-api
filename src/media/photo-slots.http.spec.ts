@@ -57,6 +57,8 @@ class InMemoryInstructors extends InstructorsRepository {
     id: INSTRUCTOR_ID,
     auth_user_id: 'auth-1',
     email: 'eddie@example.test',
+    first_name: null,
+    last_name: null,
     display_name_en: 'Eddie',
     display_name_zh: null,
     bio_en: null,

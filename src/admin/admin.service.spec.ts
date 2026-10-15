@@ -28,6 +28,8 @@ function makeRow(over: Partial<AdminInstructorRow> = {}): AdminInstructorRow {
     id: '11111111-1111-4111-8111-111111111111',
     auth_user_id: '22222222-2222-4222-8222-222222222222',
     email: 'jane@example.com',
+    first_name: 'Jane',
+    last_name: 'Doe',
     display_name_en: 'Jane',
     display_name_zh: null,
     bio_en: null,
@@ -144,6 +146,22 @@ describe('AdminService', () => {
       await expect(service.getInstructor('x')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+
+    it('returns the first and last name', async () => {
+      repo.findInstructorById.mockResolvedValue(makeRow());
+      const record = await service.getInstructor('id');
+      expect(record.firstName).toBe('Jane');
+      expect(record.lastName).toBe('Doe');
+    });
+
+    it('returns null names for instructors created before sign-up names', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ first_name: null, last_name: null }),
+      );
+      const record = await service.getInstructor('id');
+      expect(record.firstName).toBeNull();
+      expect(record.lastName).toBeNull();
     });
   });
 

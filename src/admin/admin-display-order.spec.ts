@@ -47,6 +47,8 @@ function makeRow(over: Partial<AdminInstructorRow> = {}): AdminInstructorRow {
     id: INSTRUCTOR_ID,
     auth_user_id: '22222222-2222-4222-8222-222222222222',
     email: 'jane@example.com',
+    first_name: 'Jane',
+    last_name: 'Doe',
     display_name_en: 'Jane',
     display_name_zh: null,
     bio_en: null,

@@ -111,7 +111,6 @@ describe('document publishing HTTP', () => {
       status: 'draft',
       assign_to: null,
       season: null,
-      is_active: false,
       source_key: 'templates/x/source.pdf',
       page_count: 1,
       pages: [LETTER],
@@ -196,7 +195,6 @@ describe('document publishing HTTP', () => {
       });
       expect(ctx.templates.rows.get(t.id)).toMatchObject({
         status: 'live',
-        is_active: true,
         published_by: ADMIN_USER_ID,
       });
       await publish(t.id, { assignTo: 'selected' }).expect(409);
@@ -205,7 +203,6 @@ describe('document publishing HTTP', () => {
       expect(retired.body).toMatchObject({ status: 'retired' });
       expect(ctx.templates.rows.get(t.id)).toMatchObject({
         status: 'retired',
-        is_active: false,
       });
       await retire(t.id).expect(409);
 
@@ -215,7 +212,6 @@ describe('document publishing HTTP', () => {
       expect(ctx.templates.rows.get(t.id)).toMatchObject({
         status: 'live',
         season: '2027/28',
-        is_active: true,
       });
 
       expect(

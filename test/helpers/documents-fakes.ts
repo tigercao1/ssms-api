@@ -175,7 +175,6 @@ export function templateRow(
     description_en: null,
     description_zh: null,
     required: true,
-    is_active: true,
     status: 'live',
     assign_to: 'selected',
     season: '2026-27',

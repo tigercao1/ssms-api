@@ -30,7 +30,7 @@ export const INSTRUCTOR_NOT_FOUND = 'Instructor not found';
 export const ASSIGN_TARGET_REQUIRED =
   'Send either instructorIds or allActiveInstructors: true, not both';
 export const TEMPLATE_NOT_ASSIGNABLE =
-  'Only active instructor templates with an uploaded PDF can be assigned';
+  'Only live instructor templates with an uploaded PDF can be assigned';
 
 /** Which instructors {@link DocumentAssignmentsService.assignTemplateTo} newly assigned. */
 export interface TemplateAssignmentOutcome {
@@ -71,7 +71,7 @@ export class DocumentAssignmentsService {
       throw new NotFoundException(TEMPLATE_NOT_FOUND);
     }
     if (
-      !template.is_active ||
+      template.status !== 'live' ||
       template.audience !== 'instructor' ||
       !template.source_key
     ) {
@@ -205,7 +205,8 @@ export class DocumentAssignmentsService {
     return toAssignment(row);
   }
 
-  private async notifyAssigned(
+  /** Emails each instructor `documents.assigned` for one template; failures are logged. */
+  async notifyAssigned(
     template: DocumentEmailTemplate,
     season: string,
     instructorIds: string[],

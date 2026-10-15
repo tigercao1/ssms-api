@@ -160,8 +160,8 @@ export class AdminService {
    *
    * On success appends an `instructor.approve` / `instructor.reject` row to
    * `audit_log` (T6.8); `reason` is carried into the audit metadata (and the
-   * rejection email — T8.1). Approval also assigns the required onboarding
-   * documents for `CURRENT_SEASON`; that never fails the approval.
+   * rejection email — T8.1). Approval also assigns every published onboarding
+   * document for its season and emails the list; that never fails the approval.
    */
   async setApprovalStatus(
     id: string,
@@ -208,7 +208,7 @@ export class AdminService {
       this.notifyInstructor(updated, 'approved', {
         loginUrl: this.mailer.portalLink('/login'),
       });
-      await this.onboarding.assignRequired(id);
+      await this.onboarding.assignPublished(id, { approved: true });
     } else {
       this.notifyInstructor(updated, 'rejected', { reason: reason ?? null });
     }

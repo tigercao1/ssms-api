@@ -73,7 +73,7 @@ describe('AdminService', () => {
     portalLink: jest.fn((path: string) => `https://portal.example.com${path}`),
   };
   const onboarding = {
-    assignRequired: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
+    assignPublished: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
   };
   const translator = {
     modelId: 'gemini-test',
@@ -192,7 +192,9 @@ describe('AdminService', () => {
           }) as unknown,
         }),
       );
-      expect(onboarding.assignRequired).toHaveBeenCalledWith('id');
+      expect(onboarding.assignPublished).toHaveBeenCalledWith('id', {
+        approved: true,
+      });
     });
 
     it('still approves when assigning onboarding documents resolves null (failed)', async () => {
@@ -200,12 +202,12 @@ describe('AdminService', () => {
       repo.updateInstructor.mockResolvedValue(
         makeRow({ approval_status: 'approved' }),
       );
-      onboarding.assignRequired.mockResolvedValueOnce(null);
+      onboarding.assignPublished.mockResolvedValueOnce(null);
 
       const result = await service.setApprovalStatus('id', 'approved');
 
       expect(result.approvalStatus).toBe('approved');
-      expect(onboarding.assignRequired).toHaveBeenCalledTimes(1);
+      expect(onboarding.assignPublished).toHaveBeenCalledTimes(1);
     });
 
     it('rejects a pending instructor', async () => {
@@ -230,7 +232,7 @@ describe('AdminService', () => {
           vars: expect.objectContaining({ reason: 'why' }) as unknown,
         }),
       );
-      expect(onboarding.assignRequired).not.toHaveBeenCalled();
+      expect(onboarding.assignPublished).not.toHaveBeenCalled();
     });
 
     it('refuses an invalid transition from a non-pending state (400)', async () => {

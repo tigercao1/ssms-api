@@ -61,17 +61,35 @@ describe('DocumentNotificationsService', () => {
             { titleEn: 'Safety policy', titleZh: null },
           ],
           onboardingUrl: `${FAKE_PORTAL_URL}/onboarding`,
+          approved: false,
         },
         mode: 'background',
         instructorId: instructor.id,
         authUserId: instructor.auth_user_id,
-        metadata: { templateIds: [template.id, other.id], season: '2026/27' },
+        metadata: {
+          templateIds: [template.id, other.id],
+          season: '2026/27',
+          approved: false,
+        },
       },
     ]);
     await expect(service.sendAssigned(instructor, [], null)).resolves.toBe(
       null,
     );
     expect(mailer.sent).toHaveLength(1);
+  });
+
+  it('sendAssigned marks the approval email', async () => {
+    const { mailer, subjects, service, template } = setup();
+    const instructor = subjects.seedInstructor();
+    await service.sendAssigned(instructor, [template], '2026/27', {
+      approved: true,
+    });
+    expect(mailer.sent[0]).toMatchObject({
+      template: 'documents.assigned',
+      vars: { approved: true },
+      metadata: { approved: true },
+    });
   });
 
   it('sendAssigned falls back to bilingual without a supported language', async () => {

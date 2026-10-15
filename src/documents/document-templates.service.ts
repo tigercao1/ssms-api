@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import type {
   ConfirmedTemplate,
@@ -46,6 +48,8 @@ export const SOURCE_NOT_PDF =
   'The uploaded file must be sent as application/pdf';
 export const TEMPLATE_HAS_NO_SOURCE =
   'Upload the template PDF before placing fields';
+export const TEMPLATE_LOCKED =
+  'Someone has completed this document, so its PDF and fields can no longer change. Retire it and publish a new one instead.';
 
 const UPDATE_FIELDS: [keyof UpdateTemplateDto, keyof DocumentTemplateWrite][] =
   [
@@ -53,7 +57,6 @@ const UPDATE_FIELDS: [keyof UpdateTemplateDto, keyof DocumentTemplateWrite][] =
     ['titleZh', 'title_zh'],
     ['descriptionEn', 'description_en'],
     ['descriptionZh', 'description_zh'],
-    ['isActive', 'is_active'],
     ['required', 'required'],
     ['sortOrder', 'sort_order'],
   ];
@@ -82,6 +85,7 @@ function isPdfContentType(contentType: string | null): boolean {
 /**
  * Admin management of document templates: metadata CRUD, the source PDF
  * (presigned upload, then validate + normalise on confirm) and placed fields.
+ * The PDF and fields are locked (409) once any assignment is completed.
  */
 @Injectable()
 export class DocumentTemplatesService {
@@ -89,13 +93,18 @@ export class DocumentTemplatesService {
 
   constructor(
     private readonly repo: DocumentTemplatesRepository,
+    private readonly assignments: DocumentAssignmentsRepository,
     private readonly storage: PrivateStorageClient,
     private readonly pdfQueue: PdfWorkQueue,
     private readonly audit: AuditService,
   ) {}
 
   async list(): Promise<TemplateSummary[]> {
-    return (await this.repo.list()).map(toTemplateSummary);
+    const rows = await this.repo.list();
+    const completed = await Promise.all(
+      rows.map((row) => this.assignments.hasCompleted(row.id)),
+    );
+    return rows.map((row, i) => toTemplateSummary(row, completed[i]));
   }
 
   /** Template with a presigned `sourceUrl` (null before a source is confirmed). */
@@ -118,6 +127,8 @@ export class DocumentTemplatesService {
       kind: dto.kind,
       audience: dto.audience,
       title_en: dto.titleEn,
+      status: 'draft',
+      is_active: false,
       updated_by: actor.userId ?? null,
     });
     await this.audit.record({
@@ -125,9 +136,9 @@ export class DocumentTemplatesService {
       actor: { ...actor, role: 'admin' },
       targetType: 'document_template',
       targetId: row.id,
-      metadata: { after: toTemplateSummary(row) },
+      metadata: { after: toTemplateSummary(row, false) },
     });
-    return toTemplate(row, null);
+    return toTemplate(row, null, false);
   }
 
   async update(
@@ -163,7 +174,7 @@ export class DocumentTemplatesService {
 
   /** Presigned PUT for a replacement source PDF (validated on confirm). */
   async sourceUploadUrl(id: string, contentLength: number): Promise<UploadUrl> {
-    await this.load(id);
+    await this.loadEditable(id);
     const { url, expiresAt } = await this.storage.presignPut(
       storageKeys.templateUpload(id),
       { contentType: PDF_CONTENT_TYPE, contentLength },
@@ -180,7 +191,7 @@ export class DocumentTemplatesService {
     id: string,
     actor: AuditActor,
   ): Promise<ConfirmedTemplate> {
-    const before = await this.load(id);
+    const before = await this.loadEditable(id);
     const uploadKey = storageKeys.templateUpload(id);
     const head = await this.storage.head(uploadKey);
     if (!head) {
@@ -249,7 +260,7 @@ export class DocumentTemplatesService {
     fields: TemplateField[],
     actor: AuditActor,
   ): Promise<Template> {
-    const before = await this.load(id);
+    const before = await this.loadEditable(id);
     if (!before.page_count) {
       throw new BadRequestException(TEMPLATE_HAS_NO_SOURCE);
     }
@@ -281,11 +292,24 @@ export class DocumentTemplatesService {
     return this.present(row);
   }
 
-  private async present(row: DocumentTemplateRow): Promise<Template> {
-    const sourceUrl = row.source_key
-      ? (await this.storage.presignGet(row.source_key)).url
-      : null;
-    return toTemplate(row, sourceUrl);
+  /** Presents a row with a presigned `sourceUrl` and whether it has completed assignments. */
+  async present(row: DocumentTemplateRow): Promise<Template> {
+    const [sourceUrl, hasCompleted] = await Promise.all([
+      row.source_key
+        ? this.storage.presignGet(row.source_key).then((p) => p.url)
+        : null,
+      this.assignments.hasCompleted(row.id),
+    ]);
+    return toTemplate(row, sourceUrl, hasCompleted);
+  }
+
+  /** {@link load}, then 409 when an assignment of the template is completed. */
+  private async loadEditable(id: string): Promise<DocumentTemplateRow> {
+    const row = await this.load(id);
+    if (await this.assignments.hasCompleted(id)) {
+      throw new ConflictException(TEMPLATE_LOCKED);
+    }
+    return row;
   }
 
   private async readUpload(key: string): Promise<Uint8Array> {

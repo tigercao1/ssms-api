@@ -21,6 +21,7 @@ import { DocumentCompletedEmailHandler } from './document-completed-email.handle
 import { DocumentCompletedHandler } from './document-completed.handler';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentOnboardingService } from './document-onboarding.service';
+import { DocumentPublishingService } from './document-publishing.service';
 import { DocumentRemindersAuthGuard } from './document-reminders-auth.guard';
 import { DocumentRemindersService } from './document-reminders.service';
 import { DocumentSigningService } from './document-signing.service';
@@ -71,6 +72,7 @@ import {
     },
     PdfWorkQueue,
     DocumentTemplatesService,
+    DocumentPublishingService,
     DocumentAssignmentsService,
     MeDocumentsService,
     DocumentSigningService,

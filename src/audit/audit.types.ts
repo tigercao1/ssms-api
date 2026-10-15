@@ -66,6 +66,8 @@ export const AUDIT_ACTIONS = {
   documentTemplateUpdate: 'document_template.update',
   documentTemplateSourceReplace: 'document_template.source_replace',
   documentTemplateFieldsUpdate: 'document_template.fields_update',
+  documentTemplatePublish: 'document_template.publish',
+  documentTemplateRetire: 'document_template.retire',
   documentAssignmentCreate: 'document_assignment.create',
   documentAssignmentArchive: 'document_assignment.archive',
   documentAssignmentRemind: 'document_assignment.remind',

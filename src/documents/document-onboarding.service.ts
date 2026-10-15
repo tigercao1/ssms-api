@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -10,10 +9,17 @@ import type {
   DocumentTemplateRow,
 } from './documents.types';
 
+export interface AssignPublishedOptions {
+  /** Open the email with the approval (admin approval only). */
+  approved?: boolean;
+}
+
 /**
- * Assigns every active, required instructor template to one instructor when
- * they join (season activation, or admin approval of a self sign-up), then
- * emails one `documents.assigned` listing the newly assigned documents.
+ * Assigns every `live` template published to `all` instructors, each for its
+ * own season, to one approved instructor (on admin approval, or on activation
+ * of an already-approved instructor), then emails one `documents.assigned`
+ * listing the newly assigned documents. Instructors who are not approved get
+ * nothing. Existing assignments are skipped, so repeating it is safe.
  *
  * Never throws: activation and approval must succeed even when this fails,
  * so failures are logged and resolve to `null`.
@@ -23,7 +29,6 @@ export class DocumentOnboardingService {
   private readonly logger = new Logger(DocumentOnboardingService.name);
 
   constructor(
-    private readonly config: ConfigService,
     private readonly templates: DocumentTemplatesRepository,
     private readonly subjects: DocumentSubjectsRepository,
     private readonly assignments: DocumentAssignmentsService,
@@ -31,13 +36,13 @@ export class DocumentOnboardingService {
   ) {}
 
   /**
-   * Assigns the required templates for `season`, else `CURRENT_SEASON`.
-   * Templates without an uploaded PDF are not assigned. Resolves to the counts,
-   * or `null` when there is no season or instructor, or the lookup failed.
+   * Assigns the published templates. `approved: true` opens the email with
+   * the approval. Resolves to the counts, or `null` when the instructor is
+   * missing or not approved, or the lookup failed.
    */
-  async assignRequired(
+  async assignPublished(
     instructorId: string,
-    season?: string | null,
+    options: AssignPublishedOptions = {},
   ): Promise<AssignmentResult | null> {
     return this.guard(instructorId, async () => {
       const instructor = await this.subjects.findInstructor(instructorId);
@@ -47,14 +52,14 @@ export class DocumentOnboardingService {
         );
         return null;
       }
-      return this.assignTo(instructor, season);
+      return this.assignTo(instructor, options);
     });
   }
 
-  /** {@link assignRequired} for the instructor whose `auth_user_id` is `authUserId`. */
-  async assignRequiredForAuthUser(
+  /** {@link assignPublished} for the instructor whose `auth_user_id` is `authUserId`. */
+  async assignPublishedForAuthUser(
     authUserId: string,
-    season?: string | null,
+    options: AssignPublishedOptions = {},
   ): Promise<AssignmentResult | null> {
     return this.guard(`auth user ${authUserId}`, async () => {
       const instructor =
@@ -65,32 +70,30 @@ export class DocumentOnboardingService {
         );
         return null;
       }
-      return this.assignTo(instructor, season);
+      return this.assignTo(instructor, options);
     });
   }
 
   private async assignTo(
     instructor: DocumentInstructorRow,
-    season?: string | null,
+    options: AssignPublishedOptions,
   ): Promise<AssignmentResult | null> {
-    const resolved =
-      season?.trim() || this.config.get<string>('CURRENT_SEASON')?.trim();
-    if (!resolved) {
-      this.logger.warn(
-        `No season (invite or CURRENT_SEASON) for instructor ${instructor.id}; ` +
-          'no documents assigned.',
-      );
+    if (instructor.approval_status !== 'approved') {
       return null;
     }
-    const required = (
-      await this.templates.listActiveRequired('instructor')
-    ).filter((template) => template.source_key);
+    const published = (
+      await this.templates.listLiveForAll('instructor')
+    ).flatMap((template) =>
+      template.source_key && template.season
+        ? [{ template, season: template.season }]
+        : [],
+    );
     const created: DocumentTemplateRow[] = [];
-    for (const template of required) {
+    for (const { template, season } of published) {
       try {
         const outcome = await this.assignments.assignTemplateTo(
           template.id,
-          resolved,
+          season,
           [instructor.id],
         );
         if (outcome.createdSubjectIds.includes(instructor.id)) {
@@ -104,8 +107,14 @@ export class DocumentOnboardingService {
       }
     }
     if (created.length > 0) {
+      const seasons = [...new Set(created.map((t) => t.season))];
       void this.notifications
-        .sendAssigned(instructor, created, resolved)
+        .sendAssigned(
+          instructor,
+          created,
+          seasons.length === 1 ? seasons[0] : null,
+          { approved: options.approved === true },
+        )
         .catch((err: unknown) => {
           this.logger.error(
             `Could not email instructor ${instructor.id} their documents: ` +
@@ -115,7 +124,7 @@ export class DocumentOnboardingService {
     }
     return {
       created: created.length,
-      skipped: required.length - created.length,
+      skipped: published.length - created.length,
     };
   }
 

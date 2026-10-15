@@ -26,6 +26,7 @@ import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
+import { DocumentPublishingService } from './document-publishing.service';
 import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -63,6 +64,7 @@ async function build(env: Record<string, string> = {}) {
       ],
       providers: [
         DocumentTemplatesService,
+        DocumentPublishingService,
         DocumentAssignmentsService,
         MeDocumentsService,
         DocumentSigningService,
@@ -209,7 +211,11 @@ describe('documents HTTP', () => {
         titleZh: '教练协议',
         descriptionEn: null,
         required: true,
-        isActive: true,
+        status: 'draft',
+        assignTo: null,
+        season: null,
+        publishedAt: null,
+        hasCompletedAssignments: false,
         sortOrder: 2,
         hasSource: false,
         pageCount: null,
@@ -225,6 +231,10 @@ describe('documents HTTP', () => {
           targetId: (res.body as { id: string }).id,
         }),
       ]);
+      expect(res.body).not.toHaveProperty('isActive');
+      expect(
+        ctx.templates.rows.get((res.body as { id: string }).id)?.is_active,
+      ).toBe(false);
     });
 
     it('rejects invalid bodies', async () => {
@@ -312,19 +322,33 @@ describe('documents HTTP', () => {
       const res = await http()
         .patch(`/admin/documents/templates/${t.id}`)
         .set('Authorization', admin)
-        .send({ titleZh: null, isActive: false, sortOrder: 5 })
+        .send({ titleZh: null, sortOrder: 5 })
         .expect(200);
       expect(res.body).toMatchObject({
         titleZh: null,
-        isActive: false,
+        status: 'live',
         sortOrder: 5,
       });
       expect(ctx.audit.entries[0]).toMatchObject({
         action: 'document_template.update',
         metadata: {
-          before: { title_zh: '旧', is_active: true, sort_order: 0 },
-          after: { title_zh: null, is_active: false, sort_order: 5 },
+          before: { title_zh: '旧', sort_order: 0 },
+          after: { title_zh: null, sort_order: 5 },
         },
+      });
+      await http()
+        .patch(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .send({ isActive: false })
+        .expect(400);
+      await http()
+        .patch(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .send({ status: 'retired' })
+        .expect(400);
+      expect(ctx.templates.rows.get(t.id)).toMatchObject({
+        is_active: true,
+        status: 'live',
       });
       await http()
         .patch(`/admin/documents/templates/${t.id}`)
@@ -749,7 +773,8 @@ describe('documents HTTP', () => {
         allActiveInstructors: true,
       }).expect(404);
       for (const overrides of [
-        { is_active: false },
+        { status: 'draft' as const },
+        { status: 'retired' as const },
         { source_key: null },
         { audience: 'customer' as const },
       ]) {
@@ -972,12 +997,22 @@ describe('documents HTTP', () => {
       const { me, agreement } = await setup({ CURRENT_SEASON: '2027-28' });
       ctx.assignments.seed({ template_id: agreement.id, subject_id: me.id });
       const res = await get().expect(200);
-      expect(res.body).toEqual({ season: '2027-28', items: [] });
+      expect(res.body).toEqual({
+        season: '2027-28',
+        locked: false,
+        lockReason: null,
+        items: [],
+      });
     });
 
     it('returns a null season and no items for a new instructor', async () => {
       await setup();
-      await get().expect(200, { season: null, items: [] });
+      await get().expect(200, {
+        season: null,
+        locked: false,
+        lockReason: null,
+        items: [],
+      });
     });
   });
 });

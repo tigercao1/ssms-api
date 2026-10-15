@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   certificationKey,
@@ -8,16 +12,23 @@ import {
 } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
+import { DocumentTemplatesRepository } from './document-templates.repository';
 import type {
   CertificationChecklistItem,
   CertificationUploadRow,
   Checklist,
+  ChecklistLockReason,
   DocumentAssignmentRow,
   DocumentChecklistItem,
   DocumentInstructorRow,
+  DocumentTemplateRow,
+  InstructorCertificationRow,
 } from './documents.types';
 
 export const INSTRUCTOR_PROFILE_NOT_FOUND = 'Instructor profile not found';
+export const PENDING_APPROVAL =
+  'Your profile is being reviewed; onboarding opens once an admin approves you';
+export const PENDING_APPROVAL_REASON: ChecklistLockReason = 'pending_approval';
 
 function bySortOrder(a: DocumentAssignmentRow, b: DocumentAssignmentRow) {
   return (
@@ -46,6 +57,61 @@ function toDocumentItem(row: DocumentAssignmentRow): DocumentChecklistItem {
   };
 }
 
+function toPreviewItem(template: DocumentTemplateRow): DocumentChecklistItem {
+  return {
+    type: 'document',
+    assignmentId: null,
+    templateId: template.id,
+    kind: template.kind,
+    titleEn: template.title_en,
+    titleZh: template.title_zh,
+    descriptionEn: template.description_en,
+    descriptionZh: template.description_zh,
+    required: template.required,
+    status: null,
+    season: template.season,
+    assignedAt: null,
+    viewedAt: null,
+    completedAt: null,
+    dueAt: null,
+  };
+}
+
+function toCertificationItems(
+  certifications: InstructorCertificationRow[],
+  uploads: CertificationUploadRow[],
+  today: string,
+  locked: boolean,
+): CertificationChecklistItem[] {
+  const current = currentUploads(
+    uploads.map((row) => ({ ...row, insertedAt: row.inserted_at })),
+  );
+  return certifications.map((cert): CertificationChecklistItem => {
+    const upload: CertificationUploadRow | undefined = current.get(
+      certificationKey(cert.org, cert.track),
+    );
+    return {
+      type: 'certification',
+      org: cert.org,
+      track: cert.track,
+      level: cert.level,
+      uploadId: locked ? null : (upload?.id ?? null),
+      reviewStatus: upload?.review_status ?? null,
+      reviewNote: upload?.review_note ?? null,
+      validUntil: upload?.valid_until ?? null,
+      state: certificationState(
+        upload
+          ? {
+              reviewStatus: upload.review_status,
+              validUntil: upload.valid_until,
+            }
+          : null,
+        today,
+      ),
+    };
+  });
+}
+
 /**
  * The instructor's own documents (`/me/documents`). Every method resolves the
  * caller's instructor row from the JWT subject first.
@@ -55,6 +121,7 @@ export class MeDocumentsService {
   constructor(
     private readonly subjects: DocumentSubjectsRepository,
     private readonly assignments: DocumentAssignmentsRepository,
+    private readonly templates: DocumentTemplatesRepository,
     private readonly config: ConfigService,
   ) {}
 
@@ -67,58 +134,75 @@ export class MeDocumentsService {
     return instructor;
   }
 
+  /** {@link instructorFor}, then 403 `pending_approval` unless the instructor is approved. */
+  async approvedInstructorFor(
+    authUserId: string,
+  ): Promise<DocumentInstructorRow> {
+    const instructor = await this.instructorFor(authUserId);
+    if (instructor.approval_status !== 'approved') {
+      throw new ForbiddenException({
+        message: PENDING_APPROVAL,
+        reason: PENDING_APPROVAL_REASON,
+      });
+    }
+    return instructor;
+  }
+
   /**
    * Checklist for the current season: the season's non-archived assignments,
    * then one item per certification row with the state of its latest upload.
    * The season is `CURRENT_SEASON` when set, else the latest season among the
    * instructor's open assignments.
+   *
+   * Until the instructor is approved the checklist is `locked` and a preview:
+   * one item per `live` template published to `all` for the season, without
+   * an assignment, and the certification items without their upload id.
    */
   async checklist(
     authUserId: string,
     today = torontoToday(),
   ): Promise<Checklist> {
     const instructor = await this.instructorFor(authUserId);
-    const [assignments, certifications, uploads] = await Promise.all([
-      this.assignments.listForSubject('instructor', instructor.id),
+    const locked = instructor.approval_status !== 'approved';
+    const [certifications, uploads] = await Promise.all([
       this.subjects.listCertifications(instructor.id),
       this.subjects.listCertificationUploads(instructor.id),
     ]);
+    const certificationItems = toCertificationItems(
+      certifications,
+      uploads,
+      today,
+      locked,
+    );
+    if (locked) {
+      const season = this.currentSeason([]);
+      const published = await this.templates.listLiveForAll(
+        'instructor',
+        season,
+      );
+      return {
+        season,
+        locked: true,
+        lockReason: PENDING_APPROVAL_REASON,
+        items: [...published.map(toPreviewItem), ...certificationItems],
+      };
+    }
+    const assignments = await this.assignments.listForSubject(
+      'instructor',
+      instructor.id,
+    );
     const open = assignments.filter((row) => row.status !== 'archived');
     const season = this.currentSeason(open);
     const documents = open
       .filter((row) => season === null || row.season === season || !row.season)
       .sort(bySortOrder)
       .map(toDocumentItem);
-    const current = currentUploads(
-      uploads.map((row) => ({ ...row, insertedAt: row.inserted_at })),
-    );
-    const certificationItems = certifications.map(
-      (cert): CertificationChecklistItem => {
-        const upload: CertificationUploadRow | undefined = current.get(
-          certificationKey(cert.org, cert.track),
-        );
-        return {
-          type: 'certification',
-          org: cert.org,
-          track: cert.track,
-          level: cert.level,
-          uploadId: upload?.id ?? null,
-          reviewStatus: upload?.review_status ?? null,
-          reviewNote: upload?.review_note ?? null,
-          validUntil: upload?.valid_until ?? null,
-          state: certificationState(
-            upload
-              ? {
-                  reviewStatus: upload.review_status,
-                  validUntil: upload.valid_until,
-                }
-              : null,
-            today,
-          ),
-        };
-      },
-    );
-    return { season, items: [...documents, ...certificationItems] };
+    return {
+      season,
+      locked: false,
+      lockReason: null,
+      items: [...documents, ...certificationItems],
+    };
   }
 
   private currentSeason(open: DocumentAssignmentRow[]): string | null {

@@ -37,6 +37,8 @@ describe('SupabaseDocumentTemplatesRepository', () => {
         ok([row]),
         ok(row),
         ok(null),
+        ok([row]),
+        ok(row),
       ],
     });
     const repo = new SupabaseDocumentTemplatesRepository(client);
@@ -44,11 +46,17 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     await expect(repo.list()).resolves.toEqual([]);
     await expect(repo.findById(ID)).resolves.toEqual(row);
     await expect(repo.findById(ID)).resolves.toBeNull();
-    await expect(repo.listActiveRequired('instructor')).resolves.toEqual([row]);
+    await expect(repo.listLiveForAll('instructor')).resolves.toEqual([row]);
     await expect(
       repo.insert({ kind: 'sign', audience: 'instructor', title_en: 'A' }),
     ).resolves.toEqual(row);
     await expect(repo.update(ID, { is_active: false })).resolves.toBeNull();
+    await expect(repo.listLiveForAll('instructor', '2026/27')).resolves.toEqual(
+      [row],
+    );
+    await expect(
+      repo.updateIfStatus(ID, ['live'], { status: 'retired' }),
+    ).resolves.toEqual(row);
     expect(queries[0].ops).toEqual([
       ['select', DOCUMENT_TEMPLATE_COLUMNS],
       ['order', 'sort_order', { ascending: true }],
@@ -57,19 +65,26 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     expect(queries[4].ops).toEqual(
       expect.arrayContaining([
         ['eq', 'audience', 'instructor'],
-        ['eq', 'is_active', true],
-        ['eq', 'required', true],
+        ['eq', 'status', 'live'],
+        ['eq', 'assign_to', 'all'],
       ]),
     );
+    expect(queries[4].ops).not.toContainEqual(['eq', 'season', undefined]);
     expect(queries[6].ops.slice(0, 2)).toEqual([
       ['update', { is_active: false }],
       ['eq', 'id', ID],
+    ]);
+    expect(queries[7].ops).toContainEqual(['eq', 'season', '2026/27']);
+    expect(queries[8].ops.slice(0, 3)).toEqual([
+      ['update', { status: 'retired' }],
+      ['eq', 'id', ID],
+      ['in', 'status', ['live']],
     ]);
   });
 
   it('surfaces errors and a missing insert row', async () => {
     const { client } = recordingSupabase({
-      document_templates: [fail, fail, ok(null), fail, fail],
+      document_templates: [fail, fail, ok(null), fail, fail, fail],
     });
     const repo = new SupabaseDocumentTemplatesRepository(client);
     await expect(repo.list()).rejects.toBeInstanceOf(DatabaseError);
@@ -77,8 +92,9 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     await expect(
       repo.insert({ kind: 'sign', audience: 'instructor', title_en: 'A' }),
     ).rejects.toThrow('no row returned');
-    await expect(repo.listActiveRequired('customer')).rejects.toThrow('boom');
+    await expect(repo.listLiveForAll('customer')).rejects.toThrow('boom');
     await expect(repo.update(ID, {})).rejects.toThrow('boom');
+    await expect(repo.updateIfStatus(ID, ['live'], {})).rejects.toThrow('boom');
   });
 });
 
@@ -152,6 +168,22 @@ describe('SupabaseDocumentAssignmentsRepository', () => {
     await expect(repo.insertIfAbsent(newRow)).rejects.toThrow('boom');
     expect(queries[0].ops).toEqual([['insert', [newRow, newRow]]]);
   });
+
+  it('tells whether a template has a completed assignment', async () => {
+    const { client, queries } = recordingSupabase({
+      document_assignments: [ok([{ id: ID }]), ok(null), fail],
+    });
+    const repo = new SupabaseDocumentAssignmentsRepository(client);
+    await expect(repo.hasCompleted(ID)).resolves.toBe(true);
+    await expect(repo.hasCompleted(ID)).resolves.toBe(false);
+    await expect(repo.hasCompleted(ID)).rejects.toThrow('boom');
+    expect(queries[0].ops).toEqual([
+      ['select', 'id'],
+      ['eq', 'template_id', ID],
+      ['eq', 'status', 'completed'],
+      ['limit', 1],
+    ]);
+  });
 });
 
 describe('SupabaseDocumentSubjectsRepository', () => {
@@ -163,6 +195,8 @@ describe('SupabaseDocumentSubjectsRepository', () => {
         ok(null),
         ok([{ id: 'a' }, { id: 'b' }]),
         ok([{ id: 'a' }]),
+        { data: null, error: null, count: 3 },
+        { data: null, error: null, count: null },
       ],
       instructor_certifications: [
         ok([{ org: 'csia', track: 'regular', level: 2 }]),
@@ -185,6 +219,12 @@ describe('SupabaseDocumentSubjectsRepository', () => {
       { org: 'csia', track: 'regular', level: 2 },
     ]);
     await expect(repo.listCertificationUploads(ID)).resolves.toEqual([]);
+    await expect(repo.countPendingInstructors()).resolves.toBe(3);
+    await expect(repo.countPendingInstructors()).resolves.toBe(0);
+    expect(queries[6].ops).toEqual([
+      ['select', 'id', { count: 'exact', head: true }],
+      ['eq', 'approval_status', 'pending'],
+    ]);
     expect(queries[0].ops).toEqual([
       ['select', DOCUMENT_INSTRUCTOR_COLUMNS],
       ['eq', 'auth_user_id', 'u'],
@@ -205,7 +245,7 @@ describe('SupabaseDocumentSubjectsRepository', () => {
 
   it('surfaces errors', async () => {
     const { client } = recordingSupabase({
-      instructors: [fail, fail, fail, fail],
+      instructors: [fail, fail, fail, fail, fail],
       instructor_certifications: [fail],
       certification_uploads: [fail],
     });
@@ -218,5 +258,6 @@ describe('SupabaseDocumentSubjectsRepository', () => {
     await expect(repo.existingInstructorIds(['a'])).rejects.toThrow('boom');
     await expect(repo.listCertifications(ID)).rejects.toThrow('boom');
     await expect(repo.listCertificationUploads(ID)).rejects.toThrow('boom');
+    await expect(repo.countPendingInstructors()).rejects.toThrow('boom');
   });
 });

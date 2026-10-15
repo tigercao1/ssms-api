@@ -77,9 +77,10 @@ export class DocumentRemindersService {
   /**
    * Emails each instructor once about all of their open assignments that are
    * over 7 days old and were not reminded in the last 7 days, then stamps
-   * `reminder_sent_at` on those assignments. Assignments of inactive
-   * instructors or inactive templates are left alone. A failed email leaves
-   * its assignments due, so the next run retries them.
+   * `reminder_sent_at` on those assignments. Assignments of inactive or
+   * unapproved instructors, or of templates that are not live, are left
+   * alone. A failed email leaves its assignments due, so the next run
+   * retries them.
    */
   async remindOpenAssignments(now: Date): Promise<AssignmentRemindersResult> {
     const cutoff = new Date(
@@ -87,7 +88,7 @@ export class DocumentRemindersService {
     );
     const due = (
       await this.assignments.listDueForReminder('instructor', cutoff)
-    ).filter((row) => row.template?.is_active);
+    ).filter((row) => row.template?.status === 'live');
     const byInstructor = new Map<string, DocumentAssignmentRow[]>();
     for (const row of due) {
       byInstructor.set(row.subject_id, [
@@ -104,7 +105,10 @@ export class DocumentRemindersService {
     for (const [instructorId, rows] of byInstructor) {
       try {
         const instructor = await this.subjects.findInstructor(instructorId);
-        if (!instructor?.is_active) {
+        if (
+          !instructor?.is_active ||
+          instructor.approval_status !== 'approved'
+        ) {
           continue;
         }
         if (

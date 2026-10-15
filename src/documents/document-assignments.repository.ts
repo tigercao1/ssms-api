@@ -21,7 +21,7 @@ export const DOCUMENT_ASSIGNMENT_COLUMNS =
   'signer_ip, signer_user_agent, consent_at, template_sha256, signed_key, ' +
   'signed_sha256, field_values, inserted_at, updated_at, ' +
   'template:document_templates(id, kind, audience, title_en, title_zh, ' +
-  'description_en, description_zh, required, is_active, sort_order)';
+  'description_en, description_zh, required, status, sort_order)';
 
 export const SUBJECT_ID_CHUNK = 100;
 const OPEN_STATUSES = ['assigned', 'viewed'];
@@ -59,6 +59,8 @@ export abstract class DocumentAssignmentsRepository {
     statuses: AssignmentStatus[],
     patch: DocumentAssignmentWrite,
   ): Promise<DocumentAssignmentRow | null>;
+  /** Whether any assignment of the template is `completed`. */
+  abstract hasCompleted(templateId: string): Promise<boolean>;
   /**
    * Open (`assigned` or `viewed`) assignments of a subject type that were
    * assigned before `cutoff` and not reminded since it, oldest first.
@@ -181,6 +183,17 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
       .maybeSingle()) as DbResult<DocumentAssignmentRow>;
     check(error, 'update document assignment');
     return data ?? null;
+  }
+
+  async hasCompleted(templateId: string): Promise<boolean> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .select('id')
+      .eq('template_id', templateId)
+      .eq('status', 'completed')
+      .limit(1)) as DbResult<{ id: string }[]>;
+    check(error, 'check completed document assignments');
+    return (data ?? []).length > 0;
   }
 
   async listDueForReminder(

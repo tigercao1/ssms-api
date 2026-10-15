@@ -46,7 +46,10 @@ export function toTemplateFieldRow(field: TemplateField): TemplateFieldRow {
   };
 }
 
-export function toTemplateSummary(row: DocumentTemplateRow): TemplateSummary {
+export function toTemplateSummary(
+  row: DocumentTemplateRow,
+  hasCompletedAssignments: boolean,
+): TemplateSummary {
   return {
     id: row.id,
     kind: row.kind,
@@ -56,7 +59,11 @@ export function toTemplateSummary(row: DocumentTemplateRow): TemplateSummary {
     descriptionEn: row.description_en,
     descriptionZh: row.description_zh,
     required: row.required,
-    isActive: row.is_active,
+    status: row.status,
+    assignTo: row.assign_to,
+    season: row.season,
+    publishedAt: row.published_at,
+    hasCompletedAssignments,
     sortOrder: row.sort_order,
     hasSource: row.source_key !== null,
     pageCount: row.page_count,
@@ -69,9 +76,10 @@ export function toTemplateSummary(row: DocumentTemplateRow): TemplateSummary {
 export function toTemplate(
   row: DocumentTemplateRow,
   sourceUrl: string | null,
+  hasCompletedAssignments: boolean,
 ): Template {
   return {
-    ...toTemplateSummary(row),
+    ...toTemplateSummary(row, hasCompletedAssignments),
     sourceSha256: row.source_sha256,
     pages: row.pages,
     fields: row.fields.map(toTemplateField),

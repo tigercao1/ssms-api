@@ -26,7 +26,10 @@ import {
   FIELD_TYPES,
   type FieldPrefill,
   type FieldType,
+  TEMPLATE_ASSIGN_TO,
+  type TemplateAssignTo,
 } from '../documents.types';
+import { SEASON_MAX_LENGTH } from './assignment.dto';
 import { MAX_TEMPLATE_BYTES } from '../template-pdf';
 
 export const TEMPLATE_TITLE_MAX_LENGTH = 200;
@@ -110,10 +113,6 @@ export class UpdateTemplateDto {
 
   @IsOptional()
   @IsBoolean()
-  isActive?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
   required?: boolean;
 
   @IsOptional()
@@ -181,4 +180,25 @@ export class PutTemplateFieldsDto {
   @ValidateNested({ each: true })
   @Type(() => TemplateFieldDto)
   fields!: TemplateFieldDto[];
+}
+
+export class PublishTemplateDto {
+  @IsIn(TEMPLATE_ASSIGN_TO)
+  assignTo!: TemplateAssignTo;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(SEASON_MAX_LENGTH)
+  season?: string;
+}
+
+export class PublishPreviewQueryDto {
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(SEASON_MAX_LENGTH)
+  season?: string;
 }

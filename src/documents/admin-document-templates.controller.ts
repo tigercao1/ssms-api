@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Roles, RolesGuard } from '../admin/roles.guard';
@@ -17,26 +18,34 @@ import { toActor } from '../audit/admin-actor';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { DocumentPublishingService } from './document-publishing.service';
 import { DocumentTemplatesService } from './document-templates.service';
 import type {
   ConfirmedTemplate,
+  PublishPreview,
+  PublishResult,
   Template,
   TemplateSummary,
   UploadUrl,
 } from './documents.types';
 import {
   CreateTemplateDto,
+  PublishPreviewQueryDto,
+  PublishTemplateDto,
   PutTemplateFieldsDto,
   SourceUploadUrlDto,
   UpdateTemplateDto,
 } from './dto/template.dto';
 
-/** `/admin/documents/templates`: template metadata, source PDF and placed fields. */
+/** `/admin/documents/templates`: template metadata, source PDF, placed fields and publishing. */
 @Controller('admin/documents/templates')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminDocumentTemplatesController {
-  constructor(private readonly templates: DocumentTemplatesService) {}
+  constructor(
+    private readonly templates: DocumentTemplatesService,
+    private readonly publishing: DocumentPublishingService,
+  ) {}
 
   @Get()
   list(): Promise<TemplateSummary[]> {
@@ -102,5 +111,34 @@ export class AdminDocumentTemplatesController {
       })),
       toActor(user, userAgent),
     );
+  }
+
+  @Get(':id/publish-preview')
+  publishPreview(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query() query: PublishPreviewQueryDto,
+  ): Promise<PublishPreview> {
+    return this.publishing.preview(id, query.season);
+  }
+
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.OK)
+  publish(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: PublishTemplateDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<PublishResult> {
+    return this.publishing.publish(id, dto, toActor(user, userAgent));
+  }
+
+  @Post(':id/retire')
+  @HttpCode(HttpStatus.OK)
+  retire(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<Template> {
+    return this.publishing.retire(id, toActor(user, userAgent));
   }
 }

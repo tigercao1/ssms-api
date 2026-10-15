@@ -22,6 +22,7 @@ import {
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
+import { legalNameOf } from './legal-name';
 import { signupNamesFromMetadata } from './signup-names';
 import { TRANSLATION_QUEUE } from './translation-queue.port';
 import type {
@@ -261,6 +262,8 @@ export class InstructorsService {
       dto[key] !== undefined;
 
     if (has('displayNameEn')) patch.display_name_en = dto.displayNameEn;
+    if (has('firstName')) patch.first_name = dto.firstName?.trim();
+    if (has('lastName')) patch.last_name = dto.lastName?.trim();
     if (has('displayNameZh')) patch.display_name_zh = dto.displayNameZh ?? null;
     if (has('bioEn')) patch.bio_en = dto.bioEn ?? null;
     if (has('bioZh')) patch.bio_zh = dto.bioZh ?? null;
@@ -315,6 +318,7 @@ export class InstructorsService {
       email: row.email,
       firstName: row.first_name,
       lastName: row.last_name,
+      legalName: legalNameOf(row),
       displayNameEn: row.display_name_en,
       displayNameZh: row.display_name_zh,
       bioEn: row.bio_en,

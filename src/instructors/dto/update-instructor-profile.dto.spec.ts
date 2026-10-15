@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { UpdateInstructorProfileDto } from './update-instructor-profile.dto';
+import { UpdateOwnInstructorProfileDto } from './update-own-instructor-profile.dto';
 
 function validate(payload: Record<string, unknown>) {
   const dto = plainToInstance(UpdateInstructorProfileDto, payload, {
@@ -145,5 +146,39 @@ describe('UpdateInstructorProfileDto validation (T3.2)', () => {
         certifications: [{ org: 'psia', track: 'slalom', level: 3 }],
       }).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe.each([
+  ['admin', UpdateInstructorProfileDto],
+  ['own', UpdateOwnInstructorProfileDto],
+])('%s profile PATCH legal name validation', (_, Dto) => {
+  const errors = (payload: Record<string, unknown>) =>
+    validateSync(plainToInstance(Dto, payload), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }).map((e) => e.property);
+
+  it('accepts a first and last name up to 100 characters', () => {
+    expect(
+      errors({ firstName: 'Jane', lastName: 'a'.repeat(100) }),
+    ).toHaveLength(0);
+  });
+
+  it('accepts a patch without either name', () => {
+    expect(errors({ displayNameEn: 'JJ' })).toHaveLength(0);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['null', null],
+    ['over 100 characters', 'a'.repeat(101)],
+    ['not a string', 42],
+  ])('rejects a %s name', (_label, value) => {
+    expect(errors({ firstName: value, lastName: value })).toEqual([
+      'firstName',
+      'lastName',
+    ]);
   });
 });

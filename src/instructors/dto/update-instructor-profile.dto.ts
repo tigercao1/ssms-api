@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -42,6 +43,18 @@ export class UpdateInstructorProfileDto {
   @IsNotEmpty({ message: 'displayNameEn cannot be empty' })
   @MaxLength(100)
   displayNameEn?: string;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Matches(/\S/, { message: 'firstName cannot be empty' })
+  @MaxLength(100)
+  firstName?: string;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Matches(/\S/, { message: 'lastName cannot be empty' })
+  @MaxLength(100)
+  lastName?: string;
 
   @IsOptional()
   @IsString()

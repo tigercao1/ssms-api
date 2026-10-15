@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { legalNameOf } from '../instructors/legal-name';
 import {
   type DocumentAssignmentWrite,
   DocumentAssignmentsRepository,
@@ -156,7 +157,7 @@ export class DocumentSigningService {
       }
       const updated = await this.markCompleted(row.id, {
         ...signer,
-        signer_name: instructor.display_name_en,
+        signer_name: legalNameOf(instructor),
         template_sha256: template.source_sha256,
       });
       return { assignment: toAssignment(updated) };

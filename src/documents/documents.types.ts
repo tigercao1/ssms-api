@@ -100,7 +100,6 @@ export interface DocumentTemplateRow {
   description_en: string | null;
   description_zh: string | null;
   required: boolean;
-  is_active: boolean;
   status: TemplateStatus;
   assign_to: TemplateAssignTo | null;
   season: string | null;
@@ -222,7 +221,6 @@ export interface TemplateSummary {
   descriptionZh: string | null;
   required: boolean;
   status: TemplateStatus;
-  isActive: boolean;
   assignTo: TemplateAssignTo | null;
   season: string | null;
   publishedAt: string | null;

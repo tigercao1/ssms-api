@@ -232,10 +232,7 @@ describe('documents HTTP', () => {
           targetId: (res.body as { id: string }).id,
         }),
       ]);
-      expect(res.body).toMatchObject({ isActive: false });
-      expect(
-        ctx.templates.rows.get((res.body as { id: string }).id)?.is_active,
-      ).toBe(false);
+      expect(res.body).not.toHaveProperty('isActive');
     });
 
     it('rejects invalid bodies', async () => {
@@ -297,20 +294,17 @@ describe('documents HTTP', () => {
       const retired = ctx.templates.seed({
         title_en: 'Retired',
         status: 'retired',
-        is_active: false,
         season: '2025/26',
       });
       const draft = ctx.templates.seed({
         title_en: 'Draft',
         status: 'draft',
-        is_active: false,
         assign_to: null,
         season: null,
       });
       const seasonless = ctx.templates.seed({
         title_en: 'Seasonless',
         status: 'retired',
-        is_active: false,
         season: null,
       });
       const assign = (
@@ -423,7 +417,6 @@ describe('documents HTTP', () => {
       expect(res.body).toMatchObject({
         titleZh: null,
         status: 'live',
-        isActive: true,
         sortOrder: 5,
       });
       expect(ctx.audit.entries[0]).toMatchObject({
@@ -444,7 +437,6 @@ describe('documents HTTP', () => {
         .send({ status: 'retired' })
         .expect(400);
       expect(ctx.templates.rows.get(t.id)).toMatchObject({
-        is_active: true,
         status: 'live',
       });
       await http()
@@ -464,54 +456,37 @@ describe('documents HTTP', () => {
         .expect(404);
     });
 
-    it('accepts and ignores isActive in a patch', async () => {
+    it('rejects isActive in a patch and omits it from responses', async () => {
       const live = ctx.templates.seed();
-      const draft = ctx.templates.seed({ status: 'draft', is_active: false });
-      const ignored = await http()
+      const draft = ctx.templates.seed({ status: 'draft' });
+      await http()
         .patch(`/admin/documents/templates/${live.id}`)
         .set('Authorization', admin)
         .send({ isActive: false })
-        .expect(200);
-      expect(ignored.body).toMatchObject({
-        id: live.id,
-        status: 'live',
-        isActive: true,
-      });
-      expect(ctx.audit.entries).toEqual([]);
-      const mixed = await http()
+        .expect(400);
+      await http()
         .patch(`/admin/documents/templates/${draft.id}`)
         .set('Authorization', admin)
         .send({ isActive: true, sortOrder: 7 })
-        .expect(200);
-      expect(mixed.body).toMatchObject({
-        status: 'draft',
-        isActive: false,
-        sortOrder: 7,
-      });
-      expect(ctx.templates.rows.get(live.id)).toMatchObject({
-        status: 'live',
-        is_active: true,
-      });
+        .expect(400);
+      expect(ctx.templates.rows.get(live.id)).toMatchObject({ status: 'live' });
       expect(ctx.templates.rows.get(draft.id)).toMatchObject({
         status: 'draft',
-        is_active: false,
-        sort_order: 7,
+        sort_order: 0,
       });
-      expect(ctx.audit.entries).toHaveLength(1);
-      expect(ctx.audit.entries[0].metadata).toEqual({
-        before: { sort_order: 0 },
-        after: { sort_order: 7 },
-      });
+      expect(ctx.audit.entries).toEqual([]);
+      const one = await http()
+        .get(`/admin/documents/templates/${live.id}`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(one.body).not.toHaveProperty('isActive');
       const list = await http()
         .get('/admin/documents/templates')
         .set('Authorization', admin)
         .expect(200);
-      expect(list.body).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ id: live.id, isActive: true }),
-          expect.objectContaining({ id: draft.id, isActive: false }),
-        ]),
-      );
+      for (const summary of list.body as object[]) {
+        expect(summary).not.toHaveProperty('isActive');
+      }
     });
 
     it('presigns a source upload up to 20 MB', async () => {

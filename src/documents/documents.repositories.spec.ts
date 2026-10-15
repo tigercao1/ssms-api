@@ -50,13 +50,14 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     await expect(
       repo.insert({ kind: 'sign', audience: 'instructor', title_en: 'A' }),
     ).resolves.toEqual(row);
-    await expect(repo.update(ID, { is_active: false })).resolves.toBeNull();
+    await expect(repo.update(ID, { required: false })).resolves.toBeNull();
     await expect(repo.listLiveForAll('instructor', '2026/27')).resolves.toEqual(
       [row],
     );
     await expect(
       repo.updateIfStatus(ID, ['live'], { status: 'retired' }),
     ).resolves.toEqual(row);
+    expect(DOCUMENT_TEMPLATE_COLUMNS).not.toContain('is_active');
     expect(queries[0].ops).toEqual([
       ['select', DOCUMENT_TEMPLATE_COLUMNS],
       ['order', 'sort_order', { ascending: true }],
@@ -71,7 +72,7 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     );
     expect(queries[4].ops).not.toContainEqual(['eq', 'season', undefined]);
     expect(queries[6].ops.slice(0, 2)).toEqual([
-      ['update', { is_active: false }],
+      ['update', { required: false }],
       ['eq', 'id', ID],
     ]);
     expect(queries[7].ops).toContainEqual(['eq', 'season', '2026/27']);

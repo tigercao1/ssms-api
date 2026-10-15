@@ -118,10 +118,6 @@ export class UpdateTemplateDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
 }
 
 export class SourceUploadUrlDto {

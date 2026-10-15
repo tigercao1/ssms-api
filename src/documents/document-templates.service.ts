@@ -130,7 +130,6 @@ export class DocumentTemplatesService {
       audience: dto.audience,
       title_en: dto.titleEn,
       status: 'draft',
-      is_active: false,
       updated_by: actor.userId ?? null,
     });
     await this.audit.record({
@@ -151,9 +150,6 @@ export class DocumentTemplatesService {
     const patch = toWrite(dto);
     const fields = Object.keys(patch) as (keyof DocumentTemplateWrite)[];
     if (fields.length === 0) {
-      if (dto.isActive !== undefined) {
-        return this.get(id);
-      }
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
     const before = await this.load(id);

@@ -94,7 +94,6 @@ export class DocumentPublishingService {
     const season = this.resolveSeason(dto.season);
     const row = await this.repo.updateIfStatus(id, ['draft', 'retired'], {
       status: 'live',
-      is_active: true,
       assign_to: dto.assignTo,
       season,
       published_at: now.toISOString(),
@@ -143,7 +142,6 @@ export class DocumentPublishingService {
     const before = await this.templates.load(id);
     const row = await this.repo.updateIfStatus(id, ['live'], {
       status: 'retired',
-      is_active: false,
       updated_by: actor.userId ?? null,
     });
     if (!row) {

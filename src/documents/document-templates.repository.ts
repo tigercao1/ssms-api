@@ -11,7 +11,7 @@ import type {
 export const DOCUMENT_TEMPLATES_TABLE = 'document_templates';
 export const DOCUMENT_TEMPLATE_COLUMNS =
   'id, kind, audience, title_en, title_zh, description_en, description_zh, required, ' +
-  'is_active, status, assign_to, season, published_at, published_by, ' +
+  'status, assign_to, season, published_at, published_by, ' +
   'sort_order, source_key, source_sha256, page_count, pages, fields, ' +
   'updated_by, inserted_at, updated_at';
 

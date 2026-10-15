@@ -54,7 +54,7 @@ import {
   VALID_UNTIL_IN_PAST,
 } from './me-certification-uploads.service';
 import { MeDocumentsController } from './me-documents.controller';
-import { MeDocumentsService } from './me-documents.service';
+import { MeDocumentsService, PENDING_APPROVAL } from './me-documents.service';
 import {
   ObjectTooLargeError,
   PrivateStorageClient,
@@ -275,6 +275,34 @@ describe('certification uploads over HTTP', () => {
       );
       await send().set('Authorization', INSTRUCTOR_AUTH).expect(403);
     });
+  });
+
+  describe('pending approval', () => {
+    it.each(['pending', 'rejected'])(
+      '403s upload-url and confirm for a %s instructor',
+      async (approval) => {
+        const { uploadId } = await presign();
+        ctx.storage.seed(stagingKey(uploadId), PDF, 'application/pdf');
+        ctx.subjects.instructors.set(ctx.instructor.id, {
+          ...ctx.instructor,
+          approval_status: approval,
+        });
+        const expected = {
+          message: PENDING_APPROVAL,
+          reason: 'pending_approval',
+        };
+        await http()
+          .post('/me/certification-uploads/upload-url')
+          .set('Authorization', INSTRUCTOR_AUTH)
+          .send(uploadBody())
+          .expect(403, expected);
+        await http()
+          .post(`/me/certification-uploads/${uploadId}/confirm`)
+          .set('Authorization', INSTRUCTOR_AUTH)
+          .expect(403, expected);
+        expect(ctx.subjects.uploads).toHaveLength(0);
+      },
+    );
   });
 
   describe('POST /me/certification-uploads/upload-url', () => {

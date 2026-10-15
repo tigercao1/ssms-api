@@ -248,6 +248,50 @@ describe('EmailRenderer', () => {
       },
     );
 
+    it('documents.assigned opens with the approval when sent on approval', () => {
+      const vars = { displayName: 'Lin', documents, onboardingUrl };
+      const plain = renderer.render('documents.assigned', 'en', vars);
+      const english = renderer.render('documents.assigned', 'en', {
+        ...vars,
+        approved: true,
+      });
+      expect(plain.subject).toBe(en.email.documents.assigned.subject);
+      expect(english.subject).toBe(
+        "You're approved: onboarding documents to complete",
+      );
+      expect(english.text).toContain(
+        'Your SSnow instructor profile is approved. Before the season starts, please complete:\n\n• Instructor agreement',
+      );
+      expect(english.text).not.toContain(
+        en.email.documents.assigned.paragraphs[0],
+      );
+      expect(english.html).toContain(`href="${onboardingUrl}"`);
+
+      const zh = renderer.render('documents.assigned', 'zh-CN', {
+        ...vars,
+        approved: true,
+      });
+      expect(zh.subject).toBe('审核已通过：请完成入职资料');
+      expect(zh.text).toContain(
+        zhCN.email.documents.assignedOnApproval.paragraphs[0],
+      );
+      expect(zh.text).toContain('• 教练协议');
+
+      const both = renderer.render('documents.assigned', 'bilingual', {
+        ...vars,
+        approved: true,
+      });
+      expect(both.subject).toBe(
+        "You're approved: onboarding documents to complete / 审核已通过：请完成入职资料",
+      );
+      expect(both.text).toContain(
+        en.email.documents.assignedOnApproval.paragraphs[0],
+      );
+      expect(both.text).toContain(
+        zhCN.email.documents.assignedOnApproval.paragraphs[0],
+      );
+    });
+
     it('documents.completed shows the title and SHA-256, and the portal link only when given', () => {
       const sha256 = 'ab'.repeat(32);
       const vars = {

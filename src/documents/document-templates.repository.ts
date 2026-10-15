@@ -5,12 +5,14 @@ import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type {
   DocumentTemplateRow,
   DocumentTemplateWrite,
+  TemplateStatus,
 } from './documents.types';
 
 export const DOCUMENT_TEMPLATES_TABLE = 'document_templates';
 export const DOCUMENT_TEMPLATE_COLUMNS =
   'id, kind, audience, title_en, title_zh, description_en, description_zh, required, ' +
-  'is_active, sort_order, source_key, source_sha256, page_count, pages, fields, ' +
+  'is_active, status, assign_to, season, published_at, published_by, ' +
+  'sort_order, source_key, source_sha256, page_count, pages, fields, ' +
   'updated_by, inserted_at, updated_at';
 
 export type NewDocumentTemplate = DocumentTemplateWrite &
@@ -21,13 +23,20 @@ export abstract class DocumentTemplatesRepository {
   /** Every template, by `sort_order` then English title. */
   abstract list(): Promise<DocumentTemplateRow[]>;
   abstract findById(id: string): Promise<DocumentTemplateRow | null>;
-  /** Active, required templates for an audience, by `sort_order`. */
-  abstract listActiveRequired(
+  /** `live` templates published to `all` of an audience, by `sort_order`; optionally one season only. */
+  abstract listLiveForAll(
     audience: DocumentTemplateRow['audience'],
+    season?: string | null,
   ): Promise<DocumentTemplateRow[]>;
   abstract insert(input: NewDocumentTemplate): Promise<DocumentTemplateRow>;
   abstract update(
     id: string,
+    patch: DocumentTemplateWrite,
+  ): Promise<DocumentTemplateRow | null>;
+  /** Updates the row only while its status is one of `statuses`; null otherwise. */
+  abstract updateIfStatus(
+    id: string,
+    statuses: TemplateStatus[],
     patch: DocumentTemplateWrite,
   ): Promise<DocumentTemplateRow | null>;
 }
@@ -62,19 +71,25 @@ export class SupabaseDocumentTemplatesRepository extends DocumentTemplatesReposi
     return data ?? null;
   }
 
-  async listActiveRequired(
+  async listLiveForAll(
     audience: DocumentTemplateRow['audience'],
+    season?: string | null,
   ): Promise<DocumentTemplateRow[]> {
-    const { data, error } = (await this.supabase
+    let query = this.supabase
       .from(DOCUMENT_TEMPLATES_TABLE)
       .select(DOCUMENT_TEMPLATE_COLUMNS)
       .eq('audience', audience)
-      .eq('is_active', true)
-      .eq('required', true)
-      .order('sort_order', { ascending: true })) as DbResult<
+      .eq('status', 'live')
+      .eq('assign_to', 'all');
+    if (season) {
+      query = query.eq('season', season);
+    }
+    const { data, error } = (await query
+      .order('sort_order', { ascending: true })
+      .order('title_en', { ascending: true })) as DbResult<
       DocumentTemplateRow[]
     >;
-    check(error, 'list required document templates');
+    check(error, 'list published document templates');
     return data ?? [];
   }
 
@@ -99,6 +114,22 @@ export class SupabaseDocumentTemplatesRepository extends DocumentTemplatesReposi
       .from(DOCUMENT_TEMPLATES_TABLE)
       .update(patch)
       .eq('id', id)
+      .select(DOCUMENT_TEMPLATE_COLUMNS)
+      .maybeSingle()) as DbResult<DocumentTemplateRow>;
+    check(error, 'update document template');
+    return data ?? null;
+  }
+
+  async updateIfStatus(
+    id: string,
+    statuses: TemplateStatus[],
+    patch: DocumentTemplateWrite,
+  ): Promise<DocumentTemplateRow | null> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_TEMPLATES_TABLE)
+      .update(patch)
+      .eq('id', id)
+      .in('status', statuses)
       .select(DOCUMENT_TEMPLATE_COLUMNS)
       .maybeSingle()) as DbResult<DocumentTemplateRow>;
     check(error, 'update document template');

@@ -75,7 +75,7 @@ describe('SupabaseCertificationUploadsRepository', () => {
       ['order', 'valid_until', { ascending: true }],
     ]);
     expect(EXPIRY_CANDIDATE_COLUMNS).toContain(
-      'instructor:instructors(id, auth_user_id, email, display_name_en, preferred_language, is_active)',
+      'instructor:instructors(id, auth_user_id, email, display_name_en, preferred_language, is_active, approval_status)',
     );
   });
 

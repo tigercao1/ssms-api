@@ -170,6 +170,8 @@ export interface EmailMessages {
   documents: {
     /** The first paragraph introduces the document list; `{count}` = documents. */
     assigned: EmailButtonCopy;
+    /** `assigned` when sent on admin approval; `{count}` = documents. */
+    assignedOnApproval: EmailButtonCopy;
     /** The first paragraph introduces the document list; `{count}` = documents. */
     reminder: EmailButtonCopy;
     /** Uses `{title}`; the button (portal link) is shown to instructors only. */

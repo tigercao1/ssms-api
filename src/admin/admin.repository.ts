@@ -5,6 +5,12 @@ import {
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { DbResult, ilikeAny, searchTokens } from '../database/db-result';
+import {
+  type CountedResult,
+  type PageRequest,
+  PGRST_RANGE_NOT_SATISFIABLE,
+  type RowPage,
+} from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import {
   AdminInstructorPatch,
@@ -42,7 +48,8 @@ export abstract class AdminRepository {
   /** All instructors (every status), optionally narrowed; admin-only view. */
   abstract listInstructors(
     filter: ListInstructorsFilter,
-  ): Promise<AdminInstructorRow[]>;
+    page?: PageRequest,
+  ): Promise<RowPage<AdminInstructorRow>>;
   abstract findInstructorById(id: string): Promise<AdminInstructorRow | null>;
   /** Apply a core-column patch (approval_status / is_active) and return it. */
   abstract updateInstructor(
@@ -95,8 +102,50 @@ export class SupabaseAdminRepository extends AdminRepository {
 
   async listInstructors(
     filter: ListInstructorsFilter,
-  ): Promise<AdminInstructorRow[]> {
-    let query = this.supabase.from('instructors').select(INSTRUCTOR_COLUMNS);
+    page?: PageRequest,
+  ): Promise<RowPage<AdminInstructorRow>> {
+    // Deterministic order: newest applications first, id as a stable tiebreaker.
+    const ordered = this.instructorsMatching(filter, INSTRUCTOR_COLUMNS, {
+      count: 'exact',
+    })
+      .order('inserted_at', { ascending: false })
+      .order('id', { ascending: true });
+    const { data, error, count } = (await (page
+      ? ordered.range(page.offset, page.offset + page.limit - 1)
+      : ordered)) as CountedResult<AdminInstructorRow[]>;
+
+    if (error?.code === PGRST_RANGE_NOT_SATISFIABLE) {
+      return { rows: [], total: await this.countInstructors(filter) };
+    }
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to list instructors: ${error.message}`,
+      );
+    }
+    return { rows: data ?? [], total: count ?? 0 };
+  }
+
+  private async countInstructors(
+    filter: ListInstructorsFilter,
+  ): Promise<number> {
+    const { error, count } = (await this.instructorsMatching(filter, 'id', {
+      count: 'exact',
+      head: true,
+    })) as CountedResult<null>;
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to count instructors: ${error.message}`,
+      );
+    }
+    return count ?? 0;
+  }
+
+  private instructorsMatching(
+    filter: ListInstructorsFilter,
+    columns: string,
+    options: { count: 'exact'; head?: boolean },
+  ) {
+    let query = this.supabase.from('instructors').select(columns, options);
 
     if (filter.status !== undefined) {
       query = query.eq('approval_status', filter.status);
@@ -107,18 +156,7 @@ export class SupabaseAdminRepository extends AdminRepository {
     for (const token of searchTokens(filter.q)) {
       query = query.or(ilikeAny(INSTRUCTOR_SEARCH_COLUMNS, token));
     }
-
-    // Deterministic order: newest applications first, id as a stable tiebreaker.
-    const { data, error } = await query
-      .order('inserted_at', { ascending: false })
-      .order('id', { ascending: true });
-
-    if (error) {
-      throw new InternalServerErrorException(
-        `Failed to list instructors: ${error.message}`,
-      );
-    }
-    return (data ?? []) as unknown as AdminInstructorRow[];
+    return query;
   }
 
   async findInstructorById(id: string): Promise<AdminInstructorRow | null> {

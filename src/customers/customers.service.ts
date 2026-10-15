@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { searchTokens } from '../database/db-result';
+import { pageOffset } from '../database/pagination';
 import { syncDisabled, toHttpError } from './customer-errors';
 import { CustomerSyncService } from './customer-sync.service';
 import { CustomersRepository } from './customers.repository';
@@ -49,7 +50,7 @@ export class CustomersService {
   ): Promise<CustomerSearchPage> {
     const { rows, total } = await this.repo.search(customerSearchTokens(q), {
       limit,
-      offset: (page - 1) * limit,
+      offset: pageOffset(page, limit),
       includeDeleted,
     });
     return { customers: rows.map(toCustomer), total };

@@ -433,7 +433,14 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
   },
   'documents.assigned': {
     build: (catalog, vars, language) =>
-      documentList(catalog, catalog.email.documents.assigned, vars, language),
+      documentList(
+        catalog,
+        vars.approved
+          ? catalog.email.documents.assignedOnApproval
+          : catalog.email.documents.assigned,
+        vars,
+        language,
+      ),
     sample: ({ portalUrl }) => ({
       displayName: SAMPLE_NAME,
       documents: SAMPLE_DOCUMENTS,

@@ -107,8 +107,9 @@ export class ActivationService {
 
   /**
    * Stamps `activated_at` on the caller's invites (a no-op when already set or
-   * absent), then assigns the required onboarding documents for the invite's
-   * season. Assignment failures are logged and never fail activation.
+   * absent), then, if the instructor is already approved, assigns the published
+   * onboarding documents. Assignment failures are logged and never fail
+   * activation.
    */
   async complete(authUserId: string): Promise<void> {
     await this.invites.markActivated(authUserId, new Date());
@@ -126,9 +127,9 @@ export class ActivationService {
       );
     }
     if (invite) {
-      await this.onboarding.assignRequired(invite.instructor_id, invite.season);
+      await this.onboarding.assignPublished(invite.instructor_id);
     } else {
-      await this.onboarding.assignRequiredForAuthUser(authUserId);
+      await this.onboarding.assignPublishedForAuthUser(authUserId);
     }
   }
 }

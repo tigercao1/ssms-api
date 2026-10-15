@@ -169,6 +169,23 @@ describe('CertificationExpiryService.run', () => {
     expect(sent).toEqual([]);
   });
 
+  it.each(['pending', 'rejected'])('skips %s instructors', async (approval) => {
+    const { service, sent, subjects } = setup();
+    subjects.instructors.clear();
+    const other = subjects.seedInstructor({ approval_status: approval });
+    subjects.certifications.set(other.id, [
+      { org: 'csia', track: 'regular', level: 1 },
+    ]);
+    subjects.uploads.push(
+      certificationUploadRow({
+        instructor_id: other.id,
+        valid_until: addDays(TODAY, 10),
+      }),
+    );
+    await service.run(TODAY, NOW);
+    expect(sent).toEqual([]);
+  });
+
   it('uses the instructor’s language', async () => {
     const { service, seed, sent, uploads, instructor } = setup();
     uploads.languages.set(instructor.id, 'zh-CN');

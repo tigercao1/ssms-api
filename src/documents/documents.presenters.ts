@@ -7,6 +7,7 @@ import type {
   DocumentTemplateRow,
   SigningTemplate,
   Template,
+  TemplateCounts,
   TemplateField,
   TemplateFieldRow,
   TemplateSummary,
@@ -46,7 +47,17 @@ export function toTemplateFieldRow(field: TemplateField): TemplateFieldRow {
   };
 }
 
-export function toTemplateSummary(row: DocumentTemplateRow): TemplateSummary {
+export const NO_TEMPLATE_COUNTS: TemplateCounts = {
+  hasCompletedAssignments: false,
+  assignedCount: 0,
+  completedCount: 0,
+  approvedCount: 0,
+};
+
+export function toTemplateSummary(
+  row: DocumentTemplateRow,
+  counts: TemplateCounts,
+): TemplateSummary {
   return {
     id: row.id,
     kind: row.kind,
@@ -56,7 +67,12 @@ export function toTemplateSummary(row: DocumentTemplateRow): TemplateSummary {
     descriptionEn: row.description_en,
     descriptionZh: row.description_zh,
     required: row.required,
-    isActive: row.is_active,
+    status: row.status,
+    isActive: row.status === 'live',
+    assignTo: row.assign_to,
+    season: row.season,
+    publishedAt: row.published_at,
+    ...counts,
     sortOrder: row.sort_order,
     hasSource: row.source_key !== null,
     pageCount: row.page_count,
@@ -69,9 +85,10 @@ export function toTemplateSummary(row: DocumentTemplateRow): TemplateSummary {
 export function toTemplate(
   row: DocumentTemplateRow,
   sourceUrl: string | null,
+  counts: TemplateCounts,
 ): Template {
   return {
-    ...toTemplateSummary(row),
+    ...toTemplateSummary(row, counts),
     sourceSha256: row.source_sha256,
     pages: row.pages,
     fields: row.fields.map(toTemplateField),

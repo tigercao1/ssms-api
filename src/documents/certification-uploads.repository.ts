@@ -14,7 +14,8 @@ import type {
 } from './documents.types';
 
 export const EXPIRY_INSTRUCTOR_COLUMNS =
-  'id, auth_user_id, email, display_name_en, preferred_language, is_active';
+  'id, auth_user_id, email, display_name_en, preferred_language, is_active, ' +
+  'approval_status';
 export const EXPIRY_CANDIDATE_COLUMNS = `${CERTIFICATION_UPLOAD_COLUMNS}, instructor:instructors(${EXPIRY_INSTRUCTOR_COLUMNS})`;
 
 /** A confirmed upload, inserted with the id issued at presign time. */
@@ -51,6 +52,7 @@ export interface ExpiryInstructorRow {
   display_name_en: string | null;
   preferred_language: string | null;
   is_active: boolean;
+  approval_status: string;
 }
 
 export interface ExpiryCandidateRow extends CertificationUploadRow {

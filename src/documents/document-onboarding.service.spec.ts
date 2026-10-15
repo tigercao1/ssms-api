@@ -1,5 +1,4 @@
 import { Logger } from '@nestjs/common';
-import type { ConfigService } from '@nestjs/config';
 import {
   InMemoryDocumentAssignmentsRepository,
   InMemoryDocumentSubjectsRepository,
@@ -15,7 +14,7 @@ import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentOnboardingService } from './document-onboarding.service';
 
-function setup(env: Record<string, string> = {}) {
+function setup() {
   const templates = new InMemoryDocumentTemplatesRepository();
   const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
@@ -32,28 +31,41 @@ function setup(env: Record<string, string> = {}) {
     notifications,
   );
   const service = new DocumentOnboardingService(
-    { get: (k: string) => env[k] } as unknown as ConfigService,
     templates,
     subjects,
     assignmentsService,
     notifications,
   );
-  const withSource = { source_key: 'templates/x/source.pdf', page_count: 1 };
+  const published = {
+    source_key: 'templates/x/source.pdf',
+    page_count: 1,
+    status: 'live' as const,
+    assign_to: 'all' as const,
+    season: '2026/27',
+  };
   const agreement = templates.seed({
-    ...withSource,
+    ...published,
     title_en: 'Agreement',
     sort_order: 1,
   });
   const policy = templates.seed({
-    ...withSource,
+    ...published,
     kind: 'read',
     title_en: 'Policy',
+    required: false,
     sort_order: 2,
   });
-  templates.seed({ title_en: 'No PDF yet' });
-  templates.seed({ ...withSource, title_en: 'Optional', required: false });
-  templates.seed({ ...withSource, title_en: 'Retired', is_active: false });
-  templates.seed({ ...withSource, title_en: 'Waiver', audience: 'customer' });
+  templates.seed({ ...published, title_en: 'No PDF yet', source_key: null });
+  templates.seed({ ...published, title_en: 'Selected', assign_to: 'selected' });
+  templates.seed({
+    ...published,
+    title_en: 'Draft',
+    status: 'draft',
+    assign_to: null,
+    season: null,
+  });
+  templates.seed({ ...published, title_en: 'Retired', status: 'retired' });
+  templates.seed({ ...published, title_en: 'Waiver', audience: 'customer' });
   const instructor = subjects.seedInstructor();
   return {
     service,
@@ -75,10 +87,10 @@ describe('DocumentOnboardingService', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('assigns the active required instructor templates that have a PDF and emails them once', async () => {
+  it('assigns every live template published to all, required or not, and emails them once', async () => {
     const ctx = setup();
     await expect(
-      ctx.service.assignRequired(ctx.instructor.id, '2026/27'),
+      ctx.service.assignPublished(ctx.instructor.id),
     ).resolves.toEqual({ created: 2, skipped: 0 });
     expect(
       [...ctx.assignments.rows.values()].map((r) => [
@@ -95,19 +107,64 @@ describe('DocumentOnboardingService', () => {
     expect(ctx.mailer.sent[0]).toMatchObject({
       template: 'documents.assigned',
       to: ctx.instructor.email,
+      vars: { approved: false },
       metadata: {
         templateIds: [ctx.agreement.id, ctx.policy.id],
         season: '2026/27',
+        approved: false,
       },
     });
   });
 
+  it('assigns each template for its own season and opens the email with the approval', async () => {
+    const ctx = setup();
+    const lastSeason = ctx.templates.seed({
+      source_key: 'templates/y/source.pdf',
+      status: 'live',
+      assign_to: 'all',
+      season: '2025/26',
+      title_en: 'Handbook',
+      sort_order: 3,
+    });
+    await expect(
+      ctx.service.assignPublished(ctx.instructor.id, { approved: true }),
+    ).resolves.toEqual({ created: 3, skipped: 0 });
+    expect(
+      [...ctx.assignments.rows.values()].find(
+        (r) => r.template_id === lastSeason.id,
+      )?.season,
+    ).toBe('2025/26');
+    await flushBackground();
+    expect(ctx.mailer.sent).toHaveLength(1);
+    expect(ctx.mailer.sent[0]).toMatchObject({
+      vars: { approved: true },
+      metadata: { season: null, approved: true },
+    });
+  });
+
+  it.each(['pending', 'rejected'])(
+    'assigns nothing to a %s instructor',
+    async (approval) => {
+      const ctx = setup();
+      const pending = ctx.subjects.seedInstructor({
+        approval_status: approval,
+      });
+      await expect(ctx.service.assignPublished(pending.id)).resolves.toBeNull();
+      await expect(
+        ctx.service.assignPublishedForAuthUser(pending.auth_user_id),
+      ).resolves.toBeNull();
+      await flushBackground();
+      expect(ctx.assignments.rows.size).toBe(0);
+      expect(ctx.mailer.sent).toHaveLength(0);
+    },
+  );
+
   it('is idempotent: a repeat assigns nothing and sends no email', async () => {
     const ctx = setup();
-    await ctx.service.assignRequired(ctx.instructor.id, '2026/27');
+    await ctx.service.assignPublished(ctx.instructor.id);
     await flushBackground();
     await expect(
-      ctx.service.assignRequired(ctx.instructor.id, '2026/27'),
+      ctx.service.assignPublished(ctx.instructor.id),
     ).resolves.toEqual({ created: 0, skipped: 2 });
     await flushBackground();
     expect(ctx.assignments.rows.size).toBe(2);
@@ -122,42 +179,26 @@ describe('DocumentOnboardingService', () => {
       season: '2026/27',
     });
     await expect(
-      ctx.service.assignRequired(ctx.instructor.id, '2026/27'),
+      ctx.service.assignPublished(ctx.instructor.id),
     ).resolves.toEqual({ created: 1, skipped: 1 });
     await flushBackground();
     expect(ctx.mailer.sent[0].metadata).toEqual({
       templateIds: [ctx.policy.id],
       season: '2026/27',
+      approved: false,
     });
   });
 
-  it('uses CURRENT_SEASON without a season, and does nothing with neither', async () => {
-    const ctx = setup({ CURRENT_SEASON: ' 2026-27 ' });
-    await ctx.service.assignRequired(ctx.instructor.id, '  ');
-    expect([...ctx.assignments.rows.values()].map((r) => r.season)).toEqual([
-      '2026-27',
-      '2026-27',
-    ]);
-
-    const none = setup();
-    await expect(
-      none.service.assignRequired(none.instructor.id),
-    ).resolves.toBeNull();
-    await flushBackground();
-    expect(none.assignments.rows.size).toBe(0);
-    expect(none.mailer.sent).toHaveLength(0);
-  });
-
   it('resolves the instructor from the auth user', async () => {
-    const ctx = setup({ CURRENT_SEASON: '2026-27' });
+    const ctx = setup();
     await expect(
-      ctx.service.assignRequiredForAuthUser(ctx.instructor.auth_user_id),
+      ctx.service.assignPublishedForAuthUser(ctx.instructor.auth_user_id),
     ).resolves.toEqual({ created: 2, skipped: 0 });
     await expect(
-      ctx.service.assignRequiredForAuthUser('nobody'),
+      ctx.service.assignPublishedForAuthUser('nobody'),
     ).resolves.toBeNull();
     await expect(
-      ctx.service.assignRequired('00000000-0000-4000-8000-000000000000'),
+      ctx.service.assignPublished('00000000-0000-4000-8000-000000000000'),
     ).resolves.toBeNull();
   });
 
@@ -167,7 +208,7 @@ describe('DocumentOnboardingService', () => {
       .spyOn(ctx.assignments, 'insertMany')
       .mockRejectedValueOnce(new Error('db down'));
     await expect(
-      ctx.service.assignRequired(ctx.instructor.id, '2026/27'),
+      ctx.service.assignPublished(ctx.instructor.id),
     ).resolves.toEqual({ created: 1, skipped: 1 });
     await flushBackground();
     expect(ctx.mailer.sent[0].metadata).toMatchObject({
@@ -176,24 +217,24 @@ describe('DocumentOnboardingService', () => {
   });
 
   it('never throws: a failed lookup or email is logged and resolves null', async () => {
-    const ctx = setup({ CURRENT_SEASON: '2026-27' });
+    const ctx = setup();
     jest
-      .spyOn(ctx.templates, 'listActiveRequired')
+      .spyOn(ctx.templates, 'listLiveForAll')
       .mockRejectedValueOnce(new Error('db down'));
     await expect(
-      ctx.service.assignRequired(ctx.instructor.id),
+      ctx.service.assignPublished(ctx.instructor.id),
     ).resolves.toBeNull();
     jest
       .spyOn(ctx.subjects, 'findInstructorByAuthUser')
       .mockRejectedValueOnce('weird');
     await expect(
-      ctx.service.assignRequiredForAuthUser('x'),
+      ctx.service.assignPublishedForAuthUser('x'),
     ).resolves.toBeNull();
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('db down'));
 
     jest.spyOn(ctx.mailer, 'send').mockRejectedValueOnce(new Error('smtp'));
     await expect(
-      ctx.service.assignRequired(ctx.instructor.id),
+      ctx.service.assignPublished(ctx.instructor.id),
     ).resolves.toEqual({ created: 2, skipped: 0 });
     await flushBackground();
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('smtp'));

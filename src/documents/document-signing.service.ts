@@ -104,7 +104,7 @@ export class DocumentSigningService {
     assignmentId: string,
     now = new Date(),
   ): Promise<SigningDocument> {
-    const instructor = await this.me.instructorFor(authUserId);
+    const instructor = await this.me.approvedInstructorFor(authUserId);
     let row = await this.ownedOpenable(instructor, assignmentId);
     const template = await this.loadTemplate(row.template_id);
     if (row.status === 'assigned') {
@@ -135,7 +135,7 @@ export class DocumentSigningService {
     evidence: SigningEvidence,
     now = new Date(),
   ): Promise<CompletedDocument> {
-    const instructor = await this.me.instructorFor(authUserId);
+    const instructor = await this.me.approvedInstructorFor(authUserId);
     const row = await this.ownedOpenable(instructor, assignmentId);
     if (row.status === 'completed') {
       throw new ConflictException(ALREADY_COMPLETED);

@@ -1,9 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult, likePattern } from '../database/db-result';
+import {
+  type CountedResult,
+  type PageRequest,
+  PGRST_RANGE_NOT_SATISFIABLE,
+  type RowPage,
+} from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-
-type CountedResult<T> = DbResult<T> & { count: number | null };
 
 export const CUSTOMERS_TABLE = 'customers';
 export const CUSTOMER_COLUMNS =
@@ -31,9 +35,7 @@ export interface CustomerUpsert {
   shopify_updated_at: string | null;
 }
 
-export interface CustomerPageRequest {
-  limit: number;
-  offset: number;
+export interface CustomerPageRequest extends PageRequest {
   includeDeleted?: boolean;
 }
 
@@ -44,12 +46,7 @@ export interface CustomerReconcileCounts {
   restored: number;
 }
 
-export interface CustomerRowPage {
-  rows: CustomerRow[];
-  total: number;
-}
-
-export const PGRST_RANGE_NOT_SATISFIABLE = 'PGRST103';
+export type CustomerRowPage = RowPage<CustomerRow>;
 
 export abstract class CustomersRepository {
   abstract search(

@@ -106,7 +106,7 @@ export class MeCertificationUploadsService {
     dto: CertificationUploadUrlDto,
     today = torontoToday(),
   ): Promise<CertificationUploadUrl> {
-    const instructor = await this.me.instructorFor(authUserId);
+    const instructor = await this.me.approvedInstructorFor(authUserId);
     if (daysBetween(today, dto.validUntil) < 0) {
       throw new BadRequestException(VALID_UNTIL_IN_PAST);
     }
@@ -150,7 +150,7 @@ export class MeCertificationUploadsService {
     uploadId: string,
     today = torontoToday(),
   ): Promise<CertUpload> {
-    const instructor = await this.me.instructorFor(authUserId);
+    const instructor = await this.me.approvedInstructorFor(authUserId);
     const existing = await this.uploads.findById(uploadId);
     if (existing) {
       if (existing.instructor_id !== instructor.id) {

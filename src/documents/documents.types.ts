@@ -21,6 +21,12 @@ export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
 
 export type SubjectType = 'instructor' | 'customer';
 
+export const TEMPLATE_STATUSES = ['draft', 'live', 'retired'] as const;
+export type TemplateStatus = (typeof TEMPLATE_STATUSES)[number];
+
+export const TEMPLATE_ASSIGN_TO = ['all', 'selected'] as const;
+export type TemplateAssignTo = (typeof TEMPLATE_ASSIGN_TO)[number];
+
 export const FIELD_TYPES = [
   'signature',
   'initials',
@@ -95,6 +101,11 @@ export interface DocumentTemplateRow {
   description_zh: string | null;
   required: boolean;
   is_active: boolean;
+  status: TemplateStatus;
+  assign_to: TemplateAssignTo | null;
+  season: string | null;
+  published_at: string | null;
+  published_by: string | null;
   sort_order: number;
   source_key: string | null;
   source_sha256: string | null;
@@ -121,7 +132,7 @@ export type AssignmentTemplateRow = Pick<
   | 'description_en'
   | 'description_zh'
   | 'required'
-  | 'is_active'
+  | 'status'
   | 'sort_order'
 >;
 
@@ -208,13 +219,37 @@ export interface TemplateSummary {
   descriptionEn: string | null;
   descriptionZh: string | null;
   required: boolean;
+  status: TemplateStatus;
   isActive: boolean;
+  assignTo: TemplateAssignTo | null;
+  season: string | null;
+  publishedAt: string | null;
+  hasCompletedAssignments: boolean;
+  assignedCount: number;
+  completedCount: number;
+  approvedCount: number;
   sortOrder: number;
   hasSource: boolean;
   pageCount: number | null;
   fieldCount: number;
   insertedAt: string;
   updatedAt: string;
+}
+
+/** The assignment counts a template summary carries. */
+export type TemplateCounts = Pick<
+  TemplateSummary,
+  | 'hasCompletedAssignments'
+  | 'assignedCount'
+  | 'completedCount'
+  | 'approvedCount'
+>;
+
+/** One template's row of `document_template_stats`. */
+export interface TemplateAssignmentStats {
+  assignedCount: number;
+  completedCount: number;
+  hasCompleted: boolean;
 }
 
 export interface Template extends TemplateSummary {
@@ -301,14 +336,28 @@ export interface AssignmentResult {
   skipped: number;
 }
 
+/** `GET /admin/documents/templates/:id/publish-preview`. */
+export interface PublishPreview {
+  season: string;
+  approvedCount: number;
+  pendingCount: number;
+  alreadyAssignedCount: number;
+}
+
+/** `POST /admin/documents/templates/:id/publish`. */
+export interface PublishResult extends AssignmentResult {
+  template: Template;
+}
+
 export interface InstructorDocuments {
   assignments: Assignment[];
   certificationUploads: CertUpload[];
 }
 
+/** An assigned document; a preview item (pending instructor) has no assignment yet. */
 export interface DocumentChecklistItem {
   type: 'document';
-  assignmentId: string;
+  assignmentId: string | null;
   templateId: string;
   kind: DocumentKind;
   titleEn: string;
@@ -316,9 +365,9 @@ export interface DocumentChecklistItem {
   descriptionEn: string | null;
   descriptionZh: string | null;
   required: boolean;
-  status: AssignmentStatus;
+  status: AssignmentStatus | null;
   season: string | null;
-  assignedAt: string;
+  assignedAt: string | null;
   viewedAt: string | null;
   completedAt: string | null;
   dueAt: string | null;
@@ -338,8 +387,13 @@ export interface CertificationChecklistItem {
 
 export type ChecklistItem = DocumentChecklistItem | CertificationChecklistItem;
 
+export type ChecklistLockReason = 'pending_approval' | 'rejected';
+
+/** `GET /me/documents`; while `locked`, `items` is a preview and nothing is assigned. */
 export interface Checklist {
   season: string | null;
+  locked: boolean;
+  lockReason: ChecklistLockReason | null;
   items: ChecklistItem[];
 }
 

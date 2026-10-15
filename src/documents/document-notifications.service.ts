@@ -38,11 +38,15 @@ export class DocumentNotificationsService {
     private readonly subjects: DocumentSubjectsRepository,
   ) {}
 
-  /** Tells an instructor which documents were just assigned to them. */
+  /**
+   * Tells an instructor which documents were just assigned to them;
+   * `approved` opens the email with their approval.
+   */
   async sendAssigned(
     instructor: DocumentInstructorRow,
     templates: DocumentEmailTemplate[],
     season: string | null,
+    { approved = false }: { approved?: boolean } = {},
   ): Promise<SendOutcome | null> {
     if (templates.length === 0) {
       return null;
@@ -51,11 +55,11 @@ export class DocumentNotificationsService {
       template: 'documents.assigned',
       to: instructor.email,
       language: resolveEmailLanguage(instructor.preferred_language),
-      vars: this.listVars(instructor, templates),
+      vars: { ...this.listVars(instructor, templates), approved },
       mode: 'background',
       instructorId: instructor.id,
       authUserId: instructor.auth_user_id,
-      metadata: { templateIds: templates.map((t) => t.id), season },
+      metadata: { templateIds: templates.map((t) => t.id), season, approved },
     });
   }
 

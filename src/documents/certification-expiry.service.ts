@@ -44,7 +44,8 @@ const instructorCertKey = (instructorId: string, org: string, track: string) =>
  * `certification.expiring` once when it is within 30 days of `valid_until` and
  * `certification.expired` once after it passes. `expiry_reminder_sent_at`
  * records the last one sent; which one it was is read by comparing its date to
- * `valid_until` (see `expiryReminderSent`).
+ * `valid_until` (see `expiryReminderSent`). Only active, approved instructors
+ * are emailed.
  */
 @Injectable()
 export class CertificationExpiryService {
@@ -111,7 +112,9 @@ export class CertificationExpiryService {
         },
         today,
       );
-      return stage && upload.instructor?.is_active
+      return stage &&
+        upload.instructor?.is_active &&
+        upload.instructor.approval_status === 'approved'
         ? [{ upload, instructor: upload.instructor, stage }]
         : [];
     });

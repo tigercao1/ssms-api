@@ -372,6 +372,17 @@ export const zhCN: MessageCatalog = {
         button: '查看我的资料',
         finePrint: '您收到这封邮件，是因为您是 SSnow 的教练。',
       },
+      assignedOnApproval: {
+        subject: '审核已通过：请完成入职资料',
+        preheader: '您的 SSnow 教练资料已审核通过。',
+        heading: '审核已通过',
+        paragraphs: [
+          '您的 SSnow 教练资料已审核通过。雪季开始前，请完成以下资料：',
+          '只需几分钟，用手机也可以完成。',
+        ],
+        button: '开始入职',
+        finePrint: '您收到这封邮件，是因为您是 SSnow 的教练。',
+      },
       reminder: {
         subject: '提醒：您还有入职资料待完成',
         preheader: '您还有入职资料尚未完成。',

@@ -52,8 +52,8 @@ function setup() {
   };
   const dispatcher = { dispatch: jest.fn().mockResolvedValue('sent') };
   const onboarding = {
-    assignRequired: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
-    assignRequiredForAuthUser: jest.fn().mockResolvedValue(null),
+    assignPublished: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
+    assignPublishedForAuthUser: jest.fn().mockResolvedValue(null),
   };
   const service = new ActivationService(
     invites as unknown as InvitesRepository,
@@ -242,20 +242,22 @@ describe('ActivationService.complete', () => {
     expect(invites.markActivated).toHaveBeenCalledWith('auth-1', NOW);
   });
 
-  it("assigns onboarding documents for the invite's instructor and season", async () => {
+  it("assigns onboarding documents to the invite's instructor", async () => {
     const { service, invites, onboarding } = setup();
     invites.findLatestByAuthUser.mockResolvedValueOnce(row());
     await service.complete('auth-1');
     expect(invites.findLatestByAuthUser).toHaveBeenCalledWith('auth-1');
-    expect(onboarding.assignRequired).toHaveBeenCalledWith('ins-1', '2026/27');
-    expect(onboarding.assignRequiredForAuthUser).not.toHaveBeenCalled();
+    expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
+    expect(onboarding.assignPublishedForAuthUser).not.toHaveBeenCalled();
   });
 
-  it('falls back to the caller (and CURRENT_SEASON) without an invite', async () => {
+  it('falls back to the caller without an invite', async () => {
     const { service, onboarding } = setup();
     await service.complete('auth-1');
-    expect(onboarding.assignRequiredForAuthUser).toHaveBeenCalledWith('auth-1');
-    expect(onboarding.assignRequired).not.toHaveBeenCalled();
+    expect(onboarding.assignPublishedForAuthUser).toHaveBeenCalledWith(
+      'auth-1',
+    );
+    expect(onboarding.assignPublished).not.toHaveBeenCalled();
   });
 
   it('still assigns, from the caller, when the invite lookup fails', async () => {
@@ -264,6 +266,8 @@ describe('ActivationService.complete', () => {
     invites.findLatestByAuthUser.mockRejectedValueOnce(new Error('db down'));
     await expect(service.complete('auth-1')).resolves.toBeUndefined();
     expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
-    expect(onboarding.assignRequiredForAuthUser).toHaveBeenCalledWith('auth-1');
+    expect(onboarding.assignPublishedForAuthUser).toHaveBeenCalledWith(
+      'auth-1',
+    );
   });
 });

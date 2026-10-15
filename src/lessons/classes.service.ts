@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { pageOffset } from '../database/pagination';
 import {
   type ClassFilter,
   ClassesRepository,
   type ClassRow,
 } from './classes.repository';
+import { CLASS_LIST_DEFAULT_LIMIT } from './dto/list-classes-query.dto';
 import type {
   Attendance,
   ClassSource,
@@ -51,11 +53,20 @@ export interface AdminClass {
   updatedAt: string;
 }
 
+export interface AdminClassPage {
+  classes: AdminClass[];
+  total: number;
+}
+
 @Injectable()
 export class ClassesService {
   constructor(private readonly repo: ClassesRepository) {}
 
-  async list(filter: ClassFilter): Promise<AdminClass[]> {
+  async list(
+    filter: ClassFilter,
+    page?: number,
+    limit?: number,
+  ): Promise<AdminClassPage> {
     if (
       filter.from &&
       filter.to &&
@@ -63,7 +74,14 @@ export class ClassesService {
     ) {
       throw new BadRequestException(CLASS_RANGE_INVALID);
     }
-    return (await this.repo.list(filter)).map(toAdminClass);
+    const size = limit ?? CLASS_LIST_DEFAULT_LIMIT;
+    const { rows, total } = await this.repo.list(
+      filter,
+      page === undefined && limit === undefined
+        ? undefined
+        : { limit: size, offset: pageOffset(page ?? 1, size) },
+    );
+    return { classes: rows.map(toAdminClass), total };
   }
 }
 

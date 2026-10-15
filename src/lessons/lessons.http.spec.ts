@@ -18,10 +18,11 @@ import {
 } from '../../test/helpers/lessons-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { GoogleApiError } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
 import { ClassesController } from './classes.controller';
-import { ClassesRepository } from './classes.repository';
+import { ClassesRepository, MAX_CLASSES_PER_LIST } from './classes.repository';
 import { ClassesService } from './classes.service';
 import { InstructorCalendarsController } from './instructor-calendars.controller';
 import { InstructorCalendarsRepository } from './instructor-calendars.repository';
@@ -560,6 +561,7 @@ describe('lessons admin HTTP', () => {
         '2026-12-12T15:00:00.000Z',
         '2026-12-13T15:00:00.000Z',
       ]);
+      expect(res.headers[TOTAL_COUNT_HEADER.toLowerCase()]).toBe('2');
       expect(body[0]).toMatchObject({
         instructorId: EDDIE_ID,
         instructorName: 'Eddie',
@@ -619,6 +621,114 @@ describe('lessons admin HTTP', () => {
         .get(`/admin/classes?${qs}`)
         .set('Authorization', admin)
         .expect(400);
+    });
+  });
+
+  describe('GET /admin/classes paging', () => {
+    const startsAt = (n: number) =>
+      new Date(Date.UTC(2026, 11, 1, n)).toISOString();
+    const seed = (count: number) =>
+      ctx.classes.rows.push(
+        ...Array.from({ length: count }, (_, i) =>
+          classRow({
+            starts_at: startsAt(i + 1),
+            ends_at: startsAt(i + 2),
+            instructor_id: (i + 1) % 2 === 0 ? ERIC_ID : EDDIE_ID,
+          }),
+        ),
+      );
+    const list = (query = '') =>
+      http().get(`/admin/classes${query}`).set('Authorization', admin);
+    const starts = (res: request.Response) =>
+      (res.body as { startsAt: string }[]).map((c) => c.startsAt);
+    const inOrder = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => startsAt(from + i));
+
+    beforeEach(async () => {
+      ctx = await build();
+      seed(60);
+    });
+
+    it('returns every class with the total when no page or limit is given', async () => {
+      const res = await list().expect(200);
+      expect(starts(res)).toEqual(inOrder(1, 60));
+      expect(res.headers['x-total-count']).toBe('60');
+      expect(ctx.classes.pages).toEqual([undefined]);
+    });
+
+    it('defaults to 50 per page when only page is given', async () => {
+      const first = await list('?page=1').expect(200);
+      expect(starts(first)).toEqual(inOrder(1, 50));
+      expect(first.headers['x-total-count']).toBe('60');
+      const second = await list('?page=2').expect(200);
+      expect(starts(second)).toEqual(inOrder(51, 60));
+      expect(second.headers['x-total-count']).toBe('60');
+    });
+
+    it('defaults to the first page when only limit is given', async () => {
+      const res = await list('?limit=5').expect(200);
+      expect(starts(res)).toEqual(inOrder(1, 5));
+      expect(res.headers['x-total-count']).toBe('60');
+    });
+
+    it('returns the requested slice for page and limit', async () => {
+      const res = await list('?page=3&limit=25').expect(200);
+      expect(starts(res)).toEqual(inOrder(51, 60));
+      expect(res.headers['x-total-count']).toBe('60');
+    });
+
+    it('pages within the date range and instructor, with the filtered total', async () => {
+      const res = await list(
+        `?from=${startsAt(11)}&to=${startsAt(41)}&instructorId=${ERIC_ID}&page=2&limit=4`,
+      ).expect(200);
+      expect(starts(res)).toEqual([
+        startsAt(20),
+        startsAt(22),
+        startsAt(24),
+        startsAt(26),
+      ]);
+      expect(res.headers['x-total-count']).toBe('15');
+      expect(ctx.classes.filters).toEqual([
+        { from: startsAt(11), to: startsAt(41), instructorId: ERIC_ID },
+      ]);
+      expect(ctx.classes.pages).toEqual([{ limit: 4, offset: 4 }]);
+    });
+
+    it('answers a page past the end with no rows and the real total', async () => {
+      const res = await list('?page=4&limit=20').expect(200);
+      expect(res.body).toEqual([]);
+      expect(res.headers['x-total-count']).toBe('60');
+    });
+
+    it('caps the unpaged list but reports the true total', async () => {
+      seed(MAX_CLASSES_PER_LIST);
+      const res = await list().expect(200);
+      expect(res.body).toHaveLength(MAX_CLASSES_PER_LIST);
+      expect(res.headers['x-total-count']).toBe(
+        String(MAX_CLASSES_PER_LIST + 60),
+      );
+    });
+
+    it('accepts the largest page and page size', async () => {
+      const res = await list('?page=10000&limit=100').expect(200);
+      expect(res.body).toEqual([]);
+      expect(ctx.classes.pages).toEqual([{ limit: 100, offset: 999_900 }]);
+    });
+
+    it.each([
+      'page=0',
+      'page=-1',
+      'page=10001',
+      'page=1.5',
+      'page=abc',
+      'limit=0',
+      'limit=101',
+      'limit=2.5',
+      'limit=abc',
+      'from=2026-12-14&to=2026-12-13&page=1&limit=10',
+    ])('rejects %s with 400', async (query) => {
+      await list(`?${query}`).expect(400);
+      expect(ctx.classes.filters).toEqual([]);
     });
   });
 

@@ -1,12 +1,18 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
+import { MAX_PAGE, MAX_PAGE_SIZE } from '../../database/pagination';
 import type { ApprovalStatus } from '../admin.types';
+
+export const INSTRUCTOR_LIST_DEFAULT_LIMIT = 50;
 
 /**
  * Query string for `GET /admin/instructors` (T6.3). Both filters are optional;
@@ -35,4 +41,18 @@ export class ListInstructorsQueryDto {
   @IsString()
   @MaxLength(200)
   q?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_PAGE)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_PAGE_SIZE)
+  limit?: number;
 }

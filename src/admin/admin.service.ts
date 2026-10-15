@@ -17,6 +17,7 @@ import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instr
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AuditService } from '../audit/audit.service';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
+import { pageOffset } from '../database/pagination';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
@@ -41,6 +42,12 @@ import {
   UserRoleRecord,
 } from './admin.types';
 import { CreateReferenceDto } from './dto/create-reference.dto';
+import { INSTRUCTOR_LIST_DEFAULT_LIMIT } from './dto/list-instructors-query.dto';
+
+export interface AdminInstructorPage {
+  instructors: AdminInstructorRecord[];
+  total: number;
+}
 
 /** Postgres unique-violation — duplicate reference `key`. */
 const PG_UNIQUE_VIOLATION = '23505';
@@ -113,9 +120,17 @@ export class AdminService {
   /** T6.3 — list every instructor, optionally narrowed by status / active. */
   async listInstructors(
     filter: ListInstructorsFilter,
-  ): Promise<AdminInstructorRecord[]> {
-    const rows = await this.repo.listInstructors(filter);
-    return rows.map((row) => this.toRecord(row));
+    page?: number,
+    limit?: number,
+  ): Promise<AdminInstructorPage> {
+    const size = limit ?? INSTRUCTOR_LIST_DEFAULT_LIMIT;
+    const { rows, total } = await this.repo.listInstructors(
+      filter,
+      page === undefined && limit === undefined
+        ? undefined
+        : { limit: size, offset: pageOffset(page ?? 1, size) },
+    );
+    return { instructors: rows.map((row) => this.toRecord(row)), total };
   }
 
   /** Fetch a single instructor's core record (admin detail). */
@@ -145,8 +160,10 @@ export class AdminService {
    *
    * On success appends an `instructor.approve` / `instructor.reject` row to
    * `audit_log` (T6.8); `reason` is carried into the audit metadata (and the
-   * rejection email — T8.1). Approval also assigns the required onboarding
-   * documents for `CURRENT_SEASON`; that never fails the approval.
+   * rejection email — T8.1). Approval also assigns every published onboarding
+   * document for its season; that never fails the approval. When it assigns
+   * anything, the documents email (opening with the approval) replaces the
+   * plain approval email, so the instructor gets one email either way.
    */
   async setApprovalStatus(
     id: string,
@@ -190,10 +207,14 @@ export class AdminService {
     // Fire-and-forget notification (approved / rejected). Failures are
     // audited by the mailer and MUST NOT roll back the transition.
     if (status === 'approved') {
-      this.notifyInstructor(updated, 'approved', {
-        loginUrl: this.mailer.portalLink('/login'),
+      const assigned = await this.onboarding.assignPublished(id, {
+        approved: true,
       });
-      await this.onboarding.assignRequired(id);
+      if (!assigned?.created) {
+        this.notifyInstructor(updated, 'approved', {
+          loginUrl: this.mailer.portalLink('/login'),
+        });
+      }
     } else {
       this.notifyInstructor(updated, 'rejected', { reason: reason ?? null });
     }

@@ -129,7 +129,9 @@ function customerName(
     .join(' ');
 }
 
-function toPayable(row: PayrollClassRow): PayableClass {
+export function toPayable(
+  row: Omit<PayrollClassRow, 'instructor'>,
+): PayableClass {
   return {
     id: row.id,
     instructorId: row.instructor_id,
@@ -144,7 +146,7 @@ function toPayable(row: PayrollClassRow): PayableClass {
   };
 }
 
-function storedLine(row: PayrollLineRow): ClassLine {
+export function storedLine(row: Omit<PayrollLineRow, 'instructor'>): ClassLine {
   return {
     classId: row.class_id as string,
     instructorId: row.instructor_id,

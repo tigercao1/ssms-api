@@ -3,6 +3,9 @@ import { DatabaseError } from '../database/db-result';
 import { PAY_RATE_COLUMNS } from '../lessons/pay-rates.repository';
 import {
   CLASS_ID_CHUNK,
+  INSTRUCTOR_APPROVAL_COLUMNS,
+  INSTRUCTOR_CLASS_COLUMNS,
+  INSTRUCTOR_LINE_COLUMNS,
   PAGE_SIZE,
   PAYROLL_CLASS_COLUMNS,
   PAYROLL_LINE_COLUMNS,
@@ -206,5 +209,115 @@ describe('SupabasePayrollRepository', () => {
     await expect(repo.findPeriod(ID)).rejects.toThrow('boom');
     await expect(repo.classesBetween('a', 'b')).rejects.toThrow('boom');
     await expect(repo.ratesFor([ID])).rejects.toThrow('boom');
+  });
+
+  it('reads one instructor’s profile, classes, lines, periods and paid classes', async () => {
+    const full = Array.from({ length: PAGE_SIZE }, (_, i) => ({ id: `r${i}` }));
+    const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);
+    const { client, calls } = recordingPayrollSupabase({
+      instructors: [ok({ id: ID, approval_status: 'approved' }), ok(null)],
+      classes: [ok(full), ok([{ id: 'last' }])],
+      payroll_lines: [
+        ok([{ id: ID }]),
+        ok([{ class_id: 'c1', period_id: ID }]),
+        ok(null),
+      ],
+      payroll_periods: [ok([{ id: ID }]), ok(null)],
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.instructorByAuthUser(ID)).resolves.toEqual({
+      id: ID,
+      approval_status: 'approved',
+    });
+    await expect(repo.instructorByAuthUser(ID)).resolves.toBeNull();
+    await expect(repo.classesForInstructor(ID)).resolves.toHaveLength(
+      PAGE_SIZE + 1,
+    );
+    await expect(repo.linesForInstructor(ID)).resolves.toEqual([{ id: ID }]);
+    await expect(repo.classLinePeriods(ids)).resolves.toEqual([
+      { class_id: 'c1', period_id: ID },
+    ]);
+    await expect(repo.classLinePeriods([])).resolves.toEqual([]);
+    await expect(
+      repo.periodsStartingOn(['2025-12-29', ...ids]),
+    ).resolves.toEqual([{ id: ID }]);
+    await expect(repo.periodsStartingOn([])).resolves.toEqual([]);
+    expect(calls.map((c) => [c.target, c.ops])).toEqual([
+      [
+        'instructors',
+        [
+          ['select', INSTRUCTOR_APPROVAL_COLUMNS],
+          ['eq', 'auth_user_id', ID],
+          ['maybeSingle'],
+        ],
+      ],
+      ['instructors', expect.any(Array)],
+      [
+        'classes',
+        [
+          ['select', INSTRUCTOR_CLASS_COLUMNS],
+          ['eq', 'instructor_id', ID],
+          ['neq', 'status', 'cancelled'],
+          ['order', 'starts_at', { ascending: true }],
+          ['order', 'id', { ascending: true }],
+          ['range', 0, PAGE_SIZE - 1],
+        ],
+      ],
+      [
+        'classes',
+        expect.arrayContaining([['range', PAGE_SIZE, 2 * PAGE_SIZE - 1]]),
+      ],
+      [
+        'payroll_lines',
+        [
+          ['select', INSTRUCTOR_LINE_COLUMNS],
+          ['eq', 'instructor_id', ID],
+          ['order', 'created_at', { ascending: true }],
+          ['order', 'id', { ascending: true }],
+          ['range', 0, PAGE_SIZE - 1],
+        ],
+      ],
+      [
+        'payroll_lines',
+        [
+          ['select', 'class_id, period_id'],
+          ['eq', 'kind', 'class'],
+          ['in', 'class_id', ids.slice(0, CLASS_ID_CHUNK)],
+        ],
+      ],
+      [
+        'payroll_lines',
+        expect.arrayContaining([['in', 'class_id', [ids[CLASS_ID_CHUNK]]]]),
+      ],
+      [
+        'payroll_periods',
+        [
+          ['select', PAYROLL_PERIOD_COLUMNS],
+          [
+            'in',
+            'starts_on',
+            ['2025-12-29', ...ids.slice(0, CLASS_ID_CHUNK - 1)],
+          ],
+        ],
+      ],
+      ['payroll_periods', expect.any(Array)],
+    ]);
+  });
+
+  it('surfaces errors from the instructor reads', async () => {
+    const { client } = recordingPayrollSupabase({
+      instructors: fail,
+      classes: fail,
+      payroll_lines: fail,
+      payroll_periods: fail,
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.instructorByAuthUser(ID)).rejects.toThrow('boom');
+    await expect(repo.classesForInstructor(ID)).rejects.toThrow('boom');
+    await expect(repo.linesForInstructor(ID)).rejects.toThrow('boom');
+    await expect(repo.classLinePeriods([ID])).rejects.toThrow('boom');
+    await expect(repo.periodsStartingOn(['2025-12-29'])).rejects.toThrow(
+      'boom',
+    );
   });
 });

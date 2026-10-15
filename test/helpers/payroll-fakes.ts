@@ -8,6 +8,11 @@ import type { PayRateRow } from '../../src/lessons/pay-rates.repository';
 import { daysBetween } from '../../src/payroll/payroll-time';
 import {
   type AdjustmentInsert,
+  type ApprovalStatus,
+  type ClassLinePeriod,
+  type InstructorApprovalRow,
+  type InstructorClassRow,
+  type InstructorLineRow,
   type InstructorEmbed,
   type PayrollClassRow,
   type PayrollLineRow,
@@ -37,7 +42,8 @@ export class InMemoryPayrollRepository extends PayrollRepository {
   };
   periods: PayrollPeriodRow[] = [];
   lineRows: PayrollLineRow[] = [];
-  classes: PayrollClassRow[] = [];
+  classes: (PayrollClassRow & InstructorClassRow)[] = [];
+  instructorUsers = new Map<string, InstructorApprovalRow>();
   rates: PayRateRow[] = [];
   instructorNames = new Map<string, InstructorEmbed>([
     [
@@ -75,11 +81,12 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     minutes?: number;
     status?: ClassStatus;
     customers?: [string | null, string | null][];
-  }): PayrollClassRow {
+    location?: string | null;
+  }): PayrollClassRow & InstructorClassRow {
     const instructorId = input.instructorId ?? ADA_ID;
     const lessonTypeId =
       input.lessonTypeId === undefined ? PRIVATE_90 : input.lessonTypeId;
-    const row: PayrollClassRow = {
+    const row: PayrollClassRow & InstructorClassRow = {
       id: nextPayrollId(),
       instructor_id: instructorId,
       lesson_type_id: lessonTypeId,
@@ -95,6 +102,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       participants: (input.customers ?? []).map(([first, last]) => ({
         customer: { first_name: first, last_name: last },
       })),
+      location: input.location ? { name: input.location } : null,
     };
     this.classes.push(row);
     return row;
@@ -120,6 +128,17 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       effective_to: input.to ?? null,
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
+    });
+  }
+
+  addInstructorUser(
+    authUserId: string,
+    instructorId: string,
+    approvalStatus: ApprovalStatus,
+  ): void {
+    this.instructorUsers.set(authUserId, {
+      id: instructorId,
+      approval_status: approvalStatus,
     });
   }
 
@@ -331,6 +350,69 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       (l) => !(l.period_id === periodId && l.kind === 'class'),
     );
     return Promise.resolve();
+  }
+
+  instructorByAuthUser(
+    authUserId: string,
+  ): Promise<InstructorApprovalRow | null> {
+    const row = this.instructorUsers.get(authUserId);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  classesForInstructor(instructorId: string): Promise<InstructorClassRow[]> {
+    return Promise.resolve(
+      this.classes
+        .filter(
+          (c) => c.instructor_id === instructorId && c.status !== 'cancelled',
+        )
+        .sort(
+          (a, b) =>
+            a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id),
+        )
+        .map((c) => ({ ...c })),
+    );
+  }
+
+  linesForInstructor(instructorId: string): Promise<InstructorLineRow[]> {
+    return Promise.resolve(
+      this.lineRows
+        .filter((l) => l.instructor_id === instructorId)
+        .map((l) => {
+          const period = this.periods.find((p) => p.id === l.period_id);
+          const cls = this.classes.find((c) => c.id === l.class_id);
+          return {
+            ...l,
+            period: period ? { ...period } : null,
+            class: cls
+              ? { location: cls.location, participants: cls.participants }
+              : null,
+          };
+        }),
+    );
+  }
+
+  periodsStartingOn(startsOn: string[]): Promise<PayrollPeriodRow[]> {
+    return Promise.resolve(
+      this.periods
+        .filter((p) => startsOn.includes(p.starts_on))
+        .map((p) => ({ ...p })),
+    );
+  }
+
+  classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]> {
+    return Promise.resolve(
+      this.lineRows
+        .filter(
+          (l) =>
+            l.kind === 'class' &&
+            l.class_id !== null &&
+            classIds.includes(l.class_id),
+        )
+        .map((l) => ({
+          class_id: l.class_id as string,
+          period_id: l.period_id,
+        })),
+    );
   }
 }
 

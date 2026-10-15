@@ -4,8 +4,9 @@
 -- the season it is published for.
 --
 -- `is_active` stays: the release that is live while this runs still reads it,
--- and the new code keeps writing `is_active = (status = 'live')` so a rollback
--- still behaves. A later migration drops it.
+-- so it is reset to `status = 'live'` after the backfill, and the new code
+-- keeps writing `is_active = (status = 'live')` so a rollback still behaves.
+-- A later migration drops it.
 
 alter table document_templates
   add column status text not null default 'draft'
@@ -69,6 +70,8 @@ set
   end
 from stats s
 where s.id = t.id;
+
+update document_templates set is_active = (status = 'live');
 
 alter table document_templates
   add constraint document_templates_live_published

@@ -153,13 +153,15 @@ describe('SupabaseRosterWriter', () => {
     ]);
   });
 
-  it('inserts a pending, active, zh-CN instructor', async () => {
+  it('inserts a pending, active, zh-CN instructor with the legal first and last name', async () => {
     const db = new FakeSupabase();
     db.queue.push({ data: { id: 'ins' }, error: null });
     const id = await new SupabaseRosterWriter(db.asClient()).insertInstructor({
       authUserId: 'auth',
       email: 'a@example.test',
       displayNameEn: 'Avery',
+      firstName: 'Avery Jo',
+      lastName: 'Testperson',
       dateOfBirth: '1995-03-04',
     });
     expect(id).toBe('ins');
@@ -170,6 +172,8 @@ describe('SupabaseRosterWriter', () => {
           auth_user_id: 'auth',
           email: 'a@example.test',
           display_name_en: 'Avery',
+          first_name: 'Avery Jo',
+          last_name: 'Testperson',
           date_of_birth: '1995-03-04',
           preferred_language: 'zh-CN',
           approval_status: 'pending',
@@ -193,9 +197,15 @@ describe('SupabaseRosterWriter', () => {
       authUserId: 'a',
       email: 'a@example.test',
       displayNameEn: '',
+      firstName: null,
+      lastName: null,
       dateOfBirth: null,
     };
     expect(await writer.insertInstructor(input)).toBe('ins-existing');
+    expect(db.ops(0)[0]).toEqual([
+      'insert',
+      [expect.objectContaining({ first_name: null, last_name: null })],
+    ]);
     await expect(writer.insertInstructor(input)).rejects.toThrow(
       'Failed to create instructor: dup',
     );

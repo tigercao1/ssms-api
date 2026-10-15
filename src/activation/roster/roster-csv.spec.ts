@@ -3,6 +3,7 @@ import {
   parseDateOfBirth,
   parseRosterCsv,
   pickDisplayName,
+  splitLegalName,
 } from './roster-csv';
 import { ROSTER_HEADER, rosterCsv } from './roster-fixtures.test-util';
 
@@ -72,8 +73,49 @@ describe('pickDisplayName', () => {
   });
 });
 
+describe('splitLegalName', () => {
+  it.each([
+    ['Xiao Li Liu', 'Xiao Li', 'Liu'],
+    ['  Xiao   Li\tLiu ', 'Xiao Li', 'Liu'],
+    ['MO WANG', 'Mo', 'Wang'],
+    ['mo wang', 'Mo', 'Wang'],
+    ['I-HSIANG TUNG', 'I-Hsiang', 'Tung'],
+    ['zhi-gang wu', 'Zhi-Gang', 'Wu'],
+    ['Yi wei Zhang', 'Yi wei', 'Zhang'],
+    ['McKay DE la Cruz', 'McKay DE la', 'Cruz'],
+  ])('splits %j into %j and %j', (legal, firstName, lastName) => {
+    expect(splitLegalName(legal)).toEqual({ firstName, lastName });
+  });
+
+  it.each(['', '   ', 'Madonna', '  CHER  '])(
+    'leaves both null for %j',
+    (legal) => {
+      expect(splitLegalName(legal)).toEqual({
+        firstName: null,
+        lastName: null,
+      });
+    },
+  );
+
+  it('accepts parts of exactly 100 characters', () => {
+    const part = `A${'b'.repeat(99)}`;
+    expect(splitLegalName(`${part} ${part}`)).toEqual({
+      firstName: part,
+      lastName: part,
+    });
+  });
+
+  it('leaves both null when either part is over 100 characters', () => {
+    const long = `A${'b'.repeat(100)}`;
+    const none = { firstName: null, lastName: null };
+    expect(splitLegalName(`${long} Smith`)).toEqual(none);
+    expect(splitLegalName(`Jo ${long}`)).toEqual(none);
+    expect(splitLegalName(`${'Ab '.repeat(34)}Smith`)).toEqual(none);
+  });
+});
+
 describe('parseRosterCsv', () => {
-  it('maps every column and never keeps the legal name, phone, address or SIN', () => {
+  it('maps every column and never keeps the phone, address or SIN', () => {
     const result = parseRosterCsv(
       rosterCsv([
         {
@@ -104,6 +146,8 @@ describe('parseRosterCsv', () => {
         email: 'avery@example.test',
         displayNameEn: 'Avery',
         displayNameSource: 'preferred',
+        firstName: 'Avery Example',
+        lastName: 'Person',
         dateOfBirth: '1995-03-04',
         dateOfBirthStatus: 'ok',
         certifications: [
@@ -146,6 +190,8 @@ describe('parseRosterCsv', () => {
         email: 'blake@example.test',
         displayNameEn: 'Blake',
         displayNameSource: 'legal_first_token',
+        firstName: 'Blake',
+        lastName: 'Sample',
         dateOfBirth: null,
         dateOfBirthStatus: 'invalid',
         certifications: [
@@ -182,13 +228,7 @@ describe('parseRosterCsv', () => {
       },
     ]);
     const serialized = JSON.stringify(result);
-    for (const secret of [
-      'Example Person',
-      'Sample',
-      '555-0100',
-      'Fake Street',
-      '000000000',
-    ]) {
+    for (const secret of ['555-0100', 'Fake Street', '000000000']) {
       expect(serialized).not.toContain(secret);
     }
   });

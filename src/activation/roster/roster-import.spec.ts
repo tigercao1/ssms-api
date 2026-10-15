@@ -52,13 +52,23 @@ const CSV = rosterCsv([
     preferred: 'Avery',
     certs: 'CSIA L2, CSIA L3, Mystery cert',
     locations: 'MSL, Glen Eden, Shanghai',
-    legal: 'Avery Legalname',
+    legal: 'AVERY JO LEGALNAME',
     dob: '3/4/1995',
     email: 'avery@example.test',
   },
   { preferred: 'Blake', email: 'blake@example.test', dob: '2/30/1990' },
-  { preferred: 'Casey', email: 'casey@example.test', certs: 'CASI Park 1' },
-  { preferred: 'Dana', email: 'dana@example.test', locations: 'Blue Mountain' },
+  {
+    preferred: 'Casey',
+    legal: 'Casey Keptname',
+    email: 'casey@example.test',
+    certs: 'CASI Park 1',
+  },
+  {
+    preferred: 'Dana',
+    legal: 'Dana Keptname',
+    email: 'dana@example.test',
+    locations: 'Blue Mountain',
+  },
   { email: 'bad-email' },
 ]);
 
@@ -322,6 +332,8 @@ describe('runRosterCli --dry-run', () => {
       rowsWithUnmappedCertifications: 1,
       rowsWithUnmappedLocations: 1,
       rowsWithoutCertification: 2,
+      legalNameUsable: 3,
+      legalNameMissing: 1,
     });
     expect(report.unmappedValues).toEqual({
       certifications: { 'Mystery cert': 1 },
@@ -338,6 +350,9 @@ describe('runRosterCli --dry-run', () => {
     const output = `${json}\n${h.logs.join('\n')}`;
     for (const secret of [
       'Legalname',
+      'LEGALNAME',
+      'Avery Jo',
+      'Keptname',
       '1995',
       '555-0100',
       'Fake Street',
@@ -397,6 +412,8 @@ describe('runRosterCli --apply', () => {
           authUserId: 'auth-new-1',
           email: 'avery@example.test',
           displayNameEn: 'Avery',
+          firstName: 'Avery Jo',
+          lastName: 'Legalname',
           dateOfBirth: '1995-03-04',
         },
       ],
@@ -405,6 +422,8 @@ describe('runRosterCli --apply', () => {
           authUserId: 'auth-new-2',
           email: 'blake@example.test',
           displayNameEn: 'Blake',
+          firstName: null,
+          lastName: null,
           dateOfBirth: null,
         },
       ],
@@ -449,7 +468,13 @@ describe('runRosterCli --apply', () => {
       alreadyImported: 1,
       existingUsers: 1,
       failed: 0,
+      legalNameUsable: 3,
+      legalNameMissing: 1,
     });
+    const output = `${h.written.get(OUTSIDE_RESOLVED) as string}\n${h.logs.join('\n')}`;
+    for (const secret of ['Legalname', 'LEGALNAME', 'Avery Jo', 'Keptname']) {
+      expect(output).not.toContain(secret);
+    }
     expect(h.dispatch).not.toHaveBeenCalled();
   });
 

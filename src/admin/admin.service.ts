@@ -161,7 +161,9 @@ export class AdminService {
    * On success appends an `instructor.approve` / `instructor.reject` row to
    * `audit_log` (T6.8); `reason` is carried into the audit metadata (and the
    * rejection email — T8.1). Approval also assigns every published onboarding
-   * document for its season and emails the list; that never fails the approval.
+   * document for its season; that never fails the approval. When it assigns
+   * anything, the documents email (opening with the approval) replaces the
+   * plain approval email, so the instructor gets one email either way.
    */
   async setApprovalStatus(
     id: string,
@@ -205,10 +207,14 @@ export class AdminService {
     // Fire-and-forget notification (approved / rejected). Failures are
     // audited by the mailer and MUST NOT roll back the transition.
     if (status === 'approved') {
-      this.notifyInstructor(updated, 'approved', {
-        loginUrl: this.mailer.portalLink('/login'),
+      const assigned = await this.onboarding.assignPublished(id, {
+        approved: true,
       });
-      await this.onboarding.assignPublished(id, { approved: true });
+      if (!assigned?.created) {
+        this.notifyInstructor(updated, 'approved', {
+          loginUrl: this.mailer.portalLink('/login'),
+        });
+      }
     } else {
       this.notifyInstructor(updated, 'rejected', { reason: reason ?? null });
     }

@@ -100,14 +100,17 @@ describe('AdminService', () => {
 
   describe('listInstructors (T6.3)', () => {
     it('maps rows to camelCase records and passes the filter through', async () => {
-      repo.listInstructors.mockResolvedValue([
-        makeRow({ approval_status: 'approved' }),
-      ]);
+      repo.listInstructors.mockResolvedValue({
+        rows: [makeRow({ approval_status: 'approved' })],
+        total: 1,
+      });
       const filter: ListInstructorsFilter = { status: 'approved' };
 
-      const result = await service.listInstructors(filter);
+      const { instructors: result, total } =
+        await service.listInstructors(filter);
 
-      expect(repo.listInstructors).toHaveBeenCalledWith(filter);
+      expect(repo.listInstructors).toHaveBeenCalledWith(filter, undefined);
+      expect(total).toBe(1);
       expect(result).toEqual([
         expect.objectContaining({
           email: 'jane@example.com',
@@ -117,6 +120,22 @@ describe('AdminService', () => {
         }),
       ]);
     });
+
+    it.each([
+      [{ page: 3 }, { limit: 50, offset: 100 }],
+      [{ limit: 10 }, { limit: 10, offset: 0 }],
+      [
+        { page: 2, limit: 20 },
+        { limit: 20, offset: 20 },
+      ],
+    ])(
+      'pages only when page or limit is given (%j)',
+      async ({ page, limit }: { page?: number; limit?: number }, request) => {
+        repo.listInstructors.mockResolvedValue({ rows: [], total: 0 });
+        await service.listInstructors({}, page, limit);
+        expect(repo.listInstructors).toHaveBeenCalledWith({}, request);
+      },
+    );
   });
 
   describe('getInstructor', () => {

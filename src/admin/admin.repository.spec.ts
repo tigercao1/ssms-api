@@ -1,5 +1,6 @@
 import { InternalServerErrorException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { recordingSupabase } from '../../test/helpers/lessons-fakes';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 
@@ -144,6 +145,89 @@ describe('SupabaseAdminRepository', () => {
     await expect(repo.listInstructors({})).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
+  });
+
+  it('listInstructors returns every match with an exact count when unpaged', async () => {
+    const rows = [{ id: 'i1' }, { id: 'i2' }];
+    const { client, queries } = recordingSupabase({
+      instructors: { data: rows, error: null, count: 2 },
+    });
+    await expect(
+      new SupabaseAdminRepository(client).listInstructors({}),
+    ).resolves.toEqual({ rows, total: 2 });
+    expect(queries[0].ops).toEqual([
+      ['select', expect.any(String), { count: 'exact' }],
+      ['order', 'inserted_at', { ascending: false }],
+      ['order', 'id', { ascending: true }],
+    ]);
+  });
+
+  it('listInstructors pages filtered matches with a range and an exact count', async () => {
+    const { client, queries } = recordingSupabase({
+      instructors: { data: [{ id: 'i51' }], error: null, count: 51 },
+    });
+    await expect(
+      new SupabaseAdminRepository(client).listInstructors(
+        { status: 'approved', isActive: true, q: 'wang' },
+        { limit: 50, offset: 50 },
+      ),
+    ).resolves.toEqual({ rows: [{ id: 'i51' }], total: 51 });
+    expect(queries[0].ops).toEqual([
+      ['select', expect.any(String), { count: 'exact' }],
+      ['eq', 'approval_status', 'approved'],
+      ['eq', 'is_active', true],
+      [
+        'or',
+        'display_name_en.ilike."%wang%",display_name_zh.ilike."%wang%",email.ilike."%wang%"',
+      ],
+      ['order', 'inserted_at', { ascending: false }],
+      ['order', 'id', { ascending: true }],
+      ['range', 50, 99],
+    ]);
+  });
+
+  it('listInstructors answers a page past the end with no rows and the real filtered total', async () => {
+    const { client, queries } = recordingSupabase({
+      instructors: [
+        {
+          data: null,
+          error: {
+            message: 'Requested range not satisfiable',
+            code: 'PGRST103',
+          },
+        },
+        { data: null, error: null, count: 7 },
+      ],
+    });
+    await expect(
+      new SupabaseAdminRepository(client).listInstructors(
+        { status: 'pending', q: 'eric' },
+        { limit: 50, offset: 500 },
+      ),
+    ).resolves.toEqual({ rows: [], total: 7 });
+    expect(queries[1].ops).toEqual([
+      ['select', 'id', { count: 'exact', head: true }],
+      ['eq', 'approval_status', 'pending'],
+      [
+        'or',
+        'display_name_en.ilike."%eric%",display_name_zh.ilike."%eric%",email.ilike."%eric%"',
+      ],
+    ]);
+  });
+
+  it('listInstructors surfaces a failed past-the-end count as 500', async () => {
+    const { client } = recordingSupabase({
+      instructors: [
+        { data: null, error: { message: 'range', code: 'PGRST103' } },
+        { data: null, error: { message: 'boom' } },
+      ],
+    });
+    await expect(
+      new SupabaseAdminRepository(client).listInstructors(
+        {},
+        { limit: 50, offset: 500 },
+      ),
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
   });
 
   it('updateInstructor sends the patch and returns the row', async () => {

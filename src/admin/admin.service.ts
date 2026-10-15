@@ -17,6 +17,7 @@ import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instr
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AuditService } from '../audit/audit.service';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
+import { pageOffset } from '../database/pagination';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
@@ -41,6 +42,12 @@ import {
   UserRoleRecord,
 } from './admin.types';
 import { CreateReferenceDto } from './dto/create-reference.dto';
+import { INSTRUCTOR_LIST_DEFAULT_LIMIT } from './dto/list-instructors-query.dto';
+
+export interface AdminInstructorPage {
+  instructors: AdminInstructorRecord[];
+  total: number;
+}
 
 /** Postgres unique-violation — duplicate reference `key`. */
 const PG_UNIQUE_VIOLATION = '23505';
@@ -113,9 +120,17 @@ export class AdminService {
   /** T6.3 — list every instructor, optionally narrowed by status / active. */
   async listInstructors(
     filter: ListInstructorsFilter,
-  ): Promise<AdminInstructorRecord[]> {
-    const rows = await this.repo.listInstructors(filter);
-    return rows.map((row) => this.toRecord(row));
+    page?: number,
+    limit?: number,
+  ): Promise<AdminInstructorPage> {
+    const size = limit ?? INSTRUCTOR_LIST_DEFAULT_LIMIT;
+    const { rows, total } = await this.repo.listInstructors(
+      filter,
+      page === undefined && limit === undefined
+        ? undefined
+        : { limit: size, offset: pageOffset(page ?? 1, size) },
+    );
+    return { instructors: rows.map((row) => this.toRecord(row)), total };
   }
 
   /** Fetch a single instructor's core record (admin detail). */

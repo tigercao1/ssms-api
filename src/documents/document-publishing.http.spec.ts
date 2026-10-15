@@ -35,7 +35,11 @@ import {
 } from './document-templates.service';
 import type { DocumentTemplateRow, TemplateFieldRow } from './documents.types';
 import { MeDocumentsController } from './me-documents.controller';
-import { MeDocumentsService, PENDING_APPROVAL } from './me-documents.service';
+import {
+  MeDocumentsService,
+  PENDING_APPROVAL,
+  REJECTED,
+} from './me-documents.service';
 import { PdfWorkQueue } from './pdf-work-queue';
 import { PrivateStorageClient } from './private-storage.client';
 
@@ -564,64 +568,91 @@ describe('document publishing HTTP', () => {
     const get = () =>
       http().get('/me/documents').set('Authorization', INSTRUCTOR_AUTH);
 
-    it.each(['pending', 'rejected'])(
-      'a %s instructor gets a locked preview and no rows are written',
-      async (approval) => {
-        const { me, conduct, msl } = await setup(approval);
-        ctx.subjects.uploads.push(
-          certificationUploadRow({
-            instructor_id: me.id,
-            review_status: 'pending',
+    it('a pending instructor gets a locked preview and no rows are written', async () => {
+      const { me, conduct, msl } = await setup();
+      ctx.subjects.uploads.push(
+        certificationUploadRow({
+          instructor_id: me.id,
+          review_status: 'pending',
+        }),
+      );
+      const res = await get().expect(200);
+      expect(res.body).toEqual({
+        season: SEASON,
+        locked: true,
+        lockReason: 'pending_approval',
+        items: [
+          {
+            type: 'document',
+            assignmentId: null,
+            templateId: msl.id,
+            kind: 'read',
+            titleEn: 'MSL guidelines',
+            titleZh: null,
+            descriptionEn: null,
+            descriptionZh: null,
+            required: false,
+            status: null,
+            season: SEASON,
+            assignedAt: null,
+            viewedAt: null,
+            completedAt: null,
+            dueAt: null,
+          },
+          expect.objectContaining({
+            type: 'document',
+            assignmentId: null,
+            templateId: conduct.id,
+            titleZh: '行为准则',
+            required: true,
+            status: null,
           }),
-        );
-        const res = await get().expect(200);
-        expect(res.body).toEqual({
-          season: SEASON,
-          locked: true,
-          lockReason: 'pending_approval',
-          items: [
-            {
-              type: 'document',
-              assignmentId: null,
-              templateId: msl.id,
-              kind: 'read',
-              titleEn: 'MSL guidelines',
-              titleZh: null,
-              descriptionEn: null,
-              descriptionZh: null,
-              required: false,
-              status: null,
-              season: SEASON,
-              assignedAt: null,
-              viewedAt: null,
-              completedAt: null,
-              dueAt: null,
-            },
-            expect.objectContaining({
-              type: 'document',
-              assignmentId: null,
-              templateId: conduct.id,
-              titleZh: '行为准则',
-              required: true,
-              status: null,
-            }),
-            {
-              type: 'certification',
-              org: 'csia',
-              track: 'regular',
-              level: 2,
-              uploadId: null,
-              reviewStatus: 'pending',
-              reviewNote: null,
-              validUntil: '2027-10-31',
-              state: 'pending',
-            },
-          ],
-        });
-        expect(ctx.assignments.rows.size).toBe(0);
-        expect(ctx.mailer.sent).toHaveLength(0);
-      },
-    );
+          {
+            type: 'certification',
+            org: 'csia',
+            track: 'regular',
+            level: 2,
+            uploadId: null,
+            reviewStatus: 'pending',
+            reviewNote: null,
+            validUntil: '2027-10-31',
+            state: 'pending',
+          },
+        ],
+      });
+      expect(ctx.assignments.rows.size).toBe(0);
+      expect(ctx.mailer.sent).toHaveLength(0);
+    });
+
+    it('a rejected instructor gets a locked checklist with no items and 403 rejected on open and complete', async () => {
+      const { me, conduct } = await setup('rejected');
+      ctx.subjects.uploads.push(
+        certificationUploadRow({ instructor_id: me.id }),
+      );
+      await get().expect(200, {
+        season: SEASON,
+        locked: true,
+        lockReason: 'rejected',
+        items: [],
+      });
+      const row = ctx.assignments.seed({
+        template_id: conduct.id,
+        subject_id: me.id,
+        season: SEASON,
+      });
+      const expected = { message: REJECTED, reason: 'rejected' };
+      await http()
+        .get(`/me/documents/${row.id}`)
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .expect(403, expected);
+      await http()
+        .post(`/me/documents/${row.id}/complete`)
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .send({ consent: true, values: {} })
+        .expect(403, expected);
+      expect(ctx.assignments.rows.get(row.id)?.status).toBe('assigned');
+      expect(ctx.mailer.sent).toHaveLength(0);
+    });
 
     it('previews every live all template without CURRENT_SEASON, and nothing when none is published', async () => {
       ctx = await build();

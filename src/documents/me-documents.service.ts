@@ -29,6 +29,20 @@ export const INSTRUCTOR_PROFILE_NOT_FOUND = 'Instructor profile not found';
 export const PENDING_APPROVAL =
   'Your profile is being reviewed; onboarding opens once an admin approves you';
 export const PENDING_APPROVAL_REASON: ChecklistLockReason = 'pending_approval';
+export const REJECTED =
+  'Your profile was not approved, so onboarding documents are not available';
+export const REJECTED_REASON: ChecklistLockReason = 'rejected';
+
+function lockFor(
+  instructor: DocumentInstructorRow,
+): { message: string; reason: ChecklistLockReason } | null {
+  if (instructor.approval_status === 'approved') {
+    return null;
+  }
+  return instructor.approval_status === 'rejected'
+    ? { message: REJECTED, reason: REJECTED_REASON }
+    : { message: PENDING_APPROVAL, reason: PENDING_APPROVAL_REASON };
+}
 
 function bySortOrder(a: DocumentAssignmentRow, b: DocumentAssignmentRow) {
   return (
@@ -134,16 +148,17 @@ export class MeDocumentsService {
     return instructor;
   }
 
-  /** {@link instructorFor}, then 403 `pending_approval` unless the instructor is approved. */
+  /**
+   * {@link instructorFor}, then 403 unless the instructor is approved:
+   * `reason: 'rejected'` for a rejected instructor, else `'pending_approval'`.
+   */
   async approvedInstructorFor(
     authUserId: string,
   ): Promise<DocumentInstructorRow> {
     const instructor = await this.instructorFor(authUserId);
-    if (instructor.approval_status !== 'approved') {
-      throw new ForbiddenException({
-        message: PENDING_APPROVAL,
-        reason: PENDING_APPROVAL_REASON,
-      });
+    const lock = lockFor(instructor);
+    if (lock) {
+      throw new ForbiddenException(lock);
     }
     return instructor;
   }
@@ -157,13 +172,23 @@ export class MeDocumentsService {
    * Until the instructor is approved the checklist is `locked` and a preview:
    * one item per `live` template published to `all` for the season, without
    * an assignment, and the certification items without their upload id.
+   * A rejected instructor gets `lockReason: 'rejected'` and no items.
    */
   async checklist(
     authUserId: string,
     today = torontoToday(),
   ): Promise<Checklist> {
     const instructor = await this.instructorFor(authUserId);
-    const locked = instructor.approval_status !== 'approved';
+    const lock = lockFor(instructor);
+    if (lock?.reason === REJECTED_REASON) {
+      return {
+        season: this.currentSeason([]),
+        locked: true,
+        lockReason: REJECTED_REASON,
+        items: [],
+      };
+    }
+    const locked = lock !== null;
     const [certifications, uploads] = await Promise.all([
       this.subjects.listCertifications(instructor.id),
       this.subjects.listCertificationUploads(instructor.id),

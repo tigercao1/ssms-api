@@ -387,7 +387,7 @@ export interface CertificationChecklistItem {
 
 export type ChecklistItem = DocumentChecklistItem | CertificationChecklistItem;
 
-export type ChecklistLockReason = 'pending_approval';
+export type ChecklistLockReason = 'pending_approval' | 'rejected';
 
 /** `GET /me/documents`; while `locked`, `items` is a preview and nothing is assigned. */
 export interface Checklist {

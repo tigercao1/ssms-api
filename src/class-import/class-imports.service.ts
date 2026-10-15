@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { hasCode } from '../database/db-result';
+import { pageOffset } from '../database/pagination';
 import {
   ClassImportCsvError,
   type ParsedImportRow,
@@ -43,6 +44,12 @@ import {
   type ImportRowRecord,
   MAX_IMPORTS_LISTED,
 } from './class-imports.repository';
+import { IMPORT_ROWS_DEFAULT_LIMIT } from './dto/class-import.dto';
+
+export interface ClassImportDetailPage {
+  detail: ClassImportDetail;
+  total: number;
+}
 
 export const IMPORT_NOT_FOUND = 'Class import not found';
 export const IMPORT_ROW_NOT_FOUND = 'Class import row not found';
@@ -206,8 +213,23 @@ export class ClassImportsService {
     return this.detail(created);
   }
 
-  async get(id: string, filter?: RowFilter): Promise<ClassImportDetail> {
-    return this.detail(await this.load(id), filter);
+  async get(
+    id: string,
+    filter?: RowFilter,
+    page?: number,
+    limit?: number,
+  ): Promise<ClassImportDetailPage> {
+    const detail = await this.detail(await this.load(id), filter);
+    const total = detail.rows.length;
+    if (page === undefined && limit === undefined) {
+      return { detail, total };
+    }
+    const size = limit ?? IMPORT_ROWS_DEFAULT_LIMIT;
+    const offset = pageOffset(page ?? 1, size);
+    return {
+      detail: { ...detail, rows: detail.rows.slice(offset, offset + size) },
+      total,
+    };
   }
 
   async updateRow(

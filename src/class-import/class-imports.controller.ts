@@ -12,16 +12,19 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { Roles, RolesGuard } from '../admin/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { toActor } from '../audit/admin-actor';
+import { TOTAL_COUNT_HEADER } from '../config/cors';
 import type {
   ClassImport,
   ClassImportDetail,
@@ -78,11 +81,19 @@ export class ClassImportsController {
   }
 
   @Get(':id')
-  get(
+  async get(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Query() query: ClassImportQueryDto,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<ClassImportDetail> {
-    return this.imports.get(id, query.problem);
+    const { detail, total } = await this.imports.get(
+      id,
+      query.problem,
+      query.page,
+      query.limit,
+    );
+    res.setHeader(TOTAL_COUNT_HEADER, String(total));
+    return detail;
   }
 
   @Patch(':id/rows/:rowNo')

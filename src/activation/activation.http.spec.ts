@@ -90,8 +90,8 @@ describe('Activation HTTP', () => {
     ),
   };
   const onboarding = {
-    assignRequired: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
-    assignRequiredForAuthUser: jest.fn().mockResolvedValue(null),
+    assignPublished: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
+    assignPublishedForAuthUser: jest.fn().mockResolvedValue(null),
   };
   const auth = {
     findEmail: jest.fn().mockResolvedValue('jane@example.test'),
@@ -240,10 +240,7 @@ describe('Activation HTTP', () => {
         'auth-1',
         expect.any(Date),
       );
-      expect(onboarding.assignRequired).toHaveBeenCalledWith(
-        'ins-1',
-        '2026/27',
-      );
+      expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
     });
 
     it('204 even when auto-assign finds nothing to assign', async () => {
@@ -252,7 +249,7 @@ describe('Activation HTTP', () => {
         .post('/me/activation/complete')
         .set('Authorization', 'Bearer good')
         .expect(204);
-      expect(onboarding.assignRequiredForAuthUser).toHaveBeenCalledWith(
+      expect(onboarding.assignPublishedForAuthUser).toHaveBeenCalledWith(
         'auth-1',
       );
     });
@@ -262,7 +259,7 @@ describe('Activation HTTP', () => {
         .post('/me/activation/complete')
         .expect(401);
       expect(invites.markActivated).not.toHaveBeenCalled();
-      expect(onboarding.assignRequired).not.toHaveBeenCalled();
+      expect(onboarding.assignPublished).not.toHaveBeenCalled();
     });
   });
 });

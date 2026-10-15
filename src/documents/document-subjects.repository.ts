@@ -29,6 +29,10 @@ export abstract class DocumentSubjectsRepository {
   abstract findInstructor(id: string): Promise<DocumentInstructorRow | null>;
   /** Ids of every approved, active instructor. */
   abstract listActiveApprovedInstructorIds(): Promise<string[]>;
+  /** How many instructors are approved and active. */
+  abstract countActiveApprovedInstructors(): Promise<number>;
+  /** How many instructors are waiting for approval. */
+  abstract countPendingInstructors(): Promise<number>;
   /** The subset of `ids` that are instructors. */
   abstract existingInstructorIds(ids: string[]): Promise<Set<string>>;
   /** The instructor's `instructor_certifications` rows, by org then track. */
@@ -79,6 +83,25 @@ export class SupabaseDocumentSubjectsRepository extends DocumentSubjectsReposito
       .eq('is_active', true)) as DbResult<{ id: string }[]>;
     check(error, 'list active instructors');
     return (data ?? []).map((row) => row.id);
+  }
+
+  async countActiveApprovedInstructors(): Promise<number> {
+    const { count, error } = await this.supabase
+      .from('instructors')
+      .select('id', { count: 'exact', head: true })
+      .eq('approval_status', 'approved')
+      .eq('is_active', true);
+    check(error, 'count active instructors');
+    return count ?? 0;
+  }
+
+  async countPendingInstructors(): Promise<number> {
+    const { count, error } = await this.supabase
+      .from('instructors')
+      .select('id', { count: 'exact', head: true })
+      .eq('approval_status', 'pending');
+    check(error, 'count pending instructors');
+    return count ?? 0;
   }
 
   async existingInstructorIds(ids: string[]): Promise<Set<string>> {

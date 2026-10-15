@@ -161,7 +161,11 @@ describe('documents emails and reminders HTTP', () => {
         expect.objectContaining({
           template: 'documents.assigned',
           to: 'a@example.com',
-          metadata: { templateIds: [ctx.template.id], season: '2026-27' },
+          metadata: {
+            templateIds: [ctx.template.id],
+            season: '2026-27',
+            approved: false,
+          },
         }),
       ]);
 
@@ -338,10 +342,11 @@ describe('documents emails and reminders HTTP', () => {
       it('reminds open assignments over 7 days old and not reminded in 7 days, once per instructor', async () => {
         const { template, templates, assignments, subjects } = ctx;
         const other = templates.seed({ title_en: 'Policy' });
-        const retired = templates.seed({ is_active: false });
+        const retired = templates.seed({ status: 'retired' });
         const zoe = subjects.seedInstructor({ email: 'zoe@example.com' });
         const max = subjects.seedInstructor({ email: 'max@example.com' });
         const gone = subjects.seedInstructor({ is_active: false });
+        const pending = subjects.seedInstructor({ approval_status: 'pending' });
         const seed = (
           subjectId: string,
           overrides: Parameters<typeof assignments.seed>[0] extends infer P
@@ -377,6 +382,7 @@ describe('documents emails and reminders HTTP', () => {
           }),
           seed(max.id, { assigned_at: daysAgo(30) }, retired.id),
           seed(gone.id, { assigned_at: daysAgo(30) }),
+          seed(pending.id, { assigned_at: daysAgo(30) }),
           seed(zoe.id, {
             assigned_at: daysAgo(30),
             subject_type: 'customer',
@@ -387,7 +393,7 @@ describe('documents emails and reminders HTTP', () => {
         const res = await run(`Bearer ${TOKEN}`).expect(200);
 
         expect(res.body).toEqual({
-          documents: { due: 4, reminded: 3, emails: 2 },
+          documents: { due: 5, reminded: 3, emails: 2 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         expect(
@@ -421,7 +427,7 @@ describe('documents emails and reminders HTTP', () => {
 
         const again = await run(`Bearer ${TOKEN}`).expect(200);
         expect(again.body).toEqual({
-          documents: { due: 1, reminded: 0, emails: 0 },
+          documents: { due: 2, reminded: 0, emails: 0 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
         });
         expect(ctx.mailer.sent).toHaveLength(2);

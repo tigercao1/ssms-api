@@ -103,7 +103,10 @@ export interface EmailTemplateVars {
   'certification.expiring': CertificationExpiryVars;
   'certification.expired': CertificationExpiryVars;
   'admin.instructor_pending': { instructorEmail: string; reviewUrl: string };
-  'documents.assigned': DocumentListVars;
+  'documents.assigned': DocumentListVars & {
+    /** Sent on admin approval: opens with the approval instead of the plain intro. */
+    approved?: boolean;
+  };
   'documents.reminder': DocumentListVars;
   'documents.completed': GreetingVars & {
     document: EmailDocumentTitle;

@@ -31,6 +31,8 @@ import type {
   InstructorCertificationRow,
   NewAssignmentRow,
   SubjectType,
+  TemplateAssignmentStats,
+  TemplateStatus,
 } from '../../src/documents/documents.types';
 import {
   ObjectTooLargeError,
@@ -174,6 +176,11 @@ export function templateRow(
     description_zh: null,
     required: true,
     is_active: true,
+    status: 'live',
+    assign_to: 'selected',
+    season: '2026-27',
+    published_at: null,
+    published_by: null,
     sort_order: 0,
     source_key: null,
     source_sha256: null,
@@ -209,16 +216,23 @@ export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesReposi
     return Promise.resolve(this.rows.get(id) ?? null);
   }
 
-  async listActiveRequired(
+  async listLiveForAll(
     audience: DocumentTemplateRow['audience'],
+    season?: string | null,
   ): Promise<DocumentTemplateRow[]> {
     return (await this.list()).filter(
-      (t) => t.audience === audience && t.is_active && t.required,
+      (t) =>
+        t.audience === audience &&
+        t.status === 'live' &&
+        t.assign_to === 'all' &&
+        (!season || t.season === season),
     );
   }
 
   insert(input: NewDocumentTemplate): Promise<DocumentTemplateRow> {
-    return Promise.resolve(this.seed(input));
+    return Promise.resolve(
+      this.seed({ status: 'draft', assign_to: null, season: null, ...input }),
+    );
   }
 
   update(
@@ -232,6 +246,17 @@ export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesReposi
     const next = { ...row, ...patch, updated_at: nextTimestamp() };
     this.rows.set(id, next);
     return Promise.resolve(next);
+  }
+
+  updateIfStatus(
+    id: string,
+    statuses: TemplateStatus[],
+    patch: DocumentTemplateWrite,
+  ): Promise<DocumentTemplateRow | null> {
+    const row = this.rows.get(id);
+    return row && statuses.includes(row.status)
+      ? this.update(id, patch)
+      : Promise.resolve(null);
   }
 }
 
@@ -296,7 +321,7 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
             description_en: t.description_en,
             description_zh: t.description_zh,
             required: t.required,
-            is_active: t.is_active,
+            status: t.status,
             sort_order: t.sort_order,
           }
         : null,
@@ -402,6 +427,39 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
       : Promise.resolve(null);
   }
 
+  hasCompleted(templateId: string): Promise<boolean> {
+    return Promise.resolve(
+      [...this.rows.values()].some(
+        (r) => r.template_id === templateId && r.status === 'completed',
+      ),
+    );
+  }
+
+  templateStatsCalls: string[][] = [];
+
+  templateStats(
+    templateIds: string[],
+  ): Promise<Map<string, TemplateAssignmentStats>> {
+    this.templateStatsCalls.push(templateIds);
+    const stats = new Map<string, TemplateAssignmentStats>();
+    for (const id of templateIds) {
+      const template = this.templates.rows.get(id);
+      if (!template) {
+        continue;
+      }
+      const open = [...this.rows.values()].filter(
+        (r) => r.template_id === id && r.status !== 'archived',
+      );
+      const inSeason = open.filter((r) => r.season === template.season);
+      stats.set(id, {
+        assignedCount: inSeason.length,
+        completedCount: inSeason.filter((r) => r.status === 'completed').length,
+        hasCompleted: open.some((r) => r.status === 'completed'),
+      });
+    }
+    return Promise.resolve(stats);
+  }
+
   listDueForReminder(
     subjectType: SubjectType,
     cutoff: Date,
@@ -492,6 +550,22 @@ export class InMemoryDocumentSubjectsRepository extends DocumentSubjectsReposito
       [...this.instructors.values()]
         .filter((i) => i.approval_status === 'approved' && i.is_active)
         .map((i) => i.id),
+    );
+  }
+
+  countActiveApprovedInstructors(): Promise<number> {
+    return Promise.resolve(
+      [...this.instructors.values()].filter(
+        (i) => i.approval_status === 'approved' && i.is_active,
+      ).length,
+    );
+  }
+
+  countPendingInstructors(): Promise<number> {
+    return Promise.resolve(
+      [...this.instructors.values()].filter(
+        (i) => i.approval_status === 'pending',
+      ).length,
     );
   }
 

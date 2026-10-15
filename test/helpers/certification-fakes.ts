@@ -113,6 +113,7 @@ export class InMemoryCertificationUploadsRepository extends CertificationUploads
                   display_name_en: instructor.display_name_en,
                   preferred_language: this.languages.get(instructor.id) ?? 'en',
                   is_active: instructor.is_active,
+                  approval_status: instructor.approval_status,
                 }
               : null,
           };

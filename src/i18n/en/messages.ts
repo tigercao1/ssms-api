@@ -393,6 +393,18 @@ export const en: MessageCatalog = {
         finePrint:
           "You're receiving this because you're an instructor with Serendipity Snow Club.",
       },
+      assignedOnApproval: {
+        subject: "You're approved: onboarding documents to complete",
+        preheader: 'Your SSnow instructor profile is approved.',
+        heading: "You're approved",
+        paragraphs: [
+          'Your SSnow instructor profile is approved. Before the season starts, please complete:',
+          'It only takes a few minutes, and you can do it on your phone.',
+        ],
+        button: 'Open onboarding',
+        finePrint:
+          "You're receiving this because you're an instructor with Serendipity Snow Club.",
+      },
       reminder: {
         subject: 'Reminder: onboarding documents waiting for you',
         preheader: 'Some onboarding documents are still open.',

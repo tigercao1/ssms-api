@@ -1,0 +1,174 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AuditService } from '../audit/audit.service';
+import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import { DocumentAssignmentsRepository } from './document-assignments.repository';
+import {
+  DocumentAssignmentsService,
+  type TemplateAssignmentOutcome,
+} from './document-assignments.service';
+import { DocumentSubjectsRepository } from './document-subjects.repository';
+import { DocumentTemplatesRepository } from './document-templates.repository';
+import { DocumentTemplatesService } from './document-templates.service';
+import type {
+  PublishPreview,
+  PublishResult,
+  Template,
+} from './documents.types';
+import type { PublishTemplateDto } from './dto/template.dto';
+
+export const TEMPLATE_ALREADY_LIVE = 'This document is already published';
+export const TEMPLATE_NOT_LIVE = 'Only a published document can be retired';
+export const PUBLISH_NEEDS_SOURCE = 'Upload the PDF before publishing';
+export const PUBLISH_NEEDS_FIELDS =
+  'Place at least one field before publishing a document to sign';
+export const PUBLISH_ALL_NEEDS_INSTRUCTORS =
+  'Only instructor documents can be published to all instructors';
+export const SEASON_REQUIRED =
+  'Choose a season; CURRENT_SEASON is not configured';
+
+/**
+ * The template lifecycle: `draft` → `live` (publish) → `retired` (retire),
+ * and `retired` → `live` again. Publishing to `all` assigns the template to
+ * every approved, active instructor for its season and emails each one who
+ * was newly assigned; instructors approved later get it on approval.
+ */
+@Injectable()
+export class DocumentPublishingService {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly repo: DocumentTemplatesRepository,
+    private readonly templates: DocumentTemplatesService,
+    private readonly assignments: DocumentAssignmentsService,
+    private readonly assignmentRows: DocumentAssignmentsRepository,
+    private readonly subjects: DocumentSubjectsRepository,
+    private readonly audit: AuditService,
+  ) {}
+
+  /** `GET /admin/documents/templates/:id/publish-preview`. */
+  async preview(id: string, season?: string): Promise<PublishPreview> {
+    await this.templates.load(id);
+    const resolved = this.resolveSeason(season);
+    const [approved, pendingCount] = await Promise.all([
+      this.subjects.listActiveApprovedInstructorIds(),
+      this.subjects.countPendingInstructors(),
+    ]);
+    const assigned = await this.assignmentRows.findOpenSubjectIds(
+      id,
+      resolved,
+      'instructor',
+      approved,
+    );
+    return {
+      season: resolved,
+      approvedCount: approved.length,
+      pendingCount,
+      alreadyAssignedCount: assigned.size,
+    };
+  }
+
+  /** `POST /admin/documents/templates/:id/publish`, from `draft` or `retired`. */
+  async publish(
+    id: string,
+    dto: PublishTemplateDto,
+    actor: AuditActor,
+    now = new Date(),
+  ): Promise<PublishResult> {
+    const before = await this.templates.load(id);
+    if (before.status === 'live') {
+      throw new ConflictException(TEMPLATE_ALREADY_LIVE);
+    }
+    if (!before.source_key) {
+      throw new BadRequestException(PUBLISH_NEEDS_SOURCE);
+    }
+    if (before.kind === 'sign' && before.fields.length === 0) {
+      throw new BadRequestException(PUBLISH_NEEDS_FIELDS);
+    }
+    if (dto.assignTo === 'all' && before.audience !== 'instructor') {
+      throw new BadRequestException(PUBLISH_ALL_NEEDS_INSTRUCTORS);
+    }
+    const season = this.resolveSeason(dto.season);
+    const row = await this.repo.updateIfStatus(id, ['draft', 'retired'], {
+      status: 'live',
+      is_active: true,
+      assign_to: dto.assignTo,
+      season,
+      published_at: now.toISOString(),
+      published_by: actor.userId ?? null,
+      updated_by: actor.userId ?? null,
+    });
+    if (!row) {
+      throw new ConflictException(TEMPLATE_ALREADY_LIVE);
+    }
+    const outcome: TemplateAssignmentOutcome =
+      dto.assignTo === 'all'
+        ? await this.assignments.assignTemplateTo(
+            id,
+            season,
+            await this.subjects.listActiveApprovedInstructorIds(),
+          )
+        : { createdSubjectIds: [], skipped: 0 };
+    const created = outcome.createdSubjectIds.length;
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplatePublish,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        from: before.status,
+        assignTo: dto.assignTo,
+        season,
+        created,
+        skipped: outcome.skipped,
+      },
+    });
+    void this.assignments.notifyAssigned(
+      row,
+      season,
+      outcome.createdSubjectIds,
+    );
+    return {
+      template: await this.templates.present(row),
+      created,
+      skipped: outcome.skipped,
+    };
+  }
+
+  /** `POST /admin/documents/templates/:id/retire`; existing assignments are kept. */
+  async retire(id: string, actor: AuditActor): Promise<Template> {
+    const before = await this.templates.load(id);
+    const row = await this.repo.updateIfStatus(id, ['live'], {
+      status: 'retired',
+      is_active: false,
+      updated_by: actor.userId ?? null,
+    });
+    if (!row) {
+      throw new ConflictException(TEMPLATE_NOT_LIVE);
+    }
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplateRetire,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        from: before.status,
+        assignTo: before.assign_to,
+        season: before.season,
+      },
+    });
+    return this.templates.present(row);
+  }
+
+  private resolveSeason(season?: string): string {
+    const resolved =
+      season?.trim() || this.config.get<string>('CURRENT_SEASON')?.trim();
+    if (!resolved) {
+      throw new BadRequestException(SEASON_REQUIRED);
+    }
+    return resolved;
+  }
+}

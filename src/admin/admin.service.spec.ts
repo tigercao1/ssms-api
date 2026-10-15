@@ -73,7 +73,7 @@ describe('AdminService', () => {
     portalLink: jest.fn((path: string) => `https://portal.example.com${path}`),
   };
   const onboarding = {
-    assignRequired: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
+    assignPublished: jest.fn().mockResolvedValue({ created: 0, skipped: 0 }),
   };
   const translator = {
     modelId: 'gemini-test',
@@ -192,20 +192,63 @@ describe('AdminService', () => {
           }) as unknown,
         }),
       );
-      expect(onboarding.assignRequired).toHaveBeenCalledWith('id');
+      expect(onboarding.assignPublished).toHaveBeenCalledWith('id', {
+        approved: true,
+      });
     });
 
-    it('still approves when assigning onboarding documents resolves null (failed)', async () => {
+    it('skips the plain approval email when documents were assigned', async () => {
       repo.findInstructorById.mockResolvedValue(makeRow());
       repo.updateInstructor.mockResolvedValue(
         makeRow({ approval_status: 'approved' }),
       );
-      onboarding.assignRequired.mockResolvedValueOnce(null);
+      onboarding.assignPublished.mockResolvedValueOnce({
+        created: 2,
+        skipped: 1,
+      });
 
       const result = await service.setApprovalStatus('id', 'approved');
 
       expect(result.approvalStatus).toBe('approved');
-      expect(onboarding.assignRequired).toHaveBeenCalledTimes(1);
+      expect(onboarding.assignPublished).toHaveBeenCalledWith('id', {
+        approved: true,
+      });
+      expect(mailer.send).not.toHaveBeenCalled();
+    });
+
+    it('sends the plain approval email when nothing new was assigned', async () => {
+      repo.findInstructorById.mockResolvedValue(makeRow());
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved' }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce({
+        created: 0,
+        skipped: 2,
+      });
+
+      await service.setApprovalStatus('id', 'approved');
+
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ template: 'approved' }),
+      );
+    });
+
+    it('still approves and sends the plain approval email when assigning onboarding documents resolves null (failed)', async () => {
+      repo.findInstructorById.mockResolvedValue(makeRow());
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved' }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce(null);
+
+      const result = await service.setApprovalStatus('id', 'approved');
+
+      expect(result.approvalStatus).toBe('approved');
+      expect(onboarding.assignPublished).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ template: 'approved' }),
+      );
     });
 
     it('rejects a pending instructor', async () => {
@@ -230,7 +273,7 @@ describe('AdminService', () => {
           vars: expect.objectContaining({ reason: 'why' }) as unknown,
         }),
       );
-      expect(onboarding.assignRequired).not.toHaveBeenCalled();
+      expect(onboarding.assignPublished).not.toHaveBeenCalled();
     });
 
     it('refuses an invalid transition from a non-pending state (400)', async () => {

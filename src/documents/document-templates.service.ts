@@ -149,6 +149,9 @@ export class DocumentTemplatesService {
     const patch = toWrite(dto);
     const fields = Object.keys(patch) as (keyof DocumentTemplateWrite)[];
     if (fields.length === 0) {
+      if (dto.isActive !== undefined) {
+        return this.get(id);
+      }
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
     const before = await this.load(id);

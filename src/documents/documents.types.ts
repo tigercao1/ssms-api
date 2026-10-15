@@ -220,6 +220,7 @@ export interface TemplateSummary {
   descriptionZh: string | null;
   required: boolean;
   status: TemplateStatus;
+  isActive: boolean;
   assignTo: TemplateAssignTo | null;
   season: string | null;
   publishedAt: string | null;

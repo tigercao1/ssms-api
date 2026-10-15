@@ -231,7 +231,7 @@ describe('documents HTTP', () => {
           targetId: (res.body as { id: string }).id,
         }),
       ]);
-      expect(res.body).not.toHaveProperty('isActive');
+      expect(res.body).toMatchObject({ isActive: false });
       expect(
         ctx.templates.rows.get((res.body as { id: string }).id)?.is_active,
       ).toBe(false);
@@ -327,6 +327,7 @@ describe('documents HTTP', () => {
       expect(res.body).toMatchObject({
         titleZh: null,
         status: 'live',
+        isActive: true,
         sortOrder: 5,
       });
       expect(ctx.audit.entries[0]).toMatchObject({
@@ -339,7 +340,7 @@ describe('documents HTTP', () => {
       await http()
         .patch(`/admin/documents/templates/${t.id}`)
         .set('Authorization', admin)
-        .send({ isActive: false })
+        .send({ isActive: 'no' })
         .expect(400);
       await http()
         .patch(`/admin/documents/templates/${t.id}`)
@@ -365,6 +366,56 @@ describe('documents HTTP', () => {
         .set('Authorization', admin)
         .send({ required: false })
         .expect(404);
+    });
+
+    it('accepts and ignores isActive in a patch', async () => {
+      const live = ctx.templates.seed();
+      const draft = ctx.templates.seed({ status: 'draft', is_active: false });
+      const ignored = await http()
+        .patch(`/admin/documents/templates/${live.id}`)
+        .set('Authorization', admin)
+        .send({ isActive: false })
+        .expect(200);
+      expect(ignored.body).toMatchObject({
+        id: live.id,
+        status: 'live',
+        isActive: true,
+      });
+      expect(ctx.audit.entries).toEqual([]);
+      const mixed = await http()
+        .patch(`/admin/documents/templates/${draft.id}`)
+        .set('Authorization', admin)
+        .send({ isActive: true, sortOrder: 7 })
+        .expect(200);
+      expect(mixed.body).toMatchObject({
+        status: 'draft',
+        isActive: false,
+        sortOrder: 7,
+      });
+      expect(ctx.templates.rows.get(live.id)).toMatchObject({
+        status: 'live',
+        is_active: true,
+      });
+      expect(ctx.templates.rows.get(draft.id)).toMatchObject({
+        status: 'draft',
+        is_active: false,
+        sort_order: 7,
+      });
+      expect(ctx.audit.entries).toHaveLength(1);
+      expect(ctx.audit.entries[0].metadata).toEqual({
+        before: { sort_order: 0 },
+        after: { sort_order: 7 },
+      });
+      const list = await http()
+        .get('/admin/documents/templates')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(list.body).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: live.id, isActive: true }),
+          expect.objectContaining({ id: draft.id, isActive: false }),
+        ]),
+      );
     });
 
     it('presigns a source upload up to 20 MB', async () => {

@@ -60,6 +60,7 @@ export function toTemplateSummary(
     descriptionZh: row.description_zh,
     required: row.required,
     status: row.status,
+    isActive: row.status === 'live',
     assignTo: row.assign_to,
     season: row.season,
     publishedAt: row.published_at,

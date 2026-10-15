@@ -31,6 +31,20 @@ export const PAYROLL_CLASS_COLUMNS = [
   'participants:class_participants(customer:customers(first_name, last_name))',
 ].join(', ');
 
+export const INSTRUCTOR_APPROVAL_COLUMNS = 'id, approval_status';
+export const INSTRUCTOR_CLASS_COLUMNS = [
+  'id, instructor_id, lesson_type_id, starts_at, ends_at, status',
+  'lesson_type:lesson_types(name_en, name_zh)',
+  'location:teaching_locations(name)',
+  'participants:class_participants(customer:customers(first_name, last_name))',
+].join(', ');
+export const INSTRUCTOR_LINE_COLUMNS = [
+  'id, period_id, instructor_id, class_id, kind, description, lesson_type_id, class_status, starts_at, ends_at, customer_names, minutes, hourly_rate, rate_unit, currency, amount, flags, created_at',
+  'lesson_type:lesson_types(name_zh)',
+  `period:payroll_periods(${PAYROLL_PERIOD_COLUMNS})`,
+  'class:classes(location:teaching_locations(name), participants:class_participants(customer:customers(first_name, last_name)))',
+].join(', ');
+
 export interface PayrollSettingsRow {
   anchor_date: string;
   period_days: number;
@@ -96,6 +110,37 @@ export interface PayrollClassRow {
     | null;
 }
 
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface InstructorApprovalRow {
+  id: string;
+  approval_status: ApprovalStatus;
+}
+
+export interface ParticipantEmbed {
+  customer: { first_name: string | null; last_name: string | null } | null;
+}
+
+export interface InstructorClassRow extends Omit<
+  PayrollClassRow,
+  'instructor'
+> {
+  location: { name: string } | null;
+}
+
+export interface InstructorLineRow extends Omit<PayrollLineRow, 'instructor'> {
+  period: PayrollPeriodRow | null;
+  class: {
+    location: { name: string } | null;
+    participants: ParticipantEmbed[] | null;
+  } | null;
+}
+
+export interface ClassLinePeriod {
+  class_id: string;
+  period_id: string;
+}
+
 export interface AdjustmentInsert {
   period_id: string;
   instructor_id: string;
@@ -149,6 +194,17 @@ export abstract class PayrollRepository {
     actor: string | null,
   ): Promise<void>;
   abstract reopen(periodId: string): Promise<void>;
+  abstract instructorByAuthUser(
+    authUserId: string,
+  ): Promise<InstructorApprovalRow | null>;
+  abstract classesForInstructor(
+    instructorId: string,
+  ): Promise<InstructorClassRow[]>;
+  abstract linesForInstructor(
+    instructorId: string,
+  ): Promise<InstructorLineRow[]>;
+  abstract periodsStartingOn(startsOn: string[]): Promise<PayrollPeriodRow[]>;
+  abstract classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]>;
 }
 
 @Injectable()
@@ -342,5 +398,93 @@ export class SupabasePayrollRepository extends PayrollRepository {
       p_period_id: periodId,
     });
     check(error, 'reopen payroll period');
+  }
+
+  async instructorByAuthUser(
+    authUserId: string,
+  ): Promise<InstructorApprovalRow | null> {
+    const { data, error } = (await this.supabase
+      .from('instructors')
+      .select(INSTRUCTOR_APPROVAL_COLUMNS)
+      .eq('auth_user_id', authUserId)
+      .maybeSingle()) as DbResult<InstructorApprovalRow>;
+    check(error, 'load instructor');
+    return data ?? null;
+  }
+
+  async classesForInstructor(
+    instructorId: string,
+  ): Promise<InstructorClassRow[]> {
+    const rows: InstructorClassRow[] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = (await this.supabase
+        .from('classes')
+        .select(INSTRUCTOR_CLASS_COLUMNS)
+        .eq('instructor_id', instructorId)
+        .neq('status', 'cancelled')
+        .order('starts_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1)) as unknown as DbResult<
+        InstructorClassRow[]
+      >;
+      check(error, 'load instructor classes');
+      const page = data ?? [];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) {
+        return rows;
+      }
+    }
+  }
+
+  async linesForInstructor(instructorId: string): Promise<InstructorLineRow[]> {
+    const rows: InstructorLineRow[] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = (await this.supabase
+        .from(PAYROLL_LINES_TABLE)
+        .select(INSTRUCTOR_LINE_COLUMNS)
+        .eq('instructor_id', instructorId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1)) as unknown as DbResult<
+        InstructorLineRow[]
+      >;
+      check(error, 'load instructor payroll lines');
+      const page = data ?? [];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) {
+        return rows;
+      }
+    }
+  }
+
+  async periodsStartingOn(startsOn: string[]): Promise<PayrollPeriodRow[]> {
+    const rows: PayrollPeriodRow[] = [];
+    for (let i = 0; i < startsOn.length; i += CLASS_ID_CHUNK) {
+      const { data, error } = (await this.supabase
+        .from(PAYROLL_PERIODS_TABLE)
+        .select(PAYROLL_PERIOD_COLUMNS)
+        .in('starts_on', startsOn.slice(i, i + CLASS_ID_CHUNK))) as DbResult<
+        PayrollPeriodRow[]
+      >;
+      check(error, 'load payroll periods');
+      rows.push(...(data ?? []));
+    }
+    return rows;
+  }
+
+  async classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]> {
+    const rows: ClassLinePeriod[] = [];
+    for (let i = 0; i < classIds.length; i += CLASS_ID_CHUNK) {
+      const { data, error } = (await this.supabase
+        .from(PAYROLL_LINES_TABLE)
+        .select('class_id, period_id')
+        .eq('kind', 'class')
+        .in('class_id', classIds.slice(i, i + CLASS_ID_CHUNK))) as DbResult<
+        ClassLinePeriod[]
+      >;
+      check(error, 'load paid payroll classes');
+      rows.push(...(data ?? []));
+    }
+    return rows;
   }
 }

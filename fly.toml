@@ -7,6 +7,10 @@ app = 'ssms-api-vivid-brook-6788'
 primary_region = 'iad'
 
 [build]
+
+[env]
+  NODE_OPTIONS = '--max-old-space-size=320'
+
 [http_service]
   internal_port = 3000
   force_https = true
@@ -17,7 +21,7 @@ primary_region = 'iad'
 
 [[vm]]
   size = 'shared-cpu-1x'
-  memory = '256mb'
+  memory = '512mb'
 
 [checks]
   [checks.health]
@@ -27,5 +31,5 @@ primary_region = 'iad'
     interval = "30s"
     timeout = "5s"
     # /health makes live calls to Supabase (DB count + JWKS fetch), so allow
-    # generous startup time on a 256MB shared VM.
+    # generous startup time on a small shared VM.
     grace_period = "30s"

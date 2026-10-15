@@ -8,17 +8,20 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
+import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import type {
   ConfirmedTemplate,
   DocumentTemplateRow,
   DocumentTemplateWrite,
   Template,
+  TemplateCounts,
   TemplateField,
   TemplateSummary,
   UploadUrl,
 } from './documents.types';
 import {
+  NO_TEMPLATE_COUNTS,
   toTemplate,
   toTemplateFieldRow,
   toTemplateSummary,
@@ -94,6 +97,7 @@ export class DocumentTemplatesService {
   constructor(
     private readonly repo: DocumentTemplatesRepository,
     private readonly assignments: DocumentAssignmentsRepository,
+    private readonly subjects: DocumentSubjectsRepository,
     private readonly storage: PrivateStorageClient,
     private readonly pdfQueue: PdfWorkQueue,
     private readonly audit: AuditService,
@@ -101,10 +105,8 @@ export class DocumentTemplatesService {
 
   async list(): Promise<TemplateSummary[]> {
     const rows = await this.repo.list();
-    const completed = await Promise.all(
-      rows.map((row) => this.assignments.hasCompleted(row.id)),
-    );
-    return rows.map((row, i) => toTemplateSummary(row, completed[i]));
+    const counts = await this.counts(rows);
+    return rows.map((row, i) => toTemplateSummary(row, counts[i]));
   }
 
   /** Template with a presigned `sourceUrl` (null before a source is confirmed). */
@@ -136,9 +138,9 @@ export class DocumentTemplatesService {
       actor: { ...actor, role: 'admin' },
       targetType: 'document_template',
       targetId: row.id,
-      metadata: { after: toTemplateSummary(row, false) },
+      metadata: { after: toTemplateSummary(row, NO_TEMPLATE_COUNTS) },
     });
-    return toTemplate(row, null, false);
+    return toTemplate(row, null, NO_TEMPLATE_COUNTS);
   }
 
   async update(
@@ -295,15 +297,36 @@ export class DocumentTemplatesService {
     return this.present(row);
   }
 
-  /** Presents a row with a presigned `sourceUrl` and whether it has completed assignments. */
+  /** Presents a row with a presigned `sourceUrl` and its assignment counts. */
   async present(row: DocumentTemplateRow): Promise<Template> {
-    const [sourceUrl, hasCompleted] = await Promise.all([
+    const [sourceUrl, [counts]] = await Promise.all([
       row.source_key
         ? this.storage.presignGet(row.source_key).then((p) => p.url)
         : null,
-      this.assignments.hasCompleted(row.id),
+      this.counts([row]),
     ]);
-    return toTemplate(row, sourceUrl, hasCompleted);
+    return toTemplate(row, sourceUrl, counts);
+  }
+
+  private async counts(rows: DocumentTemplateRow[]): Promise<TemplateCounts[]> {
+    const counted = (row: DocumentTemplateRow) =>
+      row.status !== 'draft' && row.season !== null;
+    const [stats, approvedCount] = await Promise.all([
+      this.assignments.templateStats(rows.map((row) => row.id)),
+      rows.some(counted) ? this.subjects.countActiveApprovedInstructors() : 0,
+    ]);
+    return rows.map((row) => {
+      const s = stats.get(row.id);
+      const hasCompletedAssignments = s?.hasCompleted ?? false;
+      return counted(row) && s
+        ? {
+            hasCompletedAssignments,
+            assignedCount: s.assignedCount,
+            completedCount: s.completedCount,
+            approvedCount,
+          }
+        : { ...NO_TEMPLATE_COUNTS, hasCompletedAssignments };
+    });
   }
 
   /** {@link load}, then 409 when an assignment of the template is completed. */

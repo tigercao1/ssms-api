@@ -12,6 +12,7 @@ import type {
   DocumentAssignmentRow,
   NewAssignmentRow,
   SubjectType,
+  TemplateAssignmentStats,
 } from './documents.types';
 
 export const DOCUMENT_ASSIGNMENTS_TABLE = 'document_assignments';
@@ -61,6 +62,10 @@ export abstract class DocumentAssignmentsRepository {
   ): Promise<DocumentAssignmentRow | null>;
   /** Whether any assignment of the template is `completed`. */
   abstract hasCompleted(templateId: string): Promise<boolean>;
+  /** {@link TemplateAssignmentStats} per template id, in one grouped query. */
+  abstract templateStats(
+    templateIds: string[],
+  ): Promise<Map<string, TemplateAssignmentStats>>;
   /**
    * Open (`assigned` or `viewed`) assignments of a subject type that were
    * assigned before `cutoff` and not reminded since it, oldest first.
@@ -194,6 +199,35 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
       .limit(1)) as DbResult<{ id: string }[]>;
     check(error, 'check completed document assignments');
     return (data ?? []).length > 0;
+  }
+
+  async templateStats(
+    templateIds: string[],
+  ): Promise<Map<string, TemplateAssignmentStats>> {
+    const stats = new Map<string, TemplateAssignmentStats>();
+    if (templateIds.length === 0) {
+      return stats;
+    }
+    const { data, error } = (await this.supabase.rpc(
+      'document_template_stats',
+      { p_template_ids: templateIds },
+    )) as DbResult<
+      {
+        template_id: string;
+        assigned_count: number;
+        completed_count: number;
+        has_completed: boolean;
+      }[]
+    >;
+    check(error, 'count document template assignments');
+    for (const row of data ?? []) {
+      stats.set(row.template_id, {
+        assignedCount: row.assigned_count,
+        completedCount: row.completed_count,
+        hasCompleted: row.has_completed,
+      });
+    }
+    return stats;
   }
 
   async listDueForReminder(

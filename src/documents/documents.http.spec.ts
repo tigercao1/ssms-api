@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { PDFDocument } from '@cantoo/pdf-lib';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -281,6 +282,101 @@ describe('documents HTTP', () => {
       expect(body.map((t) => t.titleEn)).toEqual(['Z', 'A', 'B']);
       expect(body[1]).toMatchObject({ fieldCount: 1, hasSource: true });
       expect(body[1]).not.toHaveProperty('fields');
+    });
+
+    it('counts assignments for the season and approved instructors in one grouped query', async () => {
+      ctx.subjects.seedInstructor();
+      ctx.subjects.seedInstructor();
+      ctx.subjects.seedInstructor({ approval_status: 'pending' });
+      ctx.subjects.seedInstructor({ is_active: false });
+      const live = ctx.templates.seed({
+        title_en: 'Live',
+        assign_to: 'all',
+        season: '2026/27',
+      });
+      const retired = ctx.templates.seed({
+        title_en: 'Retired',
+        status: 'retired',
+        is_active: false,
+        season: '2025/26',
+      });
+      const draft = ctx.templates.seed({
+        title_en: 'Draft',
+        status: 'draft',
+        is_active: false,
+        assign_to: null,
+        season: null,
+      });
+      const seasonless = ctx.templates.seed({
+        title_en: 'Seasonless',
+        status: 'retired',
+        is_active: false,
+        season: null,
+      });
+      const assign = (
+        templateId: string,
+        season: string | null,
+        status: 'assigned' | 'viewed' | 'completed' | 'archived',
+      ) =>
+        ctx.assignments.seed({
+          template_id: templateId,
+          subject_id: randomUUID(),
+          season,
+          status,
+        });
+      assign(live.id, '2026/27', 'assigned');
+      assign(live.id, '2026/27', 'viewed');
+      assign(live.id, '2026/27', 'completed');
+      assign(live.id, '2026/27', 'archived');
+      assign(live.id, '2025/26', 'completed');
+      assign(retired.id, '2025/26', 'completed');
+      assign(draft.id, '2026/27', 'assigned');
+      assign(seasonless.id, null, 'completed');
+
+      const res = await http()
+        .get('/admin/documents/templates')
+        .set('Authorization', admin)
+        .expect(200);
+      const byTitle = Object.fromEntries(
+        (res.body as { titleEn: string }[]).map((t) => [t.titleEn, t]),
+      );
+      expect(byTitle.Live).toMatchObject({
+        assignedCount: 3,
+        completedCount: 1,
+        approvedCount: 2,
+        hasCompletedAssignments: true,
+      });
+      expect(byTitle.Retired).toMatchObject({
+        assignedCount: 1,
+        completedCount: 1,
+        approvedCount: 2,
+        hasCompletedAssignments: true,
+      });
+      expect(byTitle.Draft).toMatchObject({
+        assignedCount: 0,
+        completedCount: 0,
+        approvedCount: 0,
+        hasCompletedAssignments: false,
+      });
+      expect(byTitle.Seasonless).toMatchObject({
+        assignedCount: 0,
+        completedCount: 0,
+        approvedCount: 0,
+        hasCompletedAssignments: true,
+      });
+      expect(ctx.assignments.templateStatsCalls).toEqual([
+        expect.arrayContaining([live.id, retired.id, draft.id, seasonless.id]),
+      ]);
+
+      const one = await http()
+        .get(`/admin/documents/templates/${live.id}`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(one.body).toMatchObject({
+        assignedCount: 3,
+        completedCount: 1,
+        approvedCount: 2,
+      });
     });
 
     it('gets a template with a presigned source URL and camelCase fields', async () => {

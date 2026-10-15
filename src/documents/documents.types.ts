@@ -225,12 +225,31 @@ export interface TemplateSummary {
   season: string | null;
   publishedAt: string | null;
   hasCompletedAssignments: boolean;
+  assignedCount: number;
+  completedCount: number;
+  approvedCount: number;
   sortOrder: number;
   hasSource: boolean;
   pageCount: number | null;
   fieldCount: number;
   insertedAt: string;
   updatedAt: string;
+}
+
+/** The assignment counts a template summary carries. */
+export type TemplateCounts = Pick<
+  TemplateSummary,
+  | 'hasCompletedAssignments'
+  | 'assignedCount'
+  | 'completedCount'
+  | 'approvedCount'
+>;
+
+/** One template's row of `document_template_stats`. */
+export interface TemplateAssignmentStats {
+  assignedCount: number;
+  completedCount: number;
+  hasCompleted: boolean;
 }
 
 export interface Template extends TemplateSummary {

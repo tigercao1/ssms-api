@@ -31,6 +31,7 @@ import type {
   InstructorCertificationRow,
   NewAssignmentRow,
   SubjectType,
+  TemplateAssignmentStats,
   TemplateStatus,
 } from '../../src/documents/documents.types';
 import {
@@ -434,6 +435,31 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
     );
   }
 
+  templateStatsCalls: string[][] = [];
+
+  templateStats(
+    templateIds: string[],
+  ): Promise<Map<string, TemplateAssignmentStats>> {
+    this.templateStatsCalls.push(templateIds);
+    const stats = new Map<string, TemplateAssignmentStats>();
+    for (const id of templateIds) {
+      const template = this.templates.rows.get(id);
+      if (!template) {
+        continue;
+      }
+      const open = [...this.rows.values()].filter(
+        (r) => r.template_id === id && r.status !== 'archived',
+      );
+      const inSeason = open.filter((r) => r.season === template.season);
+      stats.set(id, {
+        assignedCount: inSeason.length,
+        completedCount: inSeason.filter((r) => r.status === 'completed').length,
+        hasCompleted: open.some((r) => r.status === 'completed'),
+      });
+    }
+    return Promise.resolve(stats);
+  }
+
   listDueForReminder(
     subjectType: SubjectType,
     cutoff: Date,
@@ -524,6 +550,14 @@ export class InMemoryDocumentSubjectsRepository extends DocumentSubjectsReposito
       [...this.instructors.values()]
         .filter((i) => i.approval_status === 'approved' && i.is_active)
         .map((i) => i.id),
+    );
+  }
+
+  countActiveApprovedInstructors(): Promise<number> {
+    return Promise.resolve(
+      [...this.instructors.values()].filter(
+        (i) => i.approval_status === 'approved' && i.is_active,
+      ).length,
     );
   }
 

@@ -79,3 +79,33 @@ alter table document_templates
 
 create index document_templates_status_assign_to_idx
   on document_templates (status, assign_to);
+
+-- Per template: non-archived and completed assignments for the template's own
+-- season, and whether any assignment (any season) is completed.
+create or replace function public.document_template_stats(p_template_ids uuid[])
+returns table (
+  template_id uuid,
+  assigned_count int,
+  completed_count int,
+  has_completed boolean
+)
+language sql
+stable
+set search_path = public
+as $$
+  select
+    t.id,
+    (count(a.id) filter (where a.season = t.season))::int,
+    (count(a.id) filter (where a.season = t.season and a.status = 'completed'))::int,
+    coalesce(bool_or(a.status = 'completed'), false)
+  from document_templates t
+  left join document_assignments a
+    on a.template_id = t.id and a.status <> 'archived'
+  where t.id = any(p_template_ids)
+  group by t.id;
+$$;
+
+revoke all on function public.document_template_stats(uuid[])
+  from public, anon, authenticated;
+grant execute on function public.document_template_stats(uuid[])
+  to service_role;

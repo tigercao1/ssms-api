@@ -186,7 +186,59 @@ describe('SupabaseDocumentAssignmentsRepository', () => {
   });
 });
 
+describe('SupabaseDocumentAssignmentsRepository.templateStats', () => {
+  it('reads every template in one grouped rpc and skips the call for none', async () => {
+    const { client, queries } = recordingSupabase({
+      'rpc:document_template_stats': [
+        ok([
+          {
+            template_id: ID,
+            assigned_count: 3,
+            completed_count: 1,
+            has_completed: true,
+          },
+        ]),
+        ok(null),
+        fail,
+      ],
+    });
+    const repo = new SupabaseDocumentAssignmentsRepository(client);
+    await expect(repo.templateStats([])).resolves.toEqual(new Map());
+    expect(queries).toHaveLength(0);
+    await expect(repo.templateStats([ID, 'other'])).resolves.toEqual(
+      new Map([
+        [ID, { assignedCount: 3, completedCount: 1, hasCompleted: true }],
+      ]),
+    );
+    expect(queries[0]).toEqual({
+      table: 'rpc:document_template_stats',
+      ops: [['rpc', { p_template_ids: [ID, 'other'] }]],
+    });
+    await expect(repo.templateStats([ID])).resolves.toEqual(new Map());
+    await expect(repo.templateStats([ID])).rejects.toThrow('boom');
+  });
+});
+
 describe('SupabaseDocumentSubjectsRepository', () => {
+  it('counts approved, active instructors', async () => {
+    const { client, queries } = recordingSupabase({
+      instructors: [
+        { data: null, error: null, count: 4 },
+        { data: null, error: null, count: null },
+        fail,
+      ],
+    });
+    const repo = new SupabaseDocumentSubjectsRepository(client);
+    await expect(repo.countActiveApprovedInstructors()).resolves.toBe(4);
+    await expect(repo.countActiveApprovedInstructors()).resolves.toBe(0);
+    await expect(repo.countActiveApprovedInstructors()).rejects.toThrow('boom');
+    expect(queries[0].ops).toEqual([
+      ['select', 'id', { count: 'exact', head: true }],
+      ['eq', 'approval_status', 'approved'],
+      ['eq', 'is_active', true],
+    ]);
+  });
+
   it('reads instructors, certifications and uploads', async () => {
     const instructor = { id: ID };
     const { client, queries } = recordingSupabase({

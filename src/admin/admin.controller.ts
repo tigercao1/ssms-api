@@ -10,12 +10,15 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import type { AuditActor } from '../audit/audit.types';
+import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AdminService } from './admin.service';
@@ -66,14 +69,21 @@ export class AdminController {
 
   /** T6.3 — list instructors of every status, optional `?status=`/`?active=`. */
   @Get('instructors')
-  listInstructors(
+  async listInstructors(
     @Query() query: ListInstructorsQueryDto,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<AdminInstructorRecord[]> {
-    return this.admin.listInstructors({
-      status: query.status,
-      isActive: query.active,
-      q: query.q,
-    });
+    const { instructors, total } = await this.admin.listInstructors(
+      {
+        status: query.status,
+        isActive: query.active,
+        q: query.q,
+      },
+      query.page,
+      query.limit,
+    );
+    res.setHeader(TOTAL_COUNT_HEADER, String(total));
+    return instructors;
   }
 
   /** Single instructor core record (admin detail). */

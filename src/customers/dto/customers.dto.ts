@@ -11,10 +11,9 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { MAX_PAGE, MAX_PAGE_SIZE } from '../../database/pagination';
 
 export const CUSTOMER_SEARCH_DEFAULT_LIMIT = 20;
-export const CUSTOMER_SEARCH_MAX_LIMIT = 100;
-export const CUSTOMER_SEARCH_MAX_PAGE = 10_000;
 export const CUSTOMER_NAME_MAX_LENGTH = 255;
 
 const trim = ({ value }: { value: unknown }) =>
@@ -43,14 +42,14 @@ export class SearchCustomersQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(CUSTOMER_SEARCH_MAX_LIMIT)
+  @Max(MAX_PAGE_SIZE)
   limit?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(CUSTOMER_SEARCH_MAX_PAGE)
+  @Max(MAX_PAGE)
   page?: number;
 
   @IsOptional()

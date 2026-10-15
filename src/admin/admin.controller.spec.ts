@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
+import type { Response } from 'express';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -12,7 +13,9 @@ const fakeRecord = { id: 'inst-1' } as AdminInstructorRecord;
 describe('AdminController', () => {
   let controller: AdminController;
   const service = {
-    listInstructors: jest.fn().mockResolvedValue([fakeRecord]),
+    listInstructors: jest
+      .fn()
+      .mockResolvedValue({ instructors: [fakeRecord], total: 1 }),
     getInstructor: jest.fn().mockResolvedValue(fakeRecord),
     getInstructorProfile: jest.fn().mockResolvedValue({ id: 'inst-1' }),
     getUserRole: jest.fn().mockResolvedValue({ role: 'instructor' }),
@@ -46,17 +49,27 @@ describe('AdminController', () => {
     controller = moduleRef.get(AdminController);
   });
 
+  const res = () => ({ setHeader: jest.fn() }) as unknown as Response;
+
   it('GET /admin/instructors → forwards status+active filter', async () => {
-    await controller.listInstructors({ status: 'pending', active: false });
-    expect(service.listInstructors).toHaveBeenCalledWith({
-      status: 'pending',
-      isActive: false,
-    });
+    await controller.listInstructors(
+      { status: 'pending', active: false },
+      res(),
+    );
+    expect(service.listInstructors).toHaveBeenCalledWith(
+      { status: 'pending', isActive: false },
+      undefined,
+      undefined,
+    );
   });
 
   it('GET /admin/instructors?q= → forwards the search text', async () => {
-    await controller.listInstructors({ q: '王' });
-    expect(service.listInstructors).toHaveBeenCalledWith({ q: '王' });
+    await controller.listInstructors({ q: '王' }, res());
+    expect(service.listInstructors).toHaveBeenCalledWith(
+      { q: '王' },
+      undefined,
+      undefined,
+    );
   });
 
   it('GET /admin/instructors/:id → getInstructor(id)', async () => {

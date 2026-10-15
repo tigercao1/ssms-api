@@ -1,4 +1,9 @@
-import { type EffectiveRate, resolveRate } from '../lessons/pay-rates';
+import {
+  DEFAULT_RATE_UNIT,
+  type EffectiveRate,
+  type RateUnit,
+  resolveRate,
+} from '../lessons/pay-rates';
 import type { ClassStatus } from '../lessons/lessons.types';
 import { localDate } from './payroll-time';
 
@@ -19,6 +24,7 @@ export interface PayableClass {
 
 export interface PayableRate extends EffectiveRate {
   hourlyRate: number | string;
+  rateUnit: RateUnit;
   currency: string;
 }
 
@@ -33,6 +39,7 @@ export interface ClassLine {
   customerNames: string[];
   minutes: number;
   hourlyRate: number | null;
+  rateUnit: RateUnit;
   currency: string;
   amount: number;
   flags: string[];
@@ -53,6 +60,14 @@ export function lessonMinutes(startsAt: string, endsAt: string): number {
 
 export function amountCents(hourlyRate: number | string, minutes: number) {
   return Math.round((toCents(hourlyRate) * minutes) / 60);
+}
+
+export function rateAmountCents(
+  rate: number | string,
+  unit: RateUnit,
+  minutes: number,
+): number {
+  return unit === 'day' ? toCents(rate) : amountCents(rate, minutes);
 }
 
 export function isPaid(status: ClassStatus): boolean {
@@ -83,8 +98,11 @@ export function classLine(
     customerNames: cls.customerNames,
     minutes,
     hourlyRate: rate ? fromCents(toCents(rate.hourlyRate)) : null,
+    rateUnit: rate?.rateUnit ?? DEFAULT_RATE_UNIT,
     currency: rate?.currency ?? DEFAULT_CURRENCY,
-    amount: rate ? fromCents(amountCents(rate.hourlyRate, minutes)) : 0,
+    amount: rate
+      ? fromCents(rateAmountCents(rate.hourlyRate, rate.rateUnit, minutes))
+      : 0,
     flags: rate ? [] : [NEEDS_RATE],
   };
 }

@@ -301,6 +301,7 @@ describe('lessons admin HTTP', () => {
         lessonTypeId,
         instructorId: null,
         hourlyRate: 42.5,
+        rateUnit: 'hour',
         currency: 'CAD',
         effectiveFrom: '2026-11-01',
         effectiveTo: null,
@@ -309,8 +310,64 @@ describe('lessons admin HTTP', () => {
         action: 'pay_rate.create',
         targetType: 'pay_rate',
         targetId: (res.body as { id: string }).id,
+        metadata: { after: { rateUnit: 'hour' } },
       });
     });
+
+    it('creates a daily rate and switches its unit with PATCH, auditing the unit', async () => {
+      const res = await create({
+        hourlyRate: 400,
+        rateUnit: 'day',
+        effectiveFrom: '2026-11-01',
+      }).expect(201);
+      const id = (res.body as { id: string }).id;
+      expect(res.body).toMatchObject({ hourlyRate: 400, rateUnit: 'day' });
+      expect(ctx.payRates.rows[0].rate_unit).toBe('day');
+      expect(ctx.audit.entries[0]).toMatchObject({
+        metadata: { after: { rateUnit: 'day' } },
+      });
+      const patched = await http()
+        .patch(`/admin/pay-rates/${id}`)
+        .set('Authorization', admin)
+        .send({ rateUnit: 'hour' })
+        .expect(200);
+      expect(patched.body).toMatchObject({ hourlyRate: 400, rateUnit: 'hour' });
+      expect(ctx.audit.entries[1]).toMatchObject({
+        action: 'pay_rate.update',
+        metadata: {
+          before: { rateUnit: 'day' },
+          after: { rateUnit: 'hour' },
+        },
+      });
+      const listed = await http()
+        .get('/admin/pay-rates')
+        .set('Authorization', admin)
+        .expect(200);
+      expect(listed.body).toEqual([
+        expect.objectContaining({ id, rateUnit: 'hour' }),
+      ]);
+    });
+
+    it.each([['week'], ['DAY'], [null], [1]])(
+      'rejects rateUnit %j with 400 on create and update',
+      async (rateUnit) => {
+        await create({
+          hourlyRate: 40,
+          rateUnit,
+          effectiveFrom: '2026-11-01',
+        }).expect(400);
+        const res = await create({
+          hourlyRate: 40,
+          effectiveFrom: '2026-11-01',
+        }).expect(201);
+        await http()
+          .patch(`/admin/pay-rates/${(res.body as { id: string }).id}`)
+          .set('Authorization', admin)
+          .send({ rateUnit })
+          .expect(400);
+        expect(ctx.payRates.rows[0].rate_unit).toBe('hour');
+      },
+    );
 
     it('is 409 when a rate overlaps another for the same type and instructor', async () => {
       await create({

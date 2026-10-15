@@ -51,6 +51,9 @@ begin
   if (select customer_names from payroll_lines where class_id is not null) <> array['Ada L.'] then
     raise exception 'finalize did not keep the customer names';
   end if;
+  if (select rate_unit from payroll_lines where class_id is not null) <> 'hour' then
+    raise exception 'finalize without a rate unit did not default to hour';
+  end if;
   if (select sum(amount) from payroll_lines where period_id = p) <> 43.50 then
     raise exception 'finalized lines do not add up';
   end if;
@@ -119,6 +122,52 @@ begin
   if exists (select 1 from payroll_periods where id = p) then
     raise exception 'a misaligned open period survived the anchor change';
   end if;
+end
+$$;
+
+do $$
+declare
+  p constant uuid := '66666666-6666-4666-8666-666666666692';
+  i constant uuid := '22222222-2222-4222-8222-222222222291';
+  r uuid;
+begin
+  insert into pay_rates (lesson_type_id, hourly_rate, effective_from)
+  values ('44444444-4444-4444-8444-444444444491', 90, '2026-01-01')
+  returning id into r;
+  if (select rate_unit from pay_rates where id = r) <> 'hour' then
+    raise exception 'pay rate unit default is not hour';
+  end if;
+  update pay_rates set rate_unit = 'day' where id = r;
+  begin
+    update pay_rates set rate_unit = 'week' where id = r;
+    raise exception 'pay rate unit week was accepted';
+  exception when check_violation then null;
+  end;
+
+  insert into payroll_periods (id, starts_on, ends_on)
+  values (p, '2026-01-19', '2026-02-01');
+  perform public.payroll_finalize(p, jsonb_build_array(jsonb_build_object(
+    'instructor_id', i,
+    'class_id', '55555555-5555-4555-8555-555555555591',
+    'minutes', 300,
+    'hourly_rate', 400,
+    'rate_unit', 'day',
+    'amount', 400
+  )), null);
+  if (select rate_unit from payroll_lines where period_id = p) <> 'day' then
+    raise exception 'finalize did not store the rate unit';
+  end if;
+  perform public.payroll_reopen(p);
+  begin
+    perform public.payroll_finalize(p, jsonb_build_array(jsonb_build_object(
+      'instructor_id', i,
+      'class_id', '55555555-5555-4555-8555-555555555591',
+      'rate_unit', 'week',
+      'amount', 1
+    )), null);
+    raise exception 'payroll line unit week was accepted';
+  exception when check_violation then null;
+  end;
 end
 $$;
 

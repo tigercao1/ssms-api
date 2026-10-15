@@ -1,3 +1,7 @@
+export const RATE_UNITS = ['hour', 'day'] as const;
+export type RateUnit = (typeof RATE_UNITS)[number];
+export const DEFAULT_RATE_UNIT: RateUnit = 'hour';
+
 export interface EffectiveRate {
   lessonTypeId: string;
   instructorId: string | null;

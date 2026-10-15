@@ -10,6 +10,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import { RATE_UNITS, type RateUnit } from '../pay-rates';
 
 export const MAX_HOURLY_RATE = 99_999_999.99;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -31,6 +32,10 @@ export class CreatePayRateDto {
   @Min(0)
   @Max(MAX_HOURLY_RATE)
   hourlyRate!: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(RATE_UNITS)
+  rateUnit?: RateUnit;
 
   @IsOptional()
   @Transform(upper)
@@ -54,6 +59,10 @@ export class UpdatePayRateDto {
   @Min(0)
   @Max(MAX_HOURLY_RATE)
   hourlyRate?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(RATE_UNITS)
+  rateUnit?: RateUnit;
 
   @IsOptional()
   @Transform(upper)

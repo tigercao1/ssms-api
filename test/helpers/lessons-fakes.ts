@@ -443,6 +443,7 @@ export class InMemoryPayRatesRepository extends PayRatesRepository {
       lesson_type_id: input.lesson_type_id,
       instructor_id: input.instructor_id,
       hourly_rate: input.hourly_rate.toFixed(2),
+      rate_unit: input.rate_unit ?? 'hour',
       currency: input.currency ?? 'CAD',
       effective_from: input.effective_from,
       effective_to: input.effective_to,

@@ -4,12 +4,14 @@ import {
   PG_FOREIGN_KEY_VIOLATION,
   PG_UNIQUE_VIOLATION,
 } from '../../src/database/db-result';
+import type { PageRequest, RowPage } from '../../src/database/pagination';
 import type { GoogleCalendar } from '../../src/google/google.types';
 import type { GoogleCalendarClient } from '../../src/google/google-calendar.client';
 import {
   type ClassFilter,
   ClassesRepository,
   type ClassRow,
+  MAX_CLASSES_PER_LIST,
 } from '../../src/lessons/classes.repository';
 import {
   type CalendarInstructorRow,
@@ -122,19 +124,28 @@ export function recordingSupabase(
 export class InMemoryClassesRepository extends ClassesRepository {
   rows: ClassRow[] = [];
   filters: ClassFilter[] = [];
+  pages: (PageRequest | undefined)[] = [];
 
-  list(filter: ClassFilter): Promise<ClassRow[]> {
+  list(filter: ClassFilter, page?: PageRequest): Promise<RowPage<ClassRow>> {
     this.filters.push(filter);
-    return Promise.resolve(
-      this.rows
-        .filter(
-          (r) =>
-            (!filter.from || r.starts_at >= filter.from) &&
-            (!filter.to || r.starts_at < filter.to) &&
-            (!filter.instructorId || r.instructor_id === filter.instructorId),
-        )
-        .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
-    );
+    this.pages.push(page);
+    const matches = this.rows
+      .filter(
+        (r) =>
+          (!filter.from || r.starts_at >= filter.from) &&
+          (!filter.to || r.starts_at < filter.to) &&
+          (!filter.instructorId || r.instructor_id === filter.instructorId),
+      )
+      .sort(
+        (a, b) =>
+          a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id),
+      );
+    return Promise.resolve({
+      rows: page
+        ? matches.slice(page.offset, page.offset + page.limit)
+        : matches.slice(0, MAX_CLASSES_PER_LIST),
+      total: matches.length,
+    });
   }
 }
 

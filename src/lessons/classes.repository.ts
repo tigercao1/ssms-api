@@ -1,7 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import { check, type DbResult } from '../database/db-result';
+import { check } from '../database/db-result';
+import {
+  type CountedResult,
+  type PageRequest,
+  PGRST_RANGE_NOT_SATISFIABLE,
+  type RowPage,
+} from '../database/pagination';
 import type {
   Attendance,
   ClassSource,
@@ -71,7 +77,10 @@ export interface ClassFilter {
 }
 
 export abstract class ClassesRepository {
-  abstract list(filter: ClassFilter): Promise<ClassRow[]>;
+  abstract list(
+    filter: ClassFilter,
+    page?: PageRequest,
+  ): Promise<RowPage<ClassRow>>;
 }
 
 @Injectable()
@@ -82,8 +91,38 @@ export class SupabaseClassesRepository extends ClassesRepository {
     super();
   }
 
-  async list(filter: ClassFilter): Promise<ClassRow[]> {
-    let query = this.supabase.from(CLASSES_TABLE).select(CLASS_COLUMNS);
+  async list(
+    filter: ClassFilter,
+    page?: PageRequest,
+  ): Promise<RowPage<ClassRow>> {
+    const ordered = this.matching(filter, CLASS_COLUMNS, { count: 'exact' })
+      .order('starts_at', { ascending: true })
+      .order('id', { ascending: true });
+    const { data, error, count } = (await (page
+      ? ordered.range(page.offset, page.offset + page.limit - 1)
+      : ordered.limit(MAX_CLASSES_PER_LIST))) as CountedResult<ClassRow[]>;
+    if (error?.code === PGRST_RANGE_NOT_SATISFIABLE) {
+      return { rows: [], total: await this.count(filter) };
+    }
+    check(error, 'list classes');
+    return { rows: data ?? [], total: count ?? 0 };
+  }
+
+  private async count(filter: ClassFilter): Promise<number> {
+    const { error, count } = (await this.matching(filter, 'id', {
+      count: 'exact',
+      head: true,
+    })) as CountedResult<null>;
+    check(error, 'count classes');
+    return count ?? 0;
+  }
+
+  private matching(
+    filter: ClassFilter,
+    columns: string,
+    options: { count: 'exact'; head?: boolean },
+  ) {
+    let query = this.supabase.from(CLASSES_TABLE).select(columns, options);
     if (filter.from) {
       query = query.gte('starts_at', filter.from);
     }
@@ -93,11 +132,6 @@ export class SupabaseClassesRepository extends ClassesRepository {
     if (filter.instructorId) {
       query = query.eq('instructor_id', filter.instructorId);
     }
-    const { data, error } = (await query
-      .order('starts_at', { ascending: true })
-      .order('id', { ascending: true })
-      .limit(MAX_CLASSES_PER_LIST)) as unknown as DbResult<ClassRow[]>;
-    check(error, 'list classes');
-    return data ?? [];
+    return query;
   }
 }

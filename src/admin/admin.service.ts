@@ -587,6 +587,8 @@ export class AdminService {
       id: row.id,
       authUserId: row.auth_user_id,
       email: row.email,
+      firstName: row.first_name,
+      lastName: row.last_name,
       displayNameEn: row.display_name_en,
       displayNameZh: row.display_name_zh,
       bioEn: row.bio_en,

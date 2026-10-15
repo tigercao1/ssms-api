@@ -9,6 +9,7 @@ interface DbResult {
 /** Minimal chainable + thenable Supabase query-builder fake. */
 class QueryBuilder implements PromiseLike<DbResult> {
   updates: unknown[] = [];
+  inserts: unknown[] = [];
   filters: Array<[string, unknown]> = [];
   constructor(
     private readonly result: DbResult,
@@ -25,7 +26,8 @@ class QueryBuilder implements PromiseLike<DbResult> {
     this.updates.push(values);
     return this;
   }
-  insert(): this {
+  insert(values: unknown): this {
+    this.inserts.push(values);
     return this;
   }
   in(column: string, values: unknown): this {
@@ -82,6 +84,8 @@ function makeRepo() {
   return { repo, fake };
 }
 
+const NO_NAMES = { firstName: null, lastName: null, displayNameEn: null };
+
 describe('SupabaseInstructorsRepository', () => {
   it('findByAuthUserId returns the row', async () => {
     const { repo, fake } = makeRepo();
@@ -133,22 +137,57 @@ describe('SupabaseInstructorsRepository', () => {
   it('insertPending returns the created row', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: { id: 'inst-3' }, error: null };
-    await expect(repo.insertPending('auth-3', 'a@b.com')).resolves.toEqual({
-      id: 'inst-3',
+    await expect(
+      repo.insertPending('auth-3', 'a@b.com', NO_NAMES),
+    ).resolves.toEqual({ id: 'inst-3' });
+  });
+
+  it('insertPending stores the sign-up names and display name', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: { id: 'inst-3' }, error: null };
+    await repo.insertPending('auth-3', 'a@b.com', {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      displayNameEn: 'JJ',
     });
+    expect(fake.builders[0].inserts).toEqual([
+      {
+        auth_user_id: 'auth-3',
+        email: 'a@b.com',
+        first_name: 'Jane',
+        last_name: 'Doe',
+        display_name_en: 'JJ',
+      },
+    ]);
+  });
+
+  it('insertPending leaves the display name to its default when absent', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: { id: 'inst-3' }, error: null };
+    await repo.insertPending('auth-3', 'a@b.com', NO_NAMES);
+    expect(fake.builders[0].inserts).toEqual([
+      {
+        auth_user_id: 'auth-3',
+        email: 'a@b.com',
+        first_name: null,
+        last_name: null,
+      },
+    ]);
   });
 
   it('insertPending returns null on unique-violation (race)', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: null, error: { code: '23505', message: 'dup' } };
-    await expect(repo.insertPending('auth-3', 'a@b.com')).resolves.toBeNull();
+    await expect(
+      repo.insertPending('auth-3', 'a@b.com', NO_NAMES),
+    ).resolves.toBeNull();
   });
 
   it('insertPending throws on other errors', async () => {
     const { repo, fake } = makeRepo();
     fake.next = { data: null, error: { code: '23502', message: 'notnull' } };
     await expect(
-      repo.insertPending('auth-3', 'a@b.com'),
+      repo.insertPending('auth-3', 'a@b.com', NO_NAMES),
     ).rejects.toBeInstanceOf(InternalServerErrorException);
   });
 

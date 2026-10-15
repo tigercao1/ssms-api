@@ -34,6 +34,8 @@ export interface AdminInstructorRow {
   id: string;
   auth_user_id: string;
   email: string;
+  first_name: string | null;
+  last_name: string | null;
   display_name_en: string;
   display_name_zh: string | null;
   bio_en: string | null;
@@ -54,6 +56,8 @@ export interface AdminInstructorRecord {
   id: string;
   authUserId: string;
   email: string;
+  firstName: string | null;
+  lastName: string | null;
   displayNameEn: string;
   displayNameZh: string | null;
   bioEn: string | null;

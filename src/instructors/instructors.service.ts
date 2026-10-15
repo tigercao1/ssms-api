@@ -22,6 +22,7 @@ import {
 } from './instructors.types';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
+import { signupNamesFromMetadata } from './signup-names';
 import { TRANSLATION_QUEUE } from './translation-queue.port';
 import type {
   BioStateInput,
@@ -85,13 +86,18 @@ export class InstructorsService {
   async getOrCreateForUser(
     authUserId: string,
     email: string,
+    userMetadata?: Record<string, unknown>,
   ): Promise<InstructorProfile> {
     const existing = await this.repo.findByAuthUserId(authUserId);
     if (existing) {
       return this.buildProfile(existing);
     }
 
-    const created = await this.repo.insertPending(authUserId, email);
+    const created = await this.repo.insertPending(
+      authUserId,
+      email,
+      signupNamesFromMetadata(userMetadata),
+    );
     if (created) {
       void this.notifyAdminsOfPending(created);
       return this.buildProfile(created);
@@ -307,6 +313,8 @@ export class InstructorsService {
     return {
       id: row.id,
       email: row.email,
+      firstName: row.first_name,
+      lastName: row.last_name,
       displayNameEn: row.display_name_en,
       displayNameZh: row.display_name_zh,
       bioEn: row.bio_en,

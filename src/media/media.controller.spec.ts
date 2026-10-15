@@ -40,7 +40,11 @@ describe('MediaController', () => {
     controller = moduleRef.get(MediaController);
   });
 
-  const user = { sub: 'auth-1', email: 'a@b.com' } as SupabaseJwtPayload;
+  const user = {
+    sub: 'auth-1',
+    email: 'a@b.com',
+    user_metadata: { first_name: 'Jane' },
+  } as SupabaseJwtPayload;
 
   it('POST signed-upload-url resolves the instructor id then issues a ticket', async () => {
     const dto: PhotoUploadRequestDto = {
@@ -53,6 +57,7 @@ describe('MediaController', () => {
     expect(instructors.getOrCreateForUser).toHaveBeenCalledWith(
       'auth-1',
       'a@b.com',
+      { first_name: 'Jane' },
     );
     expect(media.createAvatarUploadUrl).toHaveBeenCalledWith(
       'inst-1',

@@ -16,6 +16,7 @@ import {
   ReferenceRow,
   TrainerStatusRow,
 } from './instructors.types';
+import type { SignupNames } from './signup-names';
 import { UpdateInstructorProfileDto } from './dto/update-instructor-profile.dto';
 import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
 import { plainToInstance } from 'class-transformer';
@@ -30,6 +31,8 @@ function makeRow(overrides: Partial<InstructorRow> = {}): InstructorRow {
     id: 'inst-1',
     auth_user_id: 'auth-1',
     email: 'a@b.com',
+    first_name: null,
+    last_name: null,
     display_name_en: '',
     display_name_zh: null,
     bio_en: null,
@@ -78,12 +81,16 @@ class FakeRepo extends InstructorsRepository {
   insertPending(
     authUserId: string,
     email: string,
+    names: SignupNames,
   ): Promise<InstructorRow | null> {
     this.insertCalls += 1;
     const row = makeRow({
       id: `inst-${this.rows.length + 1}`,
       auth_user_id: authUserId,
       email,
+      first_name: names.firstName,
+      last_name: names.lastName,
+      display_name_en: names.displayNameEn ?? '',
     });
     this.rows.push(row);
     return Promise.resolve(row);
@@ -203,6 +210,60 @@ describe('InstructorsService', () => {
       expect(profile.displayNameEn).toBe('');
       expect(profile.teachingLocations).toEqual([]);
       expect(profile.certifications).toEqual([]);
+    });
+
+    it('stores the sign-up names and uses the nickname as the display name', async () => {
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com', {
+        first_name: ' Jane ',
+        last_name: 'Doe',
+        nickname: 'JJ',
+      });
+      expect(profile.firstName).toBe('Jane');
+      expect(profile.lastName).toBe('Doe');
+      expect(profile.displayNameEn).toBe('JJ');
+      expect(profile.displayNameZh).toBeNull();
+      expect(repo.rows[0]).toMatchObject({
+        first_name: 'Jane',
+        last_name: 'Doe',
+        display_name_en: 'JJ',
+      });
+    });
+
+    it('falls back to first and last name for the display name without a nickname', async () => {
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com', {
+        first_name: 'Jane',
+        last_name: 'Doe',
+      });
+      expect(profile.displayNameEn).toBe('Jane Doe');
+    });
+
+    it('leaves the names empty when the sign-up metadata has none', async () => {
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com', {
+        email_verified: true,
+      });
+      expect(profile.firstName).toBeNull();
+      expect(profile.lastName).toBeNull();
+      expect(profile.displayNameEn).toBe('');
+    });
+
+    it('does not alter an existing row from new sign-up metadata', async () => {
+      repo.rows.push(
+        makeRow({
+          auth_user_id: 'auth-1',
+          first_name: 'Old',
+          last_name: 'Name',
+          display_name_en: 'Chosen',
+        }),
+      );
+      const profile = await service.getOrCreateForUser('auth-1', 'a@b.com', {
+        first_name: 'New',
+        last_name: 'Person',
+        nickname: 'Nick',
+      });
+      expect(repo.insertCalls).toBe(0);
+      expect(profile.firstName).toBe('Old');
+      expect(profile.lastName).toBe('Name');
+      expect(profile.displayNameEn).toBe('Chosen');
     });
 
     it('is idempotent — subsequent calls return the same row without re-inserting', async () => {

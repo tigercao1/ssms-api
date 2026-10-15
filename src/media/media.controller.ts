@@ -78,6 +78,7 @@ export class MediaController {
     const profile = await this.instructors.getOrCreateForUser(
       user.sub,
       user.email ?? '',
+      user.user_metadata,
     );
     return profile.id;
   }

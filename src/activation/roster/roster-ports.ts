@@ -18,6 +18,8 @@ export interface NewRosterInstructor {
   authUserId: string;
   email: string;
   displayNameEn: string;
+  firstName: string | null;
+  lastName: string | null;
   dateOfBirth: string | null;
 }
 
@@ -132,6 +134,8 @@ export class SupabaseRosterWriter implements RosterWriter {
         auth_user_id: instructor.authUserId,
         email: instructor.email,
         display_name_en: instructor.displayNameEn,
+        first_name: instructor.firstName,
+        last_name: instructor.lastName,
         date_of_birth: instructor.dateOfBirth,
         preferred_language: 'zh-CN',
         approval_status: 'pending',

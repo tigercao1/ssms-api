@@ -79,6 +79,7 @@ export interface RowReport {
   email: string;
   status: RowStatus;
   displayNameSource: RosterEntry['displayNameSource'];
+  legalName: boolean;
   dateOfBirth: RosterEntry['dateOfBirthStatus'];
   certifications: number;
   trainerStatus: number;
@@ -339,6 +340,7 @@ async function plan(
       email: entry.email,
       status,
       displayNameSource: entry.displayNameSource,
+      legalName: entry.firstName !== null && entry.lastName !== null,
       dateOfBirth: entry.dateOfBirthStatus,
       certifications: entry.certifications.length,
       trainerStatus: entry.trainerStatus.length,
@@ -526,6 +528,8 @@ async function applyEntry(
       authUserId,
       email: entry.email,
       displayNameEn: entry.displayNameEn,
+      firstName: entry.firstName,
+      lastName: entry.lastName,
       dateOfBirth: entry.dateOfBirth,
     }));
   const hasRelations =
@@ -606,6 +610,8 @@ function buildImportReport(
       ).length,
       displayNameMissing: rows.filter((r) => r.displayNameSource === 'none')
         .length,
+      legalNameUsable: rows.filter((r) => r.legalName).length,
+      legalNameMissing: rows.filter((r) => !r.legalName).length,
       dateOfBirthInvalid: rows.filter((r) => r.dateOfBirth === 'invalid')
         .length,
       dateOfBirthMissing: rows.filter((r) => r.dateOfBirth === 'missing')

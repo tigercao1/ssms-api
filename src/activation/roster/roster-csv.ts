@@ -9,12 +9,14 @@ import {
 export type DisplayNameSource = 'preferred' | 'legal_first_token' | 'none';
 export type DateOfBirthStatus = 'ok' | 'missing' | 'invalid';
 
-/** One CSV row mapped onto SSMS fields. Holds no legal name, phone, address or SIN. */
+/** One CSV row mapped onto SSMS fields. Holds no phone, address or SIN. */
 export interface RosterEntry {
   line: number;
   email: string;
   displayNameEn: string;
   displayNameSource: DisplayNameSource;
+  firstName: string | null;
+  lastName: string | null;
   dateOfBirth: string | null;
   dateOfBirthStatus: DateOfBirthStatus;
   certifications: ProposedCertification[];
@@ -73,6 +75,7 @@ type ColumnKey =
   | keyof typeof OPTIONAL_ROSTER_COLUMNS;
 
 const DISPLAY_NAME_MAX = 100;
+const LEGAL_NAME_PART_MAX = 100;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DOB_SHAPE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 
@@ -105,7 +108,7 @@ export function parseDateOfBirth(
   return { value: date.toISOString().slice(0, 10), status: 'ok' };
 }
 
-/** Preferred Name, else the first token of the legal name (nothing else of it is kept). */
+/** Preferred Name, else the first token of the legal name. */
 export function pickDisplayName(
   preferred: string,
   legal: string,
@@ -122,6 +125,40 @@ export function pickDisplayName(
     };
   }
   return { value: '', source: 'none' };
+}
+
+function titleCaseWord(word: string): string {
+  return word
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join('-');
+}
+
+/** Legal Full Name → first name (all but the last word) and last name (the last word). */
+export function splitLegalName(legal: string): {
+  firstName: string | null;
+  lastName: string | null;
+} {
+  const collapsed = collapse(legal);
+  const singleCase =
+    collapsed === collapsed.toUpperCase() ||
+    collapsed === collapsed.toLowerCase();
+  const words = collapsed
+    .split(' ')
+    .filter((w) => w !== '')
+    .map((w) => (singleCase ? titleCaseWord(w) : w));
+  if (words.length < 2) {
+    return { firstName: null, lastName: null };
+  }
+  const lastName = words[words.length - 1];
+  const firstName = words.slice(0, -1).join(' ');
+  if (
+    [...firstName].length > LEGAL_NAME_PART_MAX ||
+    [...lastName].length > LEGAL_NAME_PART_MAX
+  ) {
+    return { firstName: null, lastName: null };
+  }
+  return { firstName, lastName };
 }
 
 function resolveColumns(header: string[]): Record<ColumnKey, number> {
@@ -176,6 +213,7 @@ export function parseRosterCsv(
       return;
     }
     const name = pickDisplayName(cell('preferredName'), cell('legalName'));
+    const legalName = splitLegalName(cell('legalName'));
     const dob = parseDateOfBirth(cell('dateOfBirth'), today);
     const raw: RosterRawValues = {
       certifications: cell('certification'),
@@ -192,6 +230,8 @@ export function parseRosterCsv(
       email,
       displayNameEn: name.value,
       displayNameSource: name.source,
+      firstName: legalName.firstName,
+      lastName: legalName.lastName,
       dateOfBirth: dob.value,
       dateOfBirthStatus: dob.status,
       certifications: certs.certifications,

@@ -178,7 +178,6 @@ export interface EmailMessages {
     reminder: EmailButtonCopy;
     /** Uses `{title}`; the button (portal link) is shown to instructors only. */
     completed: EmailDocumentCompletedCopy;
-    /** A listed document with its kind; uses `{title}` and `{kind}`. */
     listItem: string;
     kinds: { sign: string; read: string };
   };

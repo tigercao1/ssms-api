@@ -294,6 +294,33 @@ describe('AdminService', () => {
       expect(onboarding.assignPublished).not.toHaveBeenCalled();
     });
 
+    it('assigns onboarding documents again when an instructor back in pending is approved', async () => {
+      repo.findInstructorById.mockResolvedValueOnce(makeRow());
+      repo.updateInstructor.mockResolvedValueOnce(
+        makeRow({ approval_status: 'approved' }),
+      );
+      await service.setApprovalStatus('id', 'approved');
+
+      repo.findInstructorById.mockResolvedValueOnce(
+        makeRow({ approval_status: 'pending' }),
+      );
+      repo.updateInstructor.mockResolvedValueOnce(
+        makeRow({ approval_status: 'approved' }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce({
+        created: 1,
+        skipped: 2,
+      });
+      const result = await service.setApprovalStatus('id', 'approved');
+
+      expect(result.approvalStatus).toBe('approved');
+      expect(onboarding.assignPublished).toHaveBeenCalledTimes(2);
+      expect(onboarding.assignPublished).toHaveBeenLastCalledWith('id', {
+        approved: true,
+      });
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+    });
+
     it('refuses an invalid transition from a non-pending state (400)', async () => {
       repo.findInstructorById.mockResolvedValue(
         makeRow({ approval_status: 'approved' }),
@@ -359,6 +386,76 @@ describe('AdminService', () => {
           }) as unknown,
         }),
       );
+    });
+
+    it('assigns published onboarding documents when an approved instructor is reactivated', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: false }),
+      );
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: true }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce({
+        created: 1,
+        skipped: 1,
+      });
+
+      await expect(service.setActive('id', true)).resolves.toMatchObject({
+        isActive: true,
+      });
+
+      expect(onboarding.assignPublished).toHaveBeenCalledTimes(1);
+      expect(onboarding.assignPublished).toHaveBeenCalledWith('id');
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ template: 'reactivated' }),
+      );
+    });
+
+    it('still reactivates when assigning onboarding documents resolves null (failed)', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: false }),
+      );
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: true }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce(null);
+
+      await expect(service.setActive('id', true)).resolves.toMatchObject({
+        isActive: true,
+      });
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ template: 'reactivated' }),
+      );
+    });
+
+    it.each(['pending', 'rejected'] as const)(
+      'does not assign onboarding documents when a %s instructor is reactivated',
+      async (approval) => {
+        repo.findInstructorById.mockResolvedValue(
+          makeRow({ approval_status: approval, is_active: false }),
+        );
+        repo.updateInstructor.mockResolvedValue(
+          makeRow({ approval_status: approval, is_active: true }),
+        );
+        await service.setActive('id', true);
+        expect(onboarding.assignPublished).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not assign onboarding documents on deactivation or when already active', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: true }),
+      );
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: true }),
+      );
+      await service.setActive('id', true);
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved', is_active: false }),
+      );
+      await service.setActive('id', false);
+      expect(onboarding.assignPublished).not.toHaveBeenCalled();
     });
 
     it('does not notify when the active flag does not change', async () => {

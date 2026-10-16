@@ -155,8 +155,9 @@ export class AdminService {
   }
 
   /**
-   * T6.4 — approve / reject a pending instructor. Valid transitions only:
-   * `pending → approved` and `pending → rejected`. Anything else is a 4xx.
+   * T6.4 — approve / reject a pending instructor, or re-approve a rejected
+   * one. Valid transitions only: `pending → approved`, `rejected → approved`
+   * and `pending → rejected`. Anything else is a 4xx.
    *
    * On success appends an `instructor.approve` / `instructor.reject` row to
    * `audit_log` (T6.8); `reason` is carried into the audit metadata (and the
@@ -175,10 +176,13 @@ export class AdminService {
     if (!current) {
       throw new NotFoundException('Instructor not found');
     }
-    if (current.approval_status !== 'pending') {
+    const allowedFrom =
+      status === 'approved' ? ['pending', 'rejected'] : ['pending'];
+    if (!allowedFrom.includes(current.approval_status)) {
       throw new BadRequestException(
         `Cannot ${status === 'approved' ? 'approve' : 'reject'} an instructor ` +
-          `in '${current.approval_status}' state; only 'pending' is allowed`,
+          `in '${current.approval_status}' state; only ` +
+          `${allowedFrom.map((from) => `'${from}'`).join(' or ')} is allowed`,
       );
     }
 

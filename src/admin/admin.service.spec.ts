@@ -321,6 +321,81 @@ describe('AdminService', () => {
       expect(mailer.send).toHaveBeenCalledTimes(1);
     });
 
+    it('re-approves a rejected instructor like a pending one', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ approval_status: 'rejected' }),
+      );
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved' }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce({
+        created: 0,
+        skipped: 0,
+      });
+
+      const result = await service.setApprovalStatus(
+        'id',
+        'approved',
+        undefined,
+        { userId: 'admin-1' },
+      );
+
+      expect(result.approvalStatus).toBe('approved');
+      expect(repo.updateInstructor).toHaveBeenCalledWith('id', {
+        approval_status: 'approved',
+      });
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'instructor.approve',
+          actor: { userId: 'admin-1', role: 'admin' },
+          metadata: { from: 'rejected', to: 'approved', reason: null },
+        }),
+      );
+      expect(onboarding.assignPublished).toHaveBeenCalledWith('id', {
+        approved: true,
+      });
+      expect(mailer.send).toHaveBeenCalledTimes(1);
+      expect(mailer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ template: 'approved' }),
+      );
+    });
+
+    it('sends only the documents email when re-approval assigns documents', async () => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ approval_status: 'rejected' }),
+      );
+      repo.updateInstructor.mockResolvedValue(
+        makeRow({ approval_status: 'approved' }),
+      );
+      onboarding.assignPublished.mockResolvedValueOnce({
+        created: 1,
+        skipped: 0,
+      });
+
+      await service.setApprovalStatus('id', 'approved');
+
+      expect(onboarding.assignPublished).toHaveBeenCalledTimes(1);
+      expect(mailer.send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['rejected', 'rejected', "only 'pending' is allowed"],
+      ['approved', 'rejected', "only 'pending' is allowed"],
+      ['approved', 'approved', "only 'pending' or 'rejected' is allowed"],
+    ] as const)('refuses %s → %s (400)', async (from, to, message) => {
+      repo.findInstructorById.mockResolvedValue(
+        makeRow({ approval_status: from }),
+      );
+      await expect(service.setApprovalStatus('id', to)).rejects.toThrow(
+        message,
+      );
+      expect(repo.updateInstructor).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+      expect(onboarding.assignPublished).not.toHaveBeenCalled();
+      expect(mailer.send).not.toHaveBeenCalled();
+    });
+
     it('refuses an invalid transition from a non-pending state (400)', async () => {
       repo.findInstructorById.mockResolvedValue(
         makeRow({ approval_status: 'approved' }),

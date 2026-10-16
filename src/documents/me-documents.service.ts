@@ -32,10 +32,16 @@ export const PENDING_APPROVAL_REASON: ChecklistLockReason = 'pending_approval';
 export const REJECTED =
   'Your profile was not approved, so onboarding documents are not available';
 export const REJECTED_REASON: ChecklistLockReason = 'rejected';
+export const DEACTIVATED =
+  'Your account is inactive, so onboarding documents and uploads are not available';
+export const DEACTIVATED_REASON: ChecklistLockReason = 'deactivated';
 
 function lockFor(
   instructor: DocumentInstructorRow,
 ): { message: string; reason: ChecklistLockReason } | null {
+  if (!instructor.is_active) {
+    return { message: DEACTIVATED, reason: DEACTIVATED_REASON };
+  }
   if (instructor.approval_status === 'approved') {
     return null;
   }
@@ -149,8 +155,9 @@ export class MeDocumentsService {
   }
 
   /**
-   * {@link instructorFor}, then 403 unless the instructor is approved:
-   * `reason: 'rejected'` for a rejected instructor, else `'pending_approval'`.
+   * {@link instructorFor}, then 403 unless the instructor is active and approved:
+   * `reason: 'deactivated'` for an inactive instructor, `'rejected'` for a
+   * rejected one, else `'pending_approval'`.
    */
   async approvedInstructorFor(
     authUserId: string,
@@ -172,7 +179,7 @@ export class MeDocumentsService {
    * Until the instructor is approved the checklist is `locked` and a preview:
    * one item per `live` template published to `all` for the season, without
    * an assignment, and the certification items without their upload id.
-   * A rejected instructor gets `lockReason: 'rejected'` and no items.
+   * A rejected or deactivated instructor gets that `lockReason` and no items.
    */
   async checklist(
     authUserId: string,
@@ -180,11 +187,14 @@ export class MeDocumentsService {
   ): Promise<Checklist> {
     const instructor = await this.instructorFor(authUserId);
     const lock = lockFor(instructor);
-    if (lock?.reason === REJECTED_REASON) {
+    if (
+      lock?.reason === REJECTED_REASON ||
+      lock?.reason === DEACTIVATED_REASON
+    ) {
       return {
         season: this.currentSeason([]),
         locked: true,
-        lockReason: REJECTED_REASON,
+        lockReason: lock.reason,
         items: [],
       };
     }

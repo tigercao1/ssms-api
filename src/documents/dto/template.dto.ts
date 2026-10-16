@@ -201,6 +201,11 @@ export class PublishTemplateDto {
   instructorIds?: string[];
 }
 
+export class ChangeAudienceDto {
+  @IsIn(TEMPLATE_ASSIGN_TO)
+  assignTo!: TemplateAssignTo;
+}
+
 export class PublishPreviewQueryDto {
   @IsOptional()
   @Transform(trim)

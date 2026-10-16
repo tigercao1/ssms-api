@@ -51,6 +51,8 @@ export const NO_TEMPLATE_COUNTS: TemplateCounts = {
   hasCompletedAssignments: false,
   assignedCount: 0,
   completedCount: 0,
+  approvedAssignedCount: 0,
+  approvedCompletedCount: 0,
   approvedCount: 0,
 };
 

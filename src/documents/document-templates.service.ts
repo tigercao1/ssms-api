@@ -319,6 +319,8 @@ export class DocumentTemplatesService {
             hasCompletedAssignments,
             assignedCount: s.assignedCount,
             completedCount: s.completedCount,
+            approvedAssignedCount: s.approvedAssignedCount,
+            approvedCompletedCount: s.approvedCompletedCount,
             approvedCount,
           }
         : { ...NO_TEMPLATE_COUNTS, hasCompletedAssignments };

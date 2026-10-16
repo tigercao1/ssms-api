@@ -63,8 +63,11 @@ const FIELD: TemplateFieldRow = {
 async function build(env: Record<string, string> = {}) {
   const storage = new InMemoryPrivateStorage();
   const templates = new InMemoryDocumentTemplatesRepository();
-  const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
   const audit = recordingAudit();
   const mailer = new RecordingMailer();
   const app = await startDocumentsApp(

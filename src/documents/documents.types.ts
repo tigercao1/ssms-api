@@ -227,6 +227,8 @@ export interface TemplateSummary {
   hasCompletedAssignments: boolean;
   assignedCount: number;
   completedCount: number;
+  approvedAssignedCount: number;
+  approvedCompletedCount: number;
   approvedCount: number;
   sortOrder: number;
   hasSource: boolean;
@@ -242,6 +244,8 @@ export type TemplateCounts = Pick<
   | 'hasCompletedAssignments'
   | 'assignedCount'
   | 'completedCount'
+  | 'approvedAssignedCount'
+  | 'approvedCompletedCount'
   | 'approvedCount'
 >;
 
@@ -249,6 +253,8 @@ export type TemplateCounts = Pick<
 export interface TemplateAssignmentStats {
   assignedCount: number;
   completedCount: number;
+  approvedAssignedCount: number;
+  approvedCompletedCount: number;
   hasCompleted: boolean;
 }
 

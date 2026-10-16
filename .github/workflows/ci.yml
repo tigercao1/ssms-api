@@ -117,6 +117,9 @@ jobs:
       - name: Bio AI checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/bio_ai_checks.sql
 
+      - name: Document template stats checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/document_template_stats_checks.sql
+
       # Mirrors what the post-merge job does to dev and prod: the base branch's
       # migrations are already applied, and only this PR's new files run.
       - name: Apply on top of base branch (PRs only)

@@ -423,7 +423,7 @@ describe('documents HTTP', () => {
         .get('/admin/documents/templates')
         .set('Authorization', admin)
         .expect(200);
-      expect(list.body[0]).toMatchObject(expected);
+      expect((list.body as unknown[])[0]).toMatchObject(expected);
       const one = await http()
         .get(`/admin/documents/templates/${t.id}`)
         .set('Authorization', admin)

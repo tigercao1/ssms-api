@@ -465,9 +465,8 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
         assignedCount: inSeason.length,
         completedCount: inSeason.filter((r) => r.status === 'completed').length,
         approvedAssignedCount: approved.length,
-        approvedCompletedCount: approved.filter(
-          (r) => r.status === 'completed',
-        ).length,
+        approvedCompletedCount: approved.filter((r) => r.status === 'completed')
+          .length,
         hasCompleted: open.some((r) => r.status === 'completed'),
       });
     }

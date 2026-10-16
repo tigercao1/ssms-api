@@ -436,11 +436,10 @@ describe('document publishing HTTP', () => {
         assignTo: 'selected',
         instructorIds: [a.id, pending.id, pending.id],
       }).expect(200);
-      expect(res.body).toMatchObject({ created: 1, skipped: 1 });
-      expect(res.body.template).toMatchObject({
-        status: 'live',
-        assignTo: 'selected',
-        assignedCount: 2,
+      expect(res.body).toMatchObject({
+        created: 1,
+        skipped: 1,
+        template: { status: 'live', assignTo: 'selected', assignedCount: 2 },
       });
       expect(
         [...ctx.assignments.rows.values()].map((r) => r.subject_id),
@@ -480,7 +479,9 @@ describe('document publishing HTTP', () => {
       })
         .expect(400)
         .expect((res) => {
-          expect(res.body.message).toContain(UNKNOWN_ID);
+          expect((res.body as { message: string }).message).toContain(
+            UNKNOWN_ID,
+          );
         });
       await publish(t.id, {
         assignTo: 'selected',

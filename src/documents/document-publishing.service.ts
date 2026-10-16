@@ -3,9 +3,9 @@ import {
   ConflictException,
   Injectable,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import { SeasonsService } from '../seasons/seasons.service';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import {
   DocumentAssignmentsService,
@@ -34,8 +34,7 @@ export const PUBLISH_INSTRUCTORS_NEED_SELECTED =
 export const AUDIENCE_NEEDS_LIVE =
   "Only a published document's audience can be changed";
 export const AUDIENCE_UNCHANGED = 'This document already has that audience';
-export const SEASON_REQUIRED =
-  'Choose a season; CURRENT_SEASON is not configured';
+export const SEASON_REQUIRED = 'Choose a season; no current season is set up';
 
 /**
  * The template lifecycle: `draft` → `live` (publish) → `retired` (retire),
@@ -47,7 +46,7 @@ export const SEASON_REQUIRED =
 @Injectable()
 export class DocumentPublishingService {
   constructor(
-    private readonly config: ConfigService,
+    private readonly seasons: SeasonsService,
     private readonly repo: DocumentTemplatesRepository,
     private readonly templates: DocumentTemplatesService,
     private readonly assignments: DocumentAssignmentsService,
@@ -59,7 +58,7 @@ export class DocumentPublishingService {
   /** `GET /admin/documents/templates/:id/publish-preview`. */
   async preview(id: string, season?: string): Promise<PublishPreview> {
     await this.templates.load(id);
-    const resolved = this.resolveSeason(season);
+    const resolved = await this.resolveSeason(season);
     const [approved, pendingCount] = await Promise.all([
       this.subjects.listActiveApprovedInstructorIds(),
       this.subjects.countPendingInstructors(),
@@ -107,7 +106,7 @@ export class DocumentPublishingService {
     const selected = await this.assignments.knownInstructors(
       dto.instructorIds ?? [],
     );
-    const season = this.resolveSeason(dto.season);
+    const season = await this.resolveSeason(dto.season);
     const row = await this.repo.updateIfStatus(id, ['draft', 'retired'], {
       status: 'live',
       assign_to: dto.assignTo,
@@ -169,7 +168,7 @@ export class DocumentPublishingService {
     if (dto.assignTo === 'all' && before.audience !== 'instructor') {
       throw new BadRequestException(PUBLISH_ALL_NEEDS_INSTRUCTORS);
     }
-    const season = before.season ?? this.resolveSeason();
+    const season = before.season ?? (await this.resolveSeason());
     const row = await this.repo.updateIfStatus(id, ['live'], {
       assign_to: dto.assignTo,
       season,
@@ -236,12 +235,15 @@ export class DocumentPublishingService {
     return this.templates.present(row);
   }
 
-  private resolveSeason(season?: string): string {
-    const resolved =
-      season?.trim() || this.config.get<string>('CURRENT_SEASON')?.trim();
-    if (!resolved) {
+  private async resolveSeason(season?: string): Promise<string> {
+    const requested = season?.trim();
+    if (requested) {
+      return (await this.seasons.assertKnown(requested)).key;
+    }
+    const current = await this.seasons.currentKey();
+    if (!current) {
       throw new BadRequestException(SEASON_REQUIRED);
     }
-    return resolved;
+    return current;
   }
 }

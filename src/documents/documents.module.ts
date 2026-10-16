@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { RolesGuard } from '../admin/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { MailerModule } from '../mailer/mailer.module';
+import { SeasonsModule } from '../seasons/seasons.module';
 import { AdminCertificationUploadsController } from './admin-certification-uploads.controller';
 import { AdminCertificationUploadsService } from './admin-certification-uploads.service';
 import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
@@ -46,7 +47,7 @@ import {
 } from './private-storage.client';
 
 @Module({
-  imports: [MailerModule],
+  imports: [MailerModule, SeasonsModule],
   controllers: [
     AdminDocumentTemplatesController,
     AdminDocumentAssignmentsController,

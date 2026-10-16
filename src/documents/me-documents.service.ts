@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { SeasonsService } from '../seasons/seasons.service';
 import {
   certificationKey,
   certificationState,
@@ -142,7 +142,7 @@ export class MeDocumentsService {
     private readonly subjects: DocumentSubjectsRepository,
     private readonly assignments: DocumentAssignmentsRepository,
     private readonly templates: DocumentTemplatesRepository,
-    private readonly config: ConfigService,
+    private readonly seasons: SeasonsService,
   ) {}
 
   /** Loads the caller's instructor row or throws 404. */
@@ -173,7 +173,7 @@ export class MeDocumentsService {
   /**
    * Checklist for the current season: the season's non-archived assignments,
    * then one item per certification row with the state of its latest upload.
-   * The season is `CURRENT_SEASON` when set, else the latest season among the
+   * The season is the current season, else the latest season among the
    * instructor's open assignments.
    *
    * Until the instructor is approved the checklist is `locked` and a preview:
@@ -192,7 +192,7 @@ export class MeDocumentsService {
       lock?.reason === DEACTIVATED_REASON
     ) {
       return {
-        season: this.currentSeason([]),
+        season: await this.currentSeason([]),
         locked: true,
         lockReason: lock.reason,
         items: [],
@@ -210,7 +210,7 @@ export class MeDocumentsService {
       locked,
     );
     if (locked) {
-      const season = this.currentSeason([]);
+      const season = await this.currentSeason([]);
       const published = await this.templates.listLiveForAll(
         'instructor',
         season,
@@ -227,7 +227,7 @@ export class MeDocumentsService {
       instructor.id,
     );
     const open = assignments.filter((row) => row.status !== 'archived');
-    const season = this.currentSeason(open);
+    const season = await this.currentSeason(open);
     const documents = open
       .filter((row) => season === null || row.season === season || !row.season)
       .sort(bySortOrder)
@@ -240,10 +240,12 @@ export class MeDocumentsService {
     };
   }
 
-  private currentSeason(open: DocumentAssignmentRow[]): string | null {
-    const configured = this.config.get<string>('CURRENT_SEASON')?.trim();
-    if (configured) {
-      return configured;
+  private async currentSeason(
+    open: DocumentAssignmentRow[],
+  ): Promise<string | null> {
+    const current = await this.seasons.currentKey();
+    if (current) {
+      return current;
     }
     const seasons = open
       .map((row) => row.season)

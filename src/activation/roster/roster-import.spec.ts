@@ -131,6 +131,7 @@ function harness(
         new Map([...LOCATION_IDS].filter(([k]) => keys.includes(k))),
       ),
     ),
+    seasonExists: jest.fn((key: string) => Promise.resolve(key === '2026/27')),
   };
   let n = 0;
   const writer: jest.Mocked<RosterWriter> = {
@@ -627,6 +628,21 @@ describe('runRosterCli --apply', () => {
       runRosterCli(h.deps, ['--apply', '--csv', 'r.csv']),
     ).rejects.toThrow(/SSMS_CONFIRM_PROD/);
     expect(h.readUsers).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown season before writing', async () => {
+    const h = harness();
+    await expect(
+      runRosterCli(h.deps, [
+        '--apply',
+        '--csv',
+        'r.csv',
+        '--season',
+        '2030/31',
+      ]),
+    ).rejects.toThrow("Unknown season '2030/31'");
+    expect(h.readUsers).not.toHaveBeenCalled();
+    expect(h.factories.writer).not.toHaveBeenCalled();
   });
 });
 

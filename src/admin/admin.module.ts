@@ -4,7 +4,9 @@ import { DocumentsModule } from '../documents/documents.module';
 import { InstructorsModule } from '../instructors/instructors.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { MediaModule } from '../media/media.module';
+import { SeasonsModule } from '../seasons/seasons.module';
 import { AdminMediaController } from './admin-media.controller';
+import { AdminSeasonsController } from './admin-seasons.controller';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -31,8 +33,9 @@ import { AdminService } from './admin.service';
     MediaModule,
     BioTranslationModule,
     DocumentsModule,
+    SeasonsModule,
   ],
-  controllers: [AdminController, AdminMediaController],
+  controllers: [AdminSeasonsController, AdminController, AdminMediaController],
   providers: [
     AdminService,
     { provide: AdminRepository, useClass: SupabaseAdminRepository },

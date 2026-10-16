@@ -13,6 +13,10 @@ import {
   startDocumentsApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/documents-fakes';
+import {
+  seasonsProviders,
+  seasonsRepo,
+} from '../../test/helpers/seasons-fakes';
 import { pdfFixture } from '../../test/helpers/pdf-fixtures';
 import {
   inkIn,
@@ -110,6 +114,7 @@ async function build({ handler = true } = {}) {
     Test.createTestingModule({
       controllers: [MeDocumentsController, AdminDocumentAssignmentsController],
       providers: [
+        ...seasonsProviders(seasonsRepo('2024-25', '2025-26', '2026/27')),
         DocumentSigningService,
         DocumentAssignmentsService,
         MeDocumentsService,

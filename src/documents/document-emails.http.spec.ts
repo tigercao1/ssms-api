@@ -10,6 +10,10 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { InMemoryCertificationUploadsRepository } from '../../test/helpers/certification-fakes';
 import {
+  seasonsProviders,
+  seasonsRepo,
+} from '../../test/helpers/seasons-fakes';
+import {
   ADMIN_AUTH as admin,
   certificationUploadRow,
   INSTRUCTOR_AUTH,
@@ -81,6 +85,9 @@ async function build(env: Record<string, string | undefined> = {}) {
         InternalDocumentsController,
       ],
       providers: [
+        ...seasonsProviders(
+          seasonsRepo('2024-25', '2025-26', '2026-27', '2026/27'),
+        ),
         DocumentAssignmentsService,
         DocumentNotificationsService,
         DocumentRemindersService,

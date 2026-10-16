@@ -27,6 +27,7 @@ export interface NewRosterInstructor {
 export interface RosterReader {
   authUsersByEmail(): Promise<Map<string, ExistingAuthUser>>;
   teachingLocationIds(keys: string[]): Promise<Map<string, string>>;
+  seasonExists(key: string): Promise<boolean>;
 }
 
 /** Writes used by `--apply`. */
@@ -96,6 +97,18 @@ export class SupabaseRosterReader implements RosterReader {
     return new Map(
       ((data ?? []) as { id: string; key: string }[]).map((r) => [r.key, r.id]),
     );
+  }
+
+  async seasonExists(key: string): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('seasons')
+      .select('key')
+      .eq('key', key)
+      .maybeSingle<{ key: string }>();
+    if (error) {
+      throw fail('load season', error.message);
+    }
+    return data !== null;
   }
 }
 

@@ -419,6 +419,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
 export interface PayrollFakeResult {
   data: unknown;
   error: { message: string; code?: string } | null;
+  count?: number | null;
 }
 
 export interface PayrollRecordedCall {
@@ -456,6 +457,7 @@ export function recordingPayrollSupabase(
       'range',
       'insert',
       'upsert',
+      'update',
       'delete',
       'single',
       'maybeSingle',

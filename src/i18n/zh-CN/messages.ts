@@ -380,7 +380,7 @@ export const zhCN: MessageCatalog = {
     documents: {
       assigned: {
         subject: '请完成您的入职资料',
-        preheader: '请阅读并签署您的入职资料。',
+        preheader: '请查看并完成您的入职资料。',
         heading: '您的入职资料',
         paragraphs: [
           '请在教练平台阅读并完成以下资料：',
@@ -424,6 +424,8 @@ export const zhCN: MessageCatalog = {
         finePrint:
           '请保留这封邮件。通过 SHA-256 可以核对附件在您签署后没有被改动。',
       },
+      listItem: '{title}（{kind}）',
+      kinds: { sign: '签署', read: '阅读' },
     },
   },
 };

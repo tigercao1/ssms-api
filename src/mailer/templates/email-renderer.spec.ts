@@ -309,6 +309,44 @@ describe('EmailRenderer', () => {
       },
     );
 
+    it.each(['documents.assigned', 'documents.reminder'] as const)(
+      '%s labels each document Sign or Read when its kind is known',
+      (template) => {
+        const vars = {
+          displayName: 'Lin',
+          documents: [
+            {
+              titleEn: 'Instructor agreement',
+              titleZh: '教练协议',
+              kind: 'sign' as const,
+            },
+            {
+              titleEn: 'Safety policy',
+              titleZh: '安全守则',
+              kind: 'read' as const,
+            },
+          ],
+          onboardingUrl,
+        };
+        const english = renderer.render(template, 'en', vars);
+        expect(english.text).toContain('• Instructor agreement (Sign)');
+        expect(english.text).toContain('• Safety policy (Read)');
+
+        const zh = renderer.render(template, 'zh-CN', vars);
+        expect(zh.text).toContain('• 教练协议（签署）');
+        expect(zh.text).toContain('• 安全守则（阅读）');
+      },
+    );
+
+    it('documents.assigned has a preheader that fits documents to read as well as sign', () => {
+      expect(en.email.documents.assigned.preheader).toBe(
+        'Please review and complete your onboarding documents.',
+      );
+      expect(zhCN.email.documents.assigned.preheader).toBe(
+        '请查看并完成您的入职资料。',
+      );
+    });
+
     it('documents.assigned opens with the approval when sent on approval', () => {
       const vars = { displayName: 'Lin', documents, onboardingUrl };
       const plain = renderer.render('documents.assigned', 'en', vars);

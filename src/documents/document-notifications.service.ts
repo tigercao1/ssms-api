@@ -20,7 +20,7 @@ const FILENAME_MAX_LENGTH = 80;
 /** The template fields an email needs; satisfied by template rows and embedded templates. */
 export type DocumentEmailTemplate = Pick<
   DocumentTemplateRow,
-  'id' | 'title_en' | 'title_zh'
+  'id' | 'title_en' | 'title_zh' | 'kind'
 >;
 
 /**
@@ -180,7 +180,11 @@ export class DocumentNotificationsService {
 }
 
 function emailTitle(template: DocumentEmailTemplate): EmailDocumentTitle {
-  return { titleEn: template.title_en, titleZh: template.title_zh };
+  return {
+    titleEn: template.title_en,
+    titleZh: template.title_zh,
+    kind: template.kind,
+  };
 }
 
 /** ASCII attachment name from the English title, e.g. `Instructor-agreement-signed.pdf`. */

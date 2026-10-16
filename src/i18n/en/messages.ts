@@ -401,7 +401,7 @@ export const en: MessageCatalog = {
     documents: {
       assigned: {
         subject: 'Onboarding documents to complete',
-        preheader: 'Please read and sign your onboarding documents.',
+        preheader: 'Please review and complete your onboarding documents.',
         heading: 'Your onboarding documents',
         paragraphs: [
           'Please read and complete these documents in the instructor portal:',
@@ -447,6 +447,8 @@ export const en: MessageCatalog = {
         finePrint:
           'Keep this email for your records. The SHA-256 lets anyone check that the attached file has not been changed since you signed it.',
       },
+      listItem: '{title} ({kind})',
+      kinds: { sign: 'Sign', read: 'Read' },
     },
   },
 };

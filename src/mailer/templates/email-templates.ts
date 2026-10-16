@@ -94,6 +94,20 @@ function documentTitle(
   return language === 'zh-CN' && zh ? zh : document.titleEn;
 }
 
+function documentItem(
+  catalog: MessageCatalog,
+  document: EmailDocumentTitle,
+  language: SupportedLanguage,
+): string {
+  const title = documentTitle(document, language);
+  return document.kind
+    ? interpolate(catalog.email.documents.listItem, {
+        title,
+        kind: catalog.email.documents.kinds[document.kind],
+      })
+    : title;
+}
+
 function documentList(
   catalog: MessageCatalog,
   copy: EmailCopy & { button: string },
@@ -107,7 +121,7 @@ function documentList(
     greeting: greet(catalog, vars.displayName),
     paragraphs: [
       intro,
-      ...vars.documents.map((d) => `• ${documentTitle(d, language)}`),
+      ...vars.documents.map((d) => `• ${documentItem(catalog, d, language)}`),
       ...rest,
     ],
     button: { label: copy.button, url: vars.onboardingUrl },
@@ -115,8 +129,8 @@ function documentList(
 }
 
 const SAMPLE_DOCUMENTS: EmailDocumentTitle[] = [
-  { titleEn: 'Instructor agreement', titleZh: '教练协议' },
-  { titleEn: 'Safety policy', titleZh: '安全守则' },
+  { titleEn: 'Instructor agreement', titleZh: '教练协议', kind: 'sign' },
+  { titleEn: 'Safety policy', titleZh: '安全守则', kind: 'read' },
 ];
 const SAMPLE_SHA256 =
   '3b7e1f0c9a4d2e8b6f5a1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f';

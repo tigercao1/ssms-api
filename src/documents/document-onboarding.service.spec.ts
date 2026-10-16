@@ -159,6 +159,46 @@ describe('DocumentOnboardingService', () => {
     },
   );
 
+  it('assigns a live read document published to all and lists it in the email on approval and on activation', async () => {
+    const ctx = setup();
+    const activated = ctx.subjects.seedInstructor({
+      email: 'activated@example.com',
+    });
+    await ctx.service.assignPublished(ctx.instructor.id, { approved: true });
+    await ctx.service.assignPublishedForAuthUser(activated.auth_user_id);
+    await flushBackground();
+    for (const instructor of [ctx.instructor, activated]) {
+      expect(
+        [...ctx.assignments.rows.values()].some(
+          (r) =>
+            r.template_id === ctx.policy.id && r.subject_id === instructor.id,
+        ),
+      ).toBe(true);
+    }
+    expect(
+      ctx.mailer
+        .sentOf('documents.assigned')
+        .map((m) => [m.to, m.vars.approved, m.vars.documents]),
+    ).toEqual([
+      [
+        ctx.instructor.email,
+        true,
+        [
+          { titleEn: 'Agreement', titleZh: null, kind: 'sign' },
+          { titleEn: 'Policy', titleZh: null, kind: 'read' },
+        ],
+      ],
+      [
+        'activated@example.com',
+        false,
+        [
+          { titleEn: 'Agreement', titleZh: null, kind: 'sign' },
+          { titleEn: 'Policy', titleZh: null, kind: 'read' },
+        ],
+      ],
+    ]);
+  });
+
   it('is idempotent: a repeat assigns nothing and sends no email', async () => {
     const ctx = setup();
     await ctx.service.assignPublished(ctx.instructor.id);

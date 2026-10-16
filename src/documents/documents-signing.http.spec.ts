@@ -724,6 +724,14 @@ describe('documents signing HTTP', () => {
         .get(mine)
         .set('Authorization', INSTRUCTOR_AUTH)
         .expect(200, expected);
+      ctx.subjects.instructors.set(ctx.instructor.id, {
+        ...ctx.instructor,
+        is_active: false,
+      });
+      await http()
+        .get(mine)
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .expect(200, expected);
     });
 
     it("404s for another instructor's copy", async () => {

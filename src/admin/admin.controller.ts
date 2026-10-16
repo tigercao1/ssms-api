@@ -101,7 +101,7 @@ export class AdminController {
     return this.admin.getInstructorProfile(id);
   }
 
-  /** T6.4 — approve / reject a pending instructor (valid transitions only). */
+  /** T6.4 — approve / reject a pending instructor, or re-approve a rejected one. */
   @Patch('instructors/:id/approval')
   setApproval(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

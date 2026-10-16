@@ -36,6 +36,7 @@ import {
 import type { DocumentTemplateRow, TemplateFieldRow } from './documents.types';
 import { MeDocumentsController } from './me-documents.controller';
 import {
+  DEACTIVATED,
   MeDocumentsService,
   PENDING_APPROVAL,
   REJECTED,
@@ -730,6 +731,40 @@ describe('document publishing HTTP', () => {
       expect(ctx.assignments.rows.get(row.id)?.status).toBe('assigned');
       expect(ctx.mailer.sent).toHaveLength(0);
     });
+
+    it.each(['approved', 'pending', 'rejected'])(
+      'a deactivated %s instructor gets a locked checklist with no items and 403 deactivated on open and complete',
+      async (approval) => {
+        const { me, conduct } = await setup(approval);
+        ctx.subjects.instructors.set(me.id, { ...me, is_active: false });
+        ctx.subjects.uploads.push(
+          certificationUploadRow({ instructor_id: me.id }),
+        );
+        await get().expect(200, {
+          season: SEASON,
+          locked: true,
+          lockReason: 'deactivated',
+          items: [],
+        });
+        const row = ctx.assignments.seed({
+          template_id: conduct.id,
+          subject_id: me.id,
+          season: SEASON,
+        });
+        const expected = { message: DEACTIVATED, reason: 'deactivated' };
+        await http()
+          .get(`/me/documents/${row.id}`)
+          .set('Authorization', INSTRUCTOR_AUTH)
+          .expect(403, expected);
+        await http()
+          .post(`/me/documents/${row.id}/complete`)
+          .set('Authorization', INSTRUCTOR_AUTH)
+          .send({ consent: true, values: {} })
+          .expect(403, expected);
+        expect(ctx.assignments.rows.get(row.id)?.status).toBe('assigned');
+        expect(ctx.mailer.sent).toHaveLength(0);
+      },
+    );
 
     it('previews every live all template without CURRENT_SEASON, and nothing when none is published', async () => {
       ctx = await build();

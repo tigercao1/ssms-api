@@ -15,6 +15,8 @@ insert into instructors (id, auth_user_id, email, approval_status, is_active) va
    'ci-stats-c@example.com', 'pending', true),
   ('22222222-2222-4222-8222-222222222294', '11111111-1111-4111-8111-111111111294',
    'ci-stats-d@example.com', 'approved', true);
+insert into seasons (key, starts_on, ends_on) values ('2025/26', '2025-11-01', '2026-04-30')
+  on conflict (key) do nothing;
 insert into document_templates (id, kind, audience, title_en, status, assign_to, season)
 values ('33333333-3333-4333-8333-333333333291', 'read', 'instructor', 'CI stats',
         'live', 'all', '2026/27');

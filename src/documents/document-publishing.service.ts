@@ -43,9 +43,6 @@ export const SEASON_REQUIRED =
  * every approved, active instructor for its season and emails each one who
  * was newly assigned; instructors approved later get it on approval.
  * Publishing to `selected` assigns the listed `instructorIds` the same way.
- * A live template's audience can be changed later: switching to `all` assigns
- * and emails it the same way publishing to `all` does; switching to
- * `selected` keeps every existing assignment.
  */
 @Injectable()
 export class DocumentPublishingService {

@@ -69,6 +69,9 @@ export class ResendEmailSender implements EmailSender {
         subject: message.subject,
         html: message.html,
         text: message.text,
+        ...(message.contentLanguage
+          ? { headers: { 'Content-Language': message.contentLanguage } }
+          : {}),
         ...(message.attachments?.length
           ? {
               attachments: message.attachments.map((attachment) => ({

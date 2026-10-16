@@ -175,6 +175,7 @@ export interface EmailMessage {
   html: string;
   /** Plain-text alternative body. */
   text: string;
+  contentLanguage?: string;
   /** Sent as the provider's `Idempotency-Key` header when set. */
   idempotencyKey?: string;
   /** Abort the provider request after this many milliseconds. */

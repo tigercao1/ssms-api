@@ -16,6 +16,7 @@ import { DocumentOnboardingService } from '../documents/document-onboarding.serv
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { InstructorsService } from '../instructors/instructors.service';
 import { MailerService } from '../mailer/mailer.service';
+import { SeasonsService } from '../seasons/seasons.service';
 import { AdminController } from './admin.controller';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -88,6 +89,7 @@ async function build(initial: AdminInstructorRow = makeRow()) {
   const moduleRef = await Test.createTestingModule({
     controllers: [AdminController],
     providers: [
+      { provide: SeasonsService, useValue: {} },
       AdminService,
       { provide: AdminRepository, useValue: repo },
       { provide: InstructorsService, useValue: {} },

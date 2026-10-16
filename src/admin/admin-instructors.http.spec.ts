@@ -13,6 +13,7 @@ import type { PageRequest, RowPage } from '../database/pagination';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { InstructorsService } from '../instructors/instructors.service';
 import { MailerService } from '../mailer/mailer.service';
+import { SeasonsService } from '../seasons/seasons.service';
 import { AdminController } from './admin.controller';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -85,6 +86,7 @@ async function build(count = 60) {
     Test.createTestingModule({
       controllers: [AdminController],
       providers: [
+        { provide: SeasonsService, useValue: {} },
         AdminService,
         { provide: AdminRepository, useValue: repo },
         { provide: InstructorsService, useValue: {} },

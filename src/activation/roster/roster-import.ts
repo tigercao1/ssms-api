@@ -302,6 +302,9 @@ async function plan(
   reader: RosterReader,
   options: RosterOptions,
 ): Promise<Plan> {
+  if (!(await reader.seasonExists(options.season))) {
+    throw new RosterCommandError(`Unknown season '${options.season}'`);
+  }
   const parsed = parseRosterCsv(
     await deps.readFile(options.csv as string),
     deps.now(),

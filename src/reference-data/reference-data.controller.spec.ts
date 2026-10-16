@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { ReferenceDataController } from './reference-data.controller';
+import { SeasonsService } from '../seasons/seasons.service';
 import { ReferenceDataService } from './reference-data.service';
 
 describe('ReferenceDataController', () => {
@@ -10,12 +11,16 @@ describe('ReferenceDataController', () => {
     getCourseLevelsOffered: jest.fn(),
     getExamPreparations: jest.fn(),
   };
+  const seasons = { list: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
       controllers: [ReferenceDataController],
-      providers: [{ provide: ReferenceDataService, useValue: service }],
+      providers: [
+        { provide: ReferenceDataService, useValue: service },
+        { provide: SeasonsService, useValue: seasons },
+      ],
     }).compile();
     controller = moduleRef.get(ReferenceDataController);
   });
@@ -45,5 +50,18 @@ describe('ReferenceDataController', () => {
     service.getExamPreparations.mockResolvedValue([]);
     await controller.examPreparations();
     expect(service.getExamPreparations).toHaveBeenCalledTimes(1);
+  });
+
+  it('delegates seasons to the seasons service', async () => {
+    const rows = [
+      {
+        key: '2026/27',
+        startsOn: '2026-11-01',
+        endsOn: '2027-04-30',
+        isCurrent: true,
+      },
+    ];
+    seasons.list.mockResolvedValue(rows);
+    await expect(controller.seasonList()).resolves.toBe(rows);
   });
 });

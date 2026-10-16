@@ -7,6 +7,7 @@ import {
   FILE_SAMPLES,
   InMemoryCertificationUploadsRepository,
 } from '../../test/helpers/certification-fakes';
+import { seasonsProviders } from '../../test/helpers/seasons-fakes';
 import {
   ADMIN_AUTH as admin,
   ADMIN_USER_ID,
@@ -101,6 +102,7 @@ async function build() {
         AdminDocumentAssignmentsController,
       ],
       providers: [
+        ...seasonsProviders(),
         MeDocumentsService,
         MeCertificationUploadsService,
         AdminCertificationUploadsService,

@@ -75,6 +75,9 @@ export const AUDIT_ACTIONS = {
   certificationUploadReview: 'certification_upload.review',
   certificationUploadView: 'certification_upload.view',
   certificationUploadFileDelete: 'certification_upload.file_delete',
+  seasonCreate: 'season.create',
+  seasonUpdate: 'season.update',
+  seasonDelete: 'season.delete',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -114,6 +117,7 @@ export interface AuditEntry {
     | 'document_template'
     | 'document_assignment'
     | 'certification_upload'
+    | 'season'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

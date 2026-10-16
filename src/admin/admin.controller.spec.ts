@@ -3,6 +3,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import type { Response } from 'express';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { SeasonsService } from '../seasons/seasons.service';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import type { AdminInstructorRecord } from './admin.types';
@@ -38,7 +39,10 @@ describe('AdminController', () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
       controllers: [AdminController],
-      providers: [{ provide: AdminService, useValue: service }],
+      providers: [
+        { provide: AdminService, useValue: service },
+        { provide: SeasonsService, useValue: {} },
+      ],
     })
       // guards covered in roles.guard.spec / auth module; stub them open here.
       .overrideGuard(SupabaseAuthGuard)

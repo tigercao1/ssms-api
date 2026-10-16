@@ -21,6 +21,8 @@ import type { AuditActor } from '../audit/audit.types';
 import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
+import { CreateSeasonDto, UpdateSeasonDto } from '../seasons/dto/season.dto';
+import { type AdminSeason, SeasonsService } from '../seasons/seasons.service';
 import { AdminService } from './admin.service';
 import {
   AdminInstructorRecord,
@@ -65,7 +67,10 @@ function parseReferenceSlug(type: string): ReferenceSlug {
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly seasons: SeasonsService,
+  ) {}
 
   /** T6.3 — list instructors of every status, optional `?status=`/`?active=`. */
   @Get('instructors')
@@ -167,6 +172,39 @@ export class AdminController {
     @Body() dto: UpdateInstructorProfileDto,
   ): Promise<InstructorProfile> {
     return this.admin.updateProfile(id, dto);
+  }
+
+  @Get('reference/seasons')
+  listSeasons(): Promise<AdminSeason[]> {
+    return this.seasons.adminList();
+  }
+
+  @Post('reference/seasons')
+  addSeason(
+    @Body() dto: CreateSeasonDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminSeason> {
+    return this.seasons.create(dto, toActor(user, userAgent));
+  }
+
+  @Patch('reference/seasons/:key')
+  updateSeason(
+    @Param('key') key: string,
+    @Body() dto: UpdateSeasonDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminSeason> {
+    return this.seasons.update(key, dto, toActor(user, userAgent));
+  }
+
+  @Delete('reference/seasons/:key')
+  deleteSeason(
+    @Param('key') key: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminSeason> {
+    return this.seasons.remove(key, toActor(user, userAgent));
   }
 
   /** T6.7 — add a reference (lookup) row of the given `:type` slug. */

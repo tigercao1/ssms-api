@@ -93,6 +93,22 @@ describe('SupabaseRosterReader', () => {
       'Failed to load teaching locations: down',
     );
   });
+
+  it('checks a season key with a select only', async () => {
+    const db = new FakeSupabase();
+    db.queue.push(
+      { data: { key: '2026/27' }, error: null },
+      { data: null, error: null },
+      { data: null, error: { message: 'down' } },
+    );
+    const reader = new SupabaseRosterReader(db.asClient());
+    expect(await reader.seasonExists('2026/27')).toBe(true);
+    expect(await reader.seasonExists('2030/31')).toBe(false);
+    await expect(reader.seasonExists('x')).rejects.toThrow(
+      'Failed to load season: down',
+    );
+    expect(db.queries[0].table).toBe('seasons');
+  });
 });
 
 describe('SupabaseRosterWriter', () => {

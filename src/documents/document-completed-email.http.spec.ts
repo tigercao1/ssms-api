@@ -10,6 +10,7 @@ import {
   InMemoryPrivateStorage,
   startDocumentsApp,
 } from '../../test/helpers/documents-fakes';
+import { seasonsProviders } from '../../test/helpers/seasons-fakes';
 import { pdfFixture } from '../../test/helpers/pdf-fixtures';
 import { signaturePng } from '../../test/helpers/png-fixtures';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
@@ -84,6 +85,7 @@ async function build() {
     Test.createTestingModule({
       controllers: [MeDocumentsController],
       providers: [
+        ...seasonsProviders(),
         DocumentSigningService,
         MeDocumentsService,
         PdfWorkQueue,

@@ -4,6 +4,7 @@ import {
   InMemoryDocumentSubjectsRepository,
   InMemoryDocumentTemplatesRepository,
 } from '../../test/helpers/documents-fakes';
+import { seasonsService } from '../../test/helpers/seasons-fakes';
 import {
   flushBackground,
   RecordingMailer,
@@ -29,6 +30,7 @@ function setup() {
     subjects,
     recordingAudit() as unknown as AuditService,
     notifications,
+    seasonsService(),
   );
   const service = new DocumentOnboardingService(
     templates,

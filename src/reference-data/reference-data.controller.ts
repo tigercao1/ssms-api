@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import { type Season, SeasonsService } from '../seasons/seasons.service';
 import {
   ReferenceDataService,
   type ReferenceItem,
@@ -13,7 +14,10 @@ import {
  */
 @Controller('reference')
 export class ReferenceDataController {
-  constructor(private readonly referenceData: ReferenceDataService) {}
+  constructor(
+    private readonly referenceData: ReferenceDataService,
+    private readonly seasons: SeasonsService,
+  ) {}
 
   @Get('teaching-locations')
   teachingLocations(): Promise<ReferenceItem[]> {
@@ -33,5 +37,10 @@ export class ReferenceDataController {
   @Get('exam-preparations')
   examPreparations(): Promise<ReferenceItem[]> {
     return this.referenceData.getExamPreparations();
+  }
+
+  @Get('seasons')
+  seasonList(): Promise<Season[]> {
+    return this.seasons.list();
   }
 }

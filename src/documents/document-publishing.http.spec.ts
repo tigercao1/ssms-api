@@ -14,6 +14,10 @@ import {
   startDocumentsApp,
 } from '../../test/helpers/documents-fakes';
 import {
+  seasonsProviders,
+  seasonsRepo,
+} from '../../test/helpers/seasons-fakes';
+import {
   flushBackground,
   RecordingMailer,
 } from '../../test/helpers/mailer-fakes';
@@ -30,6 +34,7 @@ import {
   AUDIENCE_NEEDS_LIVE,
   AUDIENCE_UNCHANGED,
   DocumentPublishingService,
+  SEASON_REQUIRED,
 } from './document-publishing.service';
 import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -66,7 +71,10 @@ const FIELD: TemplateFieldRow = {
   prefill: null,
 };
 
-async function build(env: Record<string, string> = {}) {
+async function build(
+  env: Record<string, string> = {},
+  seasons = seasonsRepo('2025/26', '2026/27', '2027/28'),
+) {
   const storage = new InMemoryPrivateStorage();
   const templates = new InMemoryDocumentTemplatesRepository();
   const subjects = new InMemoryDocumentSubjectsRepository();
@@ -84,6 +92,7 @@ async function build(env: Record<string, string> = {}) {
         MeDocumentsController,
       ],
       providers: [
+        ...seasonsProviders(seasons),
         DocumentTemplatesService,
         DocumentPublishingService,
         DocumentAssignmentsService,
@@ -304,13 +313,37 @@ describe('document publishing HTTP', () => {
       expect(ctx.templates.rows.get(t.id)?.status).toBe('draft');
     });
 
-    it('needs a season when CURRENT_SEASON is not set', async () => {
+    it('needs a season when no season is set up', async () => {
+      await ctx.app.close();
+      ctx = await build({}, seasonsRepo());
+      const t = draft();
+      await publish(t.id, { assignTo: 'all' }).expect(400, {
+        statusCode: 400,
+        message: SEASON_REQUIRED,
+        error: 'Bad Request',
+      });
+      await preview(t.id).expect(400);
+    });
+
+    it('defaults to the current season and 400s an unknown one', async () => {
       await ctx.app.close();
       ctx = await build();
       const t = draft();
-      await publish(t.id, { assignTo: 'all' }).expect(400);
-      await preview(t.id).expect(400);
-      await publish(t.id, { assignTo: 'all', season: '2026-27' }).expect(200);
+      await preview(t.id, '2026-27').expect(400, {
+        statusCode: 400,
+        message: 'Unknown season',
+        error: 'Bad Request',
+      });
+      await publish(t.id, { assignTo: 'all', season: '2026-27' }).expect(400, {
+        statusCode: 400,
+        message: 'Unknown season',
+        error: 'Bad Request',
+      });
+      expect(ctx.templates.rows.get(t.id)?.status).toBe('draft');
+      const res = await publish(t.id, { assignTo: 'all' }).expect(200);
+      expect(
+        (res.body as { template: { season: string } }).template.season,
+      ).toBe('2026/27');
     });
 
     it('409s when a concurrent publish already won', async () => {
@@ -998,14 +1031,14 @@ describe('document publishing HTTP', () => {
       },
     );
 
-    it('previews every live all template without CURRENT_SEASON, and nothing when none is published', async () => {
+    it('previews every live all template of the current season, and nothing when none is published', async () => {
       ctx = await build();
       ctx.subjects.seedInstructor({
         auth_user_id: INSTRUCTOR_USER_ID,
         approval_status: 'pending',
       });
       await get().expect(200, {
-        season: null,
+        season: '2026/27',
         locked: true,
         lockReason: 'pending_approval',
         items: [],
@@ -1014,7 +1047,7 @@ describe('document publishing HTTP', () => {
         source_key: 'k',
         status: 'live',
         assign_to: 'all',
-        season: '2025/26',
+        season: '2026/27',
       });
       const res = await get().expect(200);
       expect((res.body as { items: unknown[] }).items).toHaveLength(1);

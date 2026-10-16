@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { hasCode, PG_UNIQUE_VIOLATION } from '../database/db-result';
+import { SeasonsService } from '../seasons/seasons.service';
 import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import {
@@ -55,6 +56,7 @@ export class DocumentAssignmentsService {
     private readonly subjects: DocumentSubjectsRepository,
     private readonly audit: AuditService,
     private readonly notifications: DocumentNotificationsService,
+    private readonly seasons: SeasonsService,
   ) {}
 
   /** `POST /admin/documents/assignments`. */
@@ -77,6 +79,7 @@ export class DocumentAssignmentsService {
     ) {
       throw new BadRequestException(TEMPLATE_NOT_ASSIGNABLE);
     }
+    await this.seasons.assertKnown(dto.season);
     const instructorIds = all
       ? await this.subjects.listActiveApprovedInstructorIds()
       : await this.knownInstructors(dto.instructorIds ?? []);

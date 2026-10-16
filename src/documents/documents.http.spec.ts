@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PDFDocument } from '@cantoo/pdf-lib';
 import { ConfigService } from '@nestjs/config';
@@ -16,6 +17,10 @@ import {
   startDocumentsApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/documents-fakes';
+import {
+  seasonsProviders,
+  seasonsRepo,
+} from '../../test/helpers/seasons-fakes';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { pdfFixture, pdfOfSize } from '../../test/helpers/pdf-fixtures';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
@@ -49,7 +54,10 @@ function addDays(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function build(env: Record<string, string> = {}) {
+async function build(
+  env: Record<string, string> = {},
+  seasons = seasonsRepo('2025-26', '2026-27', '2027-28'),
+) {
   const storage = new InMemoryPrivateStorage();
   const templates = new InMemoryDocumentTemplatesRepository();
   const subjects = new InMemoryDocumentSubjectsRepository();
@@ -67,6 +75,7 @@ async function build(env: Record<string, string> = {}) {
         MeDocumentsController,
       ],
       providers: [
+        ...seasonsProviders(seasons),
         DocumentTemplatesService,
         DocumentPublishingService,
         DocumentAssignmentsService,
@@ -948,6 +957,16 @@ describe('documents HTTP', () => {
         UNKNOWN_ID,
       );
       await assign({
+        templateId: t.id,
+        season: '2031/32',
+        instructorIds: [a.id],
+      }).expect(400, {
+        statusCode: 400,
+        message: 'Unknown season',
+        error: 'Bad Request',
+      });
+      expect(ctx.assignments.rows.size).toBe(0);
+      await assign({
         templateId: UNKNOWN_ID,
         season: '2026-27',
         allActiveInstructors: true,
@@ -1053,8 +1072,11 @@ describe('documents HTTP', () => {
   describe('GET /me/documents', () => {
     const today = torontoToday();
 
-    async function setup(env: Record<string, string> = {}) {
-      ctx = await build(env);
+    async function setup(
+      env: Record<string, string> = {},
+      seasons?: ReturnType<typeof seasonsRepo>,
+    ) {
+      ctx = await build(env, seasons);
       const me = ctx.subjects.seedInstructor({
         auth_user_id: INSTRUCTOR_USER_ID,
       });
@@ -1185,8 +1207,25 @@ describe('documents HTTP', () => {
       });
     });
 
-    it('returns a null season and no items for a new instructor', async () => {
-      await setup();
+    it('ignores a CURRENT_SEASON that is not a known season', async () => {
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      await setup({ CURRENT_SEASON: '2099-00' });
+      await get().expect(200, {
+        season: '2026-27',
+        locked: false,
+        lockReason: null,
+        items: [],
+      });
+      expect(warn).toHaveBeenCalledWith(
+        "CURRENT_SEASON '2099-00' is not a known season; ignoring it",
+      );
+      warn.mockRestore();
+    });
+
+    it('returns a null season and no items when no season is set up', async () => {
+      await setup({}, seasonsRepo());
       await get().expect(200, {
         season: null,
         locked: false,

@@ -96,8 +96,11 @@ describe('MailerService', () => {
       'sent',
     );
     expect(send).toHaveBeenCalledTimes(1);
-    const [message] = send.mock.calls[0] as [{ to: string; html: string }];
+    const [message] = send.mock.calls[0] as [
+      { to: string; html: string; contentLanguage: string },
+    ];
     expect(message.to).toBe('jane@example.com');
+    expect(message.contentLanguage).toBe('en');
     expect(message.html).toContain('https://portal.example.com/login');
     expect(inserts.audit_log).toHaveLength(0);
     expect(inserts.email_log).toHaveLength(1);

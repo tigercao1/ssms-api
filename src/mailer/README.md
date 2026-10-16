@@ -64,7 +64,10 @@ To add an email:
 only, 560px card, PNG logo, red `#d71e2b` button with a copy-paste link
 fallback, footer with the club name and reply line, and a plain-text
 alternative. No SVG, web fonts or external CSS, so it renders in Gmail and
-Outlook.
+Outlook. Each email declares its language (`<html lang>`, a
+`Content-Language` meta tag and the `Content-Language` header; bilingual is
+`en, zh-CN`), and links, codes, fingerprints and the club name are marked
+`translate="no"` so client auto-translation leaves them intact.
 
 ## Previews
 

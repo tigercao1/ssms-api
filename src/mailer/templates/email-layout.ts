@@ -29,6 +29,11 @@ const FONT_STACK =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
 const MONO_STACK = "'SFMono-Regular',Menlo,Consolas,'Courier New',monospace";
 const TEXT_DIVIDER = '------------------------------';
+const NO_TRANSLATE = 'translate="no" class="notranslate"';
+
+export function contentLanguage(sections: EmailSection[]): string {
+  return sections.map((s) => s.language).join(', ');
+}
 
 export function escapeHtml(value: string): string {
   return value
@@ -78,6 +83,7 @@ function renderHtml(
     `<html lang="${sections[0].language}" xmlns="http://www.w3.org/1999/xhtml">`,
     '<head>',
     '<meta charset="utf-8">',
+    `<meta http-equiv="Content-Language" content="${contentLanguage(sections)}">`,
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="x-apple-disable-message-reformatting">',
     '<meta name="color-scheme" content="light">',
@@ -93,7 +99,7 @@ function renderHtml(
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">',
     '<tr>',
     '<td align="center" style="padding:8px 0 24px;">',
-    `<img src="${escapeHtml(options.logoUrl)}" width="200" alt="${escapeHtml(options.brandName)}" style="display:block;width:200px;max-width:200px;height:auto;border:0;outline:none;text-decoration:none;">`,
+    `<img src="${escapeHtml(options.logoUrl)}" width="200" ${NO_TRANSLATE} alt="${escapeHtml(options.brandName)}" style="display:block;width:200px;max-width:200px;height:auto;border:0;outline:none;text-decoration:none;">`,
     '</td>',
     '</tr>',
     '<tr>',
@@ -103,7 +109,7 @@ function renderHtml(
     '</tr>',
     '<tr>',
     `<td align="center" style="padding:24px 12px 8px;font-family:${FONT_STACK};font-size:13px;line-height:20px;color:${MUTED};">`,
-    `<p style="margin:0;font-weight:bold;">${escapeHtml(options.brandName)}</p>`,
+    `<p lang="en" ${NO_TRANSLATE} style="margin:0;font-weight:bold;">${escapeHtml(options.brandName)}</p>`,
     footerLines,
     '</td>',
     '</tr>',
@@ -129,13 +135,13 @@ function sectionHtml({ language, blocks, layout }: EmailSection): string {
   }
   if (blocks.fingerprint) {
     parts.push(
-      `<p style="margin:0 0 16px;font-size:13px;line-height:20px;color:${MUTED};">${escapeHtml(blocks.fingerprint.label)}<br><span style="font-family:${MONO_STACK};color:${HEADING};word-break:break-all;">${escapeHtml(blocks.fingerprint.value)}</span></p>`,
+      `<p style="margin:0 0 16px;font-size:13px;line-height:20px;color:${MUTED};">${escapeHtml(blocks.fingerprint.label)}<br><span ${NO_TRANSLATE} style="font-family:${MONO_STACK};color:${HEADING};word-break:break-all;">${escapeHtml(blocks.fingerprint.value)}</span></p>`,
     );
   }
   if (blocks.button) {
     parts.push(buttonHtml(blocks.button.label, blocks.button.url));
     parts.push(
-      `<p style="margin:0 0 16px;font-size:13px;line-height:20px;color:${MUTED};">${escapeHtml(layout.buttonFallback)}<br><a href="${escapeHtml(blocks.button.url)}" style="color:${BRAND_RED};text-decoration:underline;word-break:break-all;">${escapeHtml(blocks.button.url)}</a></p>`,
+      `<p style="margin:0 0 16px;font-size:13px;line-height:20px;color:${MUTED};">${escapeHtml(layout.buttonFallback)}<br><a href="${escapeHtml(blocks.button.url)}" ${NO_TRANSLATE} style="color:${BRAND_RED};text-decoration:underline;word-break:break-all;">${escapeHtml(blocks.button.url)}</a></p>`,
     );
   }
   if (blocks.code) {
@@ -176,7 +182,7 @@ function codeHtml(code: string): string {
   return [
     '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">',
     '<tr>',
-    `<td style="background-color:${PAGE_BG};border:1px solid ${RULE};border-radius:6px;padding:12px 20px;font-family:${MONO_STACK};font-size:26px;line-height:32px;letter-spacing:6px;font-weight:bold;color:${HEADING};">${escapeHtml(code)}</td>`,
+    `<td ${NO_TRANSLATE} style="background-color:${PAGE_BG};border:1px solid ${RULE};border-radius:6px;padding:12px 20px;font-family:${MONO_STACK};font-size:26px;line-height:32px;letter-spacing:6px;font-weight:bold;color:${HEADING};">${escapeHtml(code)}</td>`,
     '</tr>',
     '</table>',
   ].join('');

@@ -74,6 +74,26 @@ describe('ResendEmailSender', () => {
       text: 'Hi',
       reply_to: 'info@ssnow.club',
     });
+    expect(body).not.toHaveProperty('headers');
+  });
+
+  it('sends the Content-Language header when the message has a language', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ id: 'resend-zh' }),
+    });
+    global.fetch = fetchMock;
+
+    const sender = new ResendEmailSender(
+      configWith({ RESEND_API_KEY: 're_secret', MAIL_FROM: 'a@b.com' }),
+    );
+    await sender.send({ ...message, contentLanguage: 'zh-CN' });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    expect(body.headers).toEqual({ 'Content-Language': 'zh-CN' });
   });
 
   it('sends attachments base64-encoded with their content type', async () => {

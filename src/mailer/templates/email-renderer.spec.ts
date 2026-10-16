@@ -54,7 +54,7 @@ describe('EmailRenderer', () => {
     it.each(EMAIL_LANGUAGES)(
       'renders an email-client-safe %s email',
       (language) => {
-        const { subject, html, text } = renderer.renderSample(
+        const { subject, html, text, contentLanguage } = renderer.renderSample(
           template,
           language,
         );
@@ -75,7 +75,7 @@ describe('EmailRenderer', () => {
           language,
           renderer.sampleVars(template),
         );
-        expect(direct).toEqual({ subject, html, text });
+        expect(direct).toEqual({ subject, html, text, contentLanguage });
       },
     );
 
@@ -95,6 +95,66 @@ describe('EmailRenderer', () => {
         both.text.indexOf(zhCN.email.layout.footerQuestions),
       );
       expect(both.text).toContain('------------------------------');
+    });
+  });
+
+  describe('language marking', () => {
+    const NO_TRANSLATE = 'translate="no" class="notranslate"';
+
+    it.each([
+      ['en', 'en'],
+      ['zh-CN', 'zh-CN'],
+      ['bilingual', 'en, zh-CN'],
+    ] as const)(
+      '%s emails declare Content-Language %s',
+      (language, expected) => {
+        const rendered = renderer.renderSample('invite.season', language);
+        expect(rendered.contentLanguage).toBe(expected);
+        expect(rendered.html).toContain(
+          `<meta http-equiv="Content-Language" content="${expected}">`,
+        );
+      },
+    );
+
+    it('zh-CN emails keep the English brand line out of translation', () => {
+      const { html } = renderer.renderSample('invite.season', 'zh-CN');
+      expect(html).toContain('<html lang="zh-CN"');
+      expect(html).toMatch(
+        new RegExp(
+          `<p lang="en" ${NO_TRANSLATE}[^>]*>Serendipity Snow Club</p>`,
+        ),
+      );
+      expect(html).toMatch(
+        new RegExp(`<img [^>]*${NO_TRANSLATE} alt="Serendipity Snow Club"`),
+      );
+    });
+
+    it('marks the fallback link, code and fingerprint as untranslatable', () => {
+      const activateUrl = 'https://portal.example.com/activate?t=abc';
+      const invite = renderer.render('invite.season', 'zh-CN', {
+        season: '2026/27',
+        activateUrl,
+        validDays: 14,
+      });
+      expect(invite.html).toContain(
+        `<a href="${activateUrl}" ${NO_TRANSLATE} style=`,
+      );
+
+      const code = renderer.render('auth.reauthentication', 'zh-CN', {
+        code: '99887766',
+      });
+      expect(code.html).toMatch(
+        new RegExp(`<td ${NO_TRANSLATE}[^>]*>99887766</td>`),
+      );
+
+      const sha256 = 'cd'.repeat(32);
+      const completed = renderer.render('documents.completed', 'zh-CN', {
+        document: { titleEn: 'Agreement', titleZh: '协议' },
+        sha256,
+      });
+      expect(completed.html).toMatch(
+        new RegExp(`<span ${NO_TRANSLATE}[^>]*>${sha256}</span>`),
+      );
     });
   });
 

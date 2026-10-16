@@ -7,7 +7,11 @@ import type {
   EmailTemplateVars,
   RenderedEmail,
 } from '../mailer.types';
-import { renderEmailLayout, type EmailSection } from './email-layout';
+import {
+  contentLanguage,
+  renderEmailLayout,
+  type EmailSection,
+} from './email-layout';
 import { EMAIL_TEMPLATES, type TemplateDefinition } from './email-templates';
 
 const BILINGUAL_ORDER: SupportedLanguage[] = ['en', 'zh-CN'];
@@ -42,6 +46,7 @@ export class EmailRenderer {
       subject: sections.map((s) => s.blocks.subject).join(' / '),
       html,
       text,
+      contentLanguage: contentLanguage(sections),
     };
   }
 

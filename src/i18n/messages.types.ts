@@ -161,8 +161,10 @@ export interface EmailMessages {
   certification: {
     /** Certification name per track; uses `{org}` and `{level}`. */
     labels: { regular: string; park: string; carving: string };
+    unleveledLabels: { regular: string; park: string; carving: string };
     expiring: EmailButtonCopy;
     expired: EmailButtonCopy;
+    rejected: EmailCertificationRejectedCopy;
   };
   admin: {
     instructorPending: EmailButtonCopy;
@@ -205,6 +207,10 @@ export interface EmailCopy {
 
 export interface EmailButtonCopy extends EmailCopy {
   button: string;
+}
+
+export interface EmailCertificationRejectedCopy extends EmailButtonCopy {
+  reasonLabel: string;
 }
 
 export interface EmailGenericCopy extends EmailButtonCopy {

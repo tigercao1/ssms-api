@@ -11,6 +11,7 @@ import type {
   CertOrg,
   CertTrack,
   CertificationUploadRow,
+  ReviewStatus,
 } from './documents.types';
 
 export const EXPIRY_INSTRUCTOR_COLUMNS =
@@ -85,6 +86,7 @@ export abstract class CertificationUploadsRepository {
   abstract update(
     id: string,
     patch: CertificationUploadWrite,
+    fromStatuses?: ReviewStatus[],
   ): Promise<CertificationUploadRow | null>;
   /** Non-rejected uploads with `fromDate <= valid_until < toDateExclusive`, with their instructor. */
   abstract listExpiryCandidates(
@@ -143,11 +145,16 @@ export class SupabaseCertificationUploadsRepository extends CertificationUploads
   async update(
     id: string,
     patch: CertificationUploadWrite,
+    fromStatuses?: ReviewStatus[],
   ): Promise<CertificationUploadRow | null> {
-    const { data, error } = (await this.supabase
+    const query = this.supabase
       .from(CERTIFICATION_UPLOADS_TABLE)
       .update(patch)
-      .eq('id', id)
+      .eq('id', id);
+    const guarded = fromStatuses
+      ? query.in('review_status', fromStatuses)
+      : query;
+    const { data, error } = (await guarded
       .select(CERTIFICATION_UPLOAD_COLUMNS)
       .maybeSingle()) as DbResult<CertificationUploadRow>;
     check(error, 'update certification upload');

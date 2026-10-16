@@ -37,6 +37,7 @@ export type EmailTemplate =
   | 'invite.reminder'
   | 'certification.expiring'
   | 'certification.expired'
+  | 'certification.rejected'
   | 'admin.instructor_pending'
   | 'documents.assigned'
   | 'documents.reminder'
@@ -74,6 +75,14 @@ interface CertificationExpiryVars extends GreetingVars {
   uploadUrl: string;
 }
 
+interface CertificationRejectedVars extends GreetingVars {
+  org: 'csia' | 'casi';
+  track: 'regular' | 'park' | 'carving';
+  level: number | null;
+  reason?: string | null;
+  uploadUrl: string;
+}
+
 /** Variables each template needs, keyed by template. */
 export interface EmailTemplateVars {
   approved: GreetingVars & { loginUrl: string };
@@ -102,6 +111,7 @@ export interface EmailTemplateVars {
   'invite.reminder': InviteVars;
   'certification.expiring': CertificationExpiryVars;
   'certification.expired': CertificationExpiryVars;
+  'certification.rejected': CertificationRejectedVars;
   'admin.instructor_pending': { instructorEmail: string; reviewUrl: string };
   'documents.assigned': DocumentListVars & {
     /** Sent on admin approval: opens with the approval instead of the plain intro. */

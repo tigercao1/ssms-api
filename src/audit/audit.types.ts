@@ -73,6 +73,7 @@ export const AUDIT_ACTIONS = {
   documentAssignmentRemind: 'document_assignment.remind',
   certificationUploadReview: 'certification_upload.review',
   certificationUploadView: 'certification_upload.view',
+  certificationUploadFileDelete: 'certification_upload.file_delete',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

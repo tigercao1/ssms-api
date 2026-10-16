@@ -20,7 +20,7 @@ export interface EmailLayoutOptions {
 
 export const BRAND_RED = '#d71e2b';
 const PAGE_BG = '#f4f4f5';
-const CARD_BG = '#ffffff';
+export const CARD_BG = '#ffffff';
 const TEXT = '#1f2937';
 const HEADING = '#111827';
 const MUTED = '#6b7280';
@@ -104,7 +104,7 @@ function renderHtml(
     '</tr>',
     '<tr>',
     `<td style="background-color:${CARD_BG};border:1px solid ${RULE};border-radius:8px;padding:32px 28px;font-family:${FONT_STACK};font-size:16px;line-height:26px;color:${TEXT};">`,
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${body}</table>`,
+    body,
     '</td>',
     '</tr>',
     '<tr>',
@@ -158,7 +158,7 @@ function sectionHtml({ language, blocks, layout }: EmailSection): string {
       `<p style="margin:24px 0 0;font-size:13px;line-height:20px;color:${MUTED};">${escapeHtml(blocks.finePrint)}</p>`,
     );
   }
-  return `<tr><td lang="${language}" style="font-family:${FONT_STACK};font-size:16px;line-height:26px;color:${TEXT};">${parts.join('')}</td></tr>`;
+  return `<div lang="${language}" style="font-family:${FONT_STACK};font-size:16px;line-height:26px;color:${TEXT};">${parts.join('')}</div>`;
 }
 
 function paragraphHtml(text: string): string {
@@ -189,7 +189,7 @@ function codeHtml(code: string): string {
 }
 
 function dividerHtml(): string {
-  return `<tr><td style="padding:32px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid ${RULE};font-size:1px;line-height:1px;">&nbsp;</td></tr></table></td></tr>`;
+  return `<div style="padding:32px 0;"><div style="border-top:1px solid ${RULE};font-size:1px;line-height:1px;">&nbsp;</div></div>`;
 }
 
 function linkifyEmail(escapedText: string, email: string): string {

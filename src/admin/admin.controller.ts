@@ -5,8 +5,6 @@ import {
   Delete,
   Get,
   Headers,
-  HttpCode,
-  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -24,11 +22,7 @@ import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { CreateSeasonDto, UpdateSeasonDto } from '../seasons/dto/season.dto';
-import {
-  type AdminSeason,
-  SeasonsService,
-  type SeasonUsage,
-} from '../seasons/seasons.service';
+import { type AdminSeason, SeasonsService } from '../seasons/seasons.service';
 import { AdminService } from './admin.service';
 import {
   AdminInstructorRecord,
@@ -204,19 +198,13 @@ export class AdminController {
     return this.seasons.update(key, dto, toActor(user, userAgent));
   }
 
-  @Get('reference/seasons/:key/usage')
-  getSeasonUsage(@Param('key') key: string): Promise<SeasonUsage> {
-    return this.seasons.usage(key);
-  }
-
   @Delete('reference/seasons/:key')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteSeason(
+  deleteSeason(
     @Param('key') key: string,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<void> {
-    await this.seasons.remove(key, toActor(user, userAgent));
+  ): Promise<AdminSeason> {
+    return this.seasons.remove(key, toActor(user, userAgent));
   }
 
   /** T6.7 — add a reference (lookup) row of the given `:type` slug. */

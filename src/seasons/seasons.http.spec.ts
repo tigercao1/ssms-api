@@ -293,22 +293,17 @@ describe('seasons HTTP', () => {
         .expect(500);
     });
 
-    it('reports usage, deletes an unused season with 204 and audits it', async () => {
-      ctx.repo.references.set('2026/27', 3);
+    it('deletes an unused season, returns it and audits it', async () => {
       await http()
-        .get(`/admin/reference/seasons/${ENCODED}/usage`)
-        .set('Authorization', admin)
-        .expect(200, { referenceCount: 3 });
-      await http()
-        .get(`/admin/reference/seasons/${encodeURIComponent('2030/31')}/usage`)
-        .set('Authorization', admin)
-        .expect(404);
-      ctx.repo.references.clear();
-      const res = await http()
         .delete(`/admin/reference/seasons/${ENCODED}`)
         .set('Authorization', admin)
-        .expect(204);
-      expect(res.text).toBe('');
+        .expect(200, {
+          key: '2026/27',
+          startsOn: '2026-11-01',
+          endsOn: '2027-04-30',
+          isCurrent: false,
+          inUse: false,
+        });
       expect(ctx.repo.rows.size).toBe(0);
       expect(ctx.audit.entries[0]).toMatchObject({
         action: 'season.delete',

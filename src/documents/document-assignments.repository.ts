@@ -217,6 +217,8 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
         assigned_count: number;
         completed_count: number;
         has_completed: boolean;
+        approved_assigned_count: number;
+        approved_completed_count: number;
       }[]
     >;
     check(error, 'count document template assignments');
@@ -224,6 +226,8 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
       stats.set(row.template_id, {
         assignedCount: row.assigned_count,
         completedCount: row.completed_count,
+        approvedAssignedCount: row.approved_assigned_count,
+        approvedCompletedCount: row.approved_completed_count,
         hasCompleted: row.has_completed,
       });
     }

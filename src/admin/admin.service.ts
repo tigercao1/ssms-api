@@ -225,7 +225,8 @@ export class AdminService {
   /**
    * T6.5 — activate / deactivate. Deactivation (`is_active = false`) removes
    * the instructor from the public API (which filters on `is_active = true`).
-   * Allowed from any approval state.
+   * Allowed from any approval state. Reactivating an approved instructor also
+   * assigns the published onboarding documents they do not hold yet.
    */
   async setActive(
     id: string,
@@ -260,6 +261,9 @@ export class AdminService {
       this.notifyInstructor(updated, 'reactivated', {
         loginUrl: this.mailer.portalLink('/login'),
       });
+      if (updated.approval_status === 'approved') {
+        await this.onboarding.assignPublished(id);
+      }
     }
 
     return this.toRecord(updated);

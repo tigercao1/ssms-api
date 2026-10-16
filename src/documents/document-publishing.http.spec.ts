@@ -63,8 +63,11 @@ const FIELD: TemplateFieldRow = {
 async function build(env: Record<string, string> = {}) {
   const storage = new InMemoryPrivateStorage();
   const templates = new InMemoryDocumentTemplatesRepository();
-  const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
   const audit = recordingAudit();
   const mailer = new RecordingMailer();
   const app = await startDocumentsApp(
@@ -418,6 +421,84 @@ describe('document publishing HTTP', () => {
       await publish(t.id, { assignTo: 'selected' }).expect(200);
       await flushBackground();
       expect(ctx.assignments.rows.size).toBe(0);
+      expect(ctx.mailer.sent).toHaveLength(0);
+    });
+
+    it('selected with instructorIds assigns and emails exactly those instructors', async () => {
+      const { a, pending } = instructors();
+      const t = draft({ title_en: 'Safety policy' });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: a.id,
+        season: SEASON,
+      });
+      const res = await publish(t.id, {
+        assignTo: 'selected',
+        instructorIds: [a.id, pending.id, pending.id],
+      }).expect(200);
+      expect(res.body).toMatchObject({
+        created: 1,
+        skipped: 1,
+        template: { status: 'live', assignTo: 'selected', assignedCount: 2 },
+      });
+      expect(
+        [...ctx.assignments.rows.values()].map((r) => r.subject_id),
+      ).toEqual([a.id, pending.id]);
+      await flushBackground();
+      expect(ctx.mailer.sent.map((m) => [m.template, m.to])).toEqual([
+        ['documents.assigned', 'pending@example.com'],
+      ]);
+      expect(ctx.audit.entries.at(-1)?.metadata).toMatchObject({
+        assignTo: 'selected',
+        created: 1,
+        skipped: 1,
+      });
+    });
+
+    it('selected with an empty instructorIds assigns nobody', async () => {
+      instructors();
+      const t = draft();
+      await publish(t.id, { assignTo: 'selected', instructorIds: [] })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body).toMatchObject({ created: 0, skipped: 0 });
+        });
+      expect(ctx.assignments.rows.size).toBe(0);
+    });
+
+    it('rejects instructorIds with all, unknown ids, bad uuids and customer documents without publishing', async () => {
+      const { a } = instructors();
+      const t = draft();
+      await publish(t.id, { assignTo: 'all', instructorIds: [a.id] }).expect(
+        400,
+      );
+      await publish(t.id, { assignTo: 'all', instructorIds: [] }).expect(400);
+      await publish(t.id, {
+        assignTo: 'selected',
+        instructorIds: [a.id, UNKNOWN_ID],
+      })
+        .expect(400)
+        .expect((res) => {
+          expect((res.body as { message: string }).message).toContain(
+            UNKNOWN_ID,
+          );
+        });
+      await publish(t.id, {
+        assignTo: 'selected',
+        instructorIds: ['not-a-uuid'],
+      }).expect(400);
+      await publish(t.id, { assignTo: 'selected', instructorIds: a.id }).expect(
+        400,
+      );
+      const waiver = draft({ audience: 'customer' });
+      await publish(waiver.id, {
+        assignTo: 'selected',
+        instructorIds: [a.id],
+      }).expect(400);
+      expect(ctx.templates.rows.get(t.id)?.status).toBe('draft');
+      expect(ctx.templates.rows.get(waiver.id)?.status).toBe('draft');
+      expect(ctx.assignments.rows.size).toBe(0);
+      await flushBackground();
       expect(ctx.mailer.sent).toHaveLength(0);
     });
 

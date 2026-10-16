@@ -52,8 +52,11 @@ function addDays(date: string, days: number): string {
 async function build(env: Record<string, string> = {}) {
   const storage = new InMemoryPrivateStorage();
   const templates = new InMemoryDocumentTemplatesRepository();
-  const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
   const audit = recordingAudit();
   const mailer = new RecordingMailer();
   const app = await startDocumentsApp(
@@ -371,6 +374,61 @@ describe('documents HTTP', () => {
         completedCount: 1,
         approvedCount: 2,
       });
+    });
+
+    it('counts approved assignments only for instructors who are approved and active now', async () => {
+      const approved = [
+        ctx.subjects.seedInstructor(),
+        ctx.subjects.seedInstructor(),
+        ctx.subjects.seedInstructor(),
+        ctx.subjects.seedInstructor(),
+      ];
+      const deactivated = ctx.subjects.seedInstructor({ is_active: false });
+      const pending = ctx.subjects.seedInstructor({
+        approval_status: 'pending',
+      });
+      const t = ctx.templates.seed({ assign_to: 'all', season: '2026/27' });
+      for (const [i, instructor] of approved.entries()) {
+        ctx.assignments.seed({
+          template_id: t.id,
+          subject_id: instructor.id,
+          season: '2026/27',
+          status: i === 0 ? 'completed' : 'assigned',
+        });
+      }
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: deactivated.id,
+        season: '2026/27',
+        status: 'completed',
+      });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: pending.id,
+        season: '2026/27',
+      });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: approved[1].id,
+        season: '2025/26',
+      });
+      const expected = {
+        assignedCount: 6,
+        completedCount: 2,
+        approvedAssignedCount: 4,
+        approvedCompletedCount: 1,
+        approvedCount: 4,
+      };
+      const list = await http()
+        .get('/admin/documents/templates')
+        .set('Authorization', admin)
+        .expect(200);
+      expect((list.body as unknown[])[0]).toMatchObject(expected);
+      const one = await http()
+        .get(`/admin/documents/templates/${t.id}`)
+        .set('Authorization', admin)
+        .expect(200);
+      expect(one.body).toMatchObject(expected);
     });
 
     it('gets a template with a presigned source URL and camelCase fields', async () => {

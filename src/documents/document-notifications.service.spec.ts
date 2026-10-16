@@ -38,9 +38,13 @@ function setup() {
 }
 
 describe('DocumentNotificationsService', () => {
-  it('sendAssigned lists the templates in the instructor language with an onboarding link', async () => {
+  it('sendAssigned lists sign and read templates in the instructor language with an onboarding link', async () => {
     const { mailer, subjects, templates, service, template } = setup();
-    const other = templates.seed({ title_en: 'Safety policy' });
+    const other = templates.seed({
+      title_en: 'Safety policy',
+      kind: 'read',
+      fields: [],
+    });
     const instructor = subjects.seedInstructor({
       preferred_language: 'zh-CN',
       display_name_en: 'Lin',
@@ -57,8 +61,12 @@ describe('DocumentNotificationsService', () => {
         vars: {
           displayName: 'Lin',
           documents: [
-            { titleEn: 'Instructor agreement', titleZh: '教练协议' },
-            { titleEn: 'Safety policy', titleZh: null },
+            {
+              titleEn: 'Instructor agreement',
+              titleZh: '教练协议',
+              kind: 'sign',
+            },
+            { titleEn: 'Safety policy', titleZh: null, kind: 'read' },
           ],
           onboardingUrl: `${FAKE_PORTAL_URL}/onboarding`,
           approved: false,
@@ -119,7 +127,13 @@ describe('DocumentNotificationsService', () => {
         idempotencyKey: 'key-1',
         metadata: { assignmentIds: [row.id, orphan.id] },
         vars: expect.objectContaining({
-          documents: [{ titleEn: 'Instructor agreement', titleZh: '教练协议' }],
+          documents: [
+            {
+              titleEn: 'Instructor agreement',
+              titleZh: '教练协议',
+              kind: 'sign',
+            },
+          ],
         }) as unknown,
       }),
     ]);
@@ -155,7 +169,11 @@ describe('DocumentNotificationsService', () => {
           language: 'zh-CN',
           vars: {
             displayName: 'Lin Wei',
-            document: { titleEn: 'Instructor agreement', titleZh: '教练协议' },
+            document: {
+              titleEn: 'Instructor agreement',
+              titleZh: '教练协议',
+              kind: 'sign',
+            },
             sha256: SHA,
             onboardingUrl: `${FAKE_PORTAL_URL}/onboarding`,
           },
@@ -334,7 +352,12 @@ describe('DocumentNotificationsService', () => {
     ['a'.repeat(100), `${'a'.repeat(80)}-signed.pdf`],
   ])('names the attachment for %j as %s', (title, filename) => {
     expect(
-      signedCopyFilename({ id: 't', title_en: title, title_zh: null }),
+      signedCopyFilename({
+        id: 't',
+        title_en: title,
+        title_zh: null,
+        kind: 'sign',
+      }),
     ).toBe(filename);
   });
 });

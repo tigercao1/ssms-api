@@ -9,6 +9,7 @@ import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import {
   DocumentAssignmentsService,
+  TEMPLATE_NOT_ASSIGNABLE,
   type TemplateAssignmentOutcome,
 } from './document-assignments.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -28,6 +29,8 @@ export const PUBLISH_NEEDS_FIELDS =
   'Place at least one field before publishing a document to sign';
 export const PUBLISH_ALL_NEEDS_INSTRUCTORS =
   'Only instructor documents can be published to all instructors';
+export const PUBLISH_INSTRUCTORS_NEED_SELECTED =
+  'instructorIds can only be sent when publishing to selected instructors';
 export const SEASON_REQUIRED =
   'Choose a season; CURRENT_SEASON is not configured';
 
@@ -36,6 +39,7 @@ export const SEASON_REQUIRED =
  * and `retired` → `live` again. Publishing to `all` assigns the template to
  * every approved, active instructor for its season and emails each one who
  * was newly assigned; instructors approved later get it on approval.
+ * Publishing to `selected` assigns the listed `instructorIds` the same way.
  */
 @Injectable()
 export class DocumentPublishingService {
@@ -91,6 +95,15 @@ export class DocumentPublishingService {
     if (dto.assignTo === 'all' && before.audience !== 'instructor') {
       throw new BadRequestException(PUBLISH_ALL_NEEDS_INSTRUCTORS);
     }
+    if (dto.instructorIds !== undefined && dto.assignTo !== 'selected') {
+      throw new BadRequestException(PUBLISH_INSTRUCTORS_NEED_SELECTED);
+    }
+    if (dto.instructorIds?.length && before.audience !== 'instructor') {
+      throw new BadRequestException(TEMPLATE_NOT_ASSIGNABLE);
+    }
+    const selected = await this.assignments.knownInstructors(
+      dto.instructorIds ?? [],
+    );
     const season = this.resolveSeason(dto.season);
     const row = await this.repo.updateIfStatus(id, ['draft', 'retired'], {
       status: 'live',
@@ -110,7 +123,7 @@ export class DocumentPublishingService {
             season,
             await this.subjects.listActiveApprovedInstructorIds(),
           )
-        : { createdSubjectIds: [], skipped: 0 };
+        : await this.assignments.assignTemplateTo(id, season, selected);
     const created = outcome.createdSubjectIds.length;
     await this.audit.record({
       action: AUDIT_ACTIONS.documentTemplatePublish,

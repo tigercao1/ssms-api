@@ -267,7 +267,10 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
   readonly rows = new Map<string, Omit<DocumentAssignmentRow, 'template'>>();
   insertManyCalls = 0;
 
-  constructor(private readonly templates: InMemoryDocumentTemplatesRepository) {
+  constructor(
+    private readonly templates: InMemoryDocumentTemplatesRepository,
+    private readonly subjects?: InMemoryDocumentSubjectsRepository,
+  ) {
     super();
   }
 
@@ -450,9 +453,20 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
         (r) => r.template_id === id && r.status !== 'archived',
       );
       const inSeason = open.filter((r) => r.season === template.season);
+      const approved = inSeason.filter((r) => {
+        const instructor = this.subjects?.instructors.get(r.subject_id);
+        return (
+          r.subject_type === 'instructor' &&
+          instructor?.approval_status === 'approved' &&
+          instructor.is_active
+        );
+      });
       stats.set(id, {
         assignedCount: inSeason.length,
         completedCount: inSeason.filter((r) => r.status === 'completed').length,
+        approvedAssignedCount: approved.length,
+        approvedCompletedCount: approved.filter((r) => r.status === 'completed')
+          .length,
         hasCompleted: open.some((r) => r.status === 'completed'),
       });
     }

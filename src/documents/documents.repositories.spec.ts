@@ -197,6 +197,8 @@ describe('SupabaseDocumentAssignmentsRepository.templateStats', () => {
             assigned_count: 3,
             completed_count: 1,
             has_completed: true,
+            approved_assigned_count: 2,
+            approved_completed_count: 1,
           },
         ]),
         ok(null),
@@ -208,7 +210,16 @@ describe('SupabaseDocumentAssignmentsRepository.templateStats', () => {
     expect(queries).toHaveLength(0);
     await expect(repo.templateStats([ID, 'other'])).resolves.toEqual(
       new Map([
-        [ID, { assignedCount: 3, completedCount: 1, hasCompleted: true }],
+        [
+          ID,
+          {
+            assignedCount: 3,
+            completedCount: 1,
+            approvedAssignedCount: 2,
+            approvedCompletedCount: 1,
+            hasCompleted: true,
+          },
+        ],
       ]),
     );
     expect(queries[0]).toEqual({

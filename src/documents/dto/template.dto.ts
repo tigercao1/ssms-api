@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -29,7 +30,7 @@ import {
   TEMPLATE_ASSIGN_TO,
   type TemplateAssignTo,
 } from '../documents.types';
-import { SEASON_MAX_LENGTH } from './assignment.dto';
+import { MAX_ASSIGN_INSTRUCTORS, SEASON_MAX_LENGTH } from './assignment.dto';
 import { MAX_TEMPLATE_BYTES } from '../template-pdf';
 
 export const TEMPLATE_TITLE_MAX_LENGTH = 200;
@@ -192,6 +193,12 @@ export class PublishTemplateDto {
   @IsNotEmpty()
   @MaxLength(SEASON_MAX_LENGTH)
   season?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_ASSIGN_INSTRUCTORS)
+  @IsUUID('all', { each: true })
+  instructorIds?: string[];
 }
 
 export class PublishPreviewQueryDto {

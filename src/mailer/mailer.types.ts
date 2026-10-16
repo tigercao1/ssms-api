@@ -59,6 +59,7 @@ interface InviteVars extends GreetingVars {
 export interface EmailDocumentTitle {
   titleEn: string;
   titleZh?: string | null;
+  kind?: 'sign' | 'read';
 }
 
 interface DocumentListVars extends GreetingVars {

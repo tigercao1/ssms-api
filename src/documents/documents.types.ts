@@ -350,7 +350,7 @@ export interface PublishPreview {
   alreadyAssignedCount: number;
 }
 
-/** `POST /admin/documents/templates/:id/publish`. */
+/** `POST /admin/documents/templates/:id/publish` and `/audience`. */
 export interface PublishResult extends AssignmentResult {
   template: Template;
 }

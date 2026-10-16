@@ -20,7 +20,7 @@ import type {
   PublishResult,
   Template,
 } from './documents.types';
-import type { PublishTemplateDto } from './dto/template.dto';
+import type { ChangeAudienceDto, PublishTemplateDto } from './dto/template.dto';
 
 export const TEMPLATE_ALREADY_LIVE = 'This document is already published';
 export const TEMPLATE_NOT_LIVE = 'Only a published document can be retired';
@@ -31,6 +31,9 @@ export const PUBLISH_ALL_NEEDS_INSTRUCTORS =
   'Only instructor documents can be published to all instructors';
 export const PUBLISH_INSTRUCTORS_NEED_SELECTED =
   'instructorIds can only be sent when publishing to selected instructors';
+export const AUDIENCE_NEEDS_LIVE =
+  "Only a published document's audience can be changed";
+export const AUDIENCE_UNCHANGED = 'This document already has that audience';
 export const SEASON_REQUIRED =
   'Choose a season; CURRENT_SEASON is not configured';
 
@@ -132,6 +135,65 @@ export class DocumentPublishingService {
       targetId: id,
       metadata: {
         from: before.status,
+        assignTo: dto.assignTo,
+        season,
+        created,
+        skipped: outcome.skipped,
+      },
+    });
+    void this.assignments.notifyAssigned(
+      row,
+      season,
+      outcome.createdSubjectIds,
+    );
+    return {
+      template: await this.templates.present(row),
+      created,
+      skipped: outcome.skipped,
+    };
+  }
+
+  /** `POST /admin/documents/templates/:id/audience`, on a `live` template only. */
+  async changeAudience(
+    id: string,
+    dto: ChangeAudienceDto,
+    actor: AuditActor,
+  ): Promise<PublishResult> {
+    const before = await this.templates.load(id);
+    if (before.status !== 'live') {
+      throw new ConflictException(AUDIENCE_NEEDS_LIVE);
+    }
+    if (before.assign_to === dto.assignTo) {
+      throw new ConflictException(AUDIENCE_UNCHANGED);
+    }
+    if (dto.assignTo === 'all' && before.audience !== 'instructor') {
+      throw new BadRequestException(PUBLISH_ALL_NEEDS_INSTRUCTORS);
+    }
+    const season = before.season ?? this.resolveSeason();
+    const row = await this.repo.updateIfStatus(id, ['live'], {
+      assign_to: dto.assignTo,
+      season,
+      updated_by: actor.userId ?? null,
+    });
+    if (!row) {
+      throw new ConflictException(AUDIENCE_NEEDS_LIVE);
+    }
+    const outcome: TemplateAssignmentOutcome =
+      dto.assignTo === 'all'
+        ? await this.assignments.assignTemplateTo(
+            id,
+            season,
+            await this.subjects.listActiveApprovedInstructorIds(),
+          )
+        : { createdSubjectIds: [], skipped: 0 };
+    const created = outcome.createdSubjectIds.length;
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplateAudienceChange,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        from: before.assign_to,
         assignTo: dto.assignTo,
         season,
         created,

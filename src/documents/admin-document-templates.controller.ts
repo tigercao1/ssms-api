@@ -29,6 +29,7 @@ import type {
   UploadUrl,
 } from './documents.types';
 import {
+  ChangeAudienceDto,
   CreateTemplateDto,
   PublishPreviewQueryDto,
   PublishTemplateDto,
@@ -130,6 +131,17 @@ export class AdminDocumentTemplatesController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<PublishResult> {
     return this.publishing.publish(id, dto, toActor(user, userAgent));
+  }
+
+  @Post(':id/audience')
+  @HttpCode(HttpStatus.OK)
+  changeAudience(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ChangeAudienceDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<PublishResult> {
+    return this.publishing.changeAudience(id, dto, toActor(user, userAgent));
   }
 
   @Post(':id/retire')

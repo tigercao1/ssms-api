@@ -25,7 +25,12 @@ import { AdminDocumentTemplatesController } from './admin-document-templates.con
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
-import { DocumentPublishingService } from './document-publishing.service';
+import { DocumentOnboardingService } from './document-onboarding.service';
+import {
+  AUDIENCE_NEEDS_LIVE,
+  AUDIENCE_UNCHANGED,
+  DocumentPublishingService,
+} from './document-publishing.service';
 import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -95,11 +100,21 @@ async function build(env: Record<string, string> = {}) {
           useValue: { get: (k: string) => env[k] },
         },
         DocumentNotificationsService,
+        DocumentOnboardingService,
         { provide: MailerService, useValue: mailer.asService() },
       ],
     }),
   );
-  return { app, storage, templates, assignments, subjects, audit, mailer };
+  return {
+    app,
+    storage,
+    templates,
+    assignments,
+    subjects,
+    audit,
+    mailer,
+    onboarding: app.get(DocumentOnboardingService),
+  };
 }
 
 describe('document publishing HTTP', () => {
@@ -132,6 +147,11 @@ describe('document publishing HTTP', () => {
     http()
       .post(`/admin/documents/templates/${id}/retire`)
       .set('Authorization', admin);
+  const changeAudience = (id: string, body: object) =>
+    http()
+      .post(`/admin/documents/templates/${id}/audience`)
+      .set('Authorization', admin)
+      .send(body);
   const preview = (id: string, season?: string) =>
     http()
       .get(`/admin/documents/templates/${id}/publish-preview`)
@@ -154,6 +174,13 @@ describe('document publishing HTTP', () => {
         (r) =>
           r
             .post(`/admin/documents/templates/${UNKNOWN_ID}/publish`)
+            .send({ assignTo: 'all' }),
+      ],
+      [
+        'POST audience',
+        (r) =>
+          r
+            .post(`/admin/documents/templates/${UNKNOWN_ID}/audience`)
             .send({ assignTo: 'all' }),
       ],
       [
@@ -518,6 +545,211 @@ describe('document publishing HTTP', () => {
       ctx.assignments.rows.clear();
       await assign().expect(400);
       expect(ctx.assignments.rows.size).toBe(0);
+    });
+  });
+
+  describe('changing the audience of a live document', () => {
+    beforeEach(async () => {
+      ctx = await build({ CURRENT_SEASON: SEASON });
+    });
+
+    function live(overrides: Partial<DocumentTemplateRow> = {}) {
+      return draft({ status: 'live', season: SEASON, ...overrides });
+    }
+
+    it('selected → all assigns approved active instructors who lack it, emails them, and audits', async () => {
+      const a = ctx.subjects.seedInstructor({ email: 'a@example.com' });
+      const b = ctx.subjects.seedInstructor({ email: 'b@example.com' });
+      const pending = ctx.subjects.seedInstructor({
+        email: 'pending@example.com',
+        approval_status: 'pending',
+      });
+      ctx.subjects.seedInstructor({
+        email: 'inactive@example.com',
+        is_active: false,
+      });
+      const t = live({ assign_to: 'selected', title_en: 'Safety policy' });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: a.id,
+        season: SEASON,
+      });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: pending.id,
+        season: SEASON,
+      });
+
+      await preview(t.id, SEASON).expect(200, {
+        season: SEASON,
+        approvedCount: 2,
+        pendingCount: 1,
+        alreadyAssignedCount: 1,
+      });
+      const res = await changeAudience(t.id, { assignTo: 'all' }).expect(200);
+      expect(res.body).toMatchObject({
+        created: 1,
+        skipped: 1,
+        template: { status: 'live', assignTo: 'all', season: SEASON },
+      });
+      expect(ctx.templates.rows.get(t.id)).toMatchObject({
+        status: 'live',
+        assign_to: 'all',
+        season: SEASON,
+        updated_by: ADMIN_USER_ID,
+      });
+      expect(
+        [...ctx.assignments.rows.values()].map((r) => r.subject_id),
+      ).toEqual([a.id, pending.id, b.id]);
+      await flushBackground();
+      expect(ctx.mailer.sent.map((m) => [m.template, m.to])).toEqual([
+        ['documents.assigned', 'b@example.com'],
+      ]);
+      expect(
+        ctx.audit.entries.map((e) => [e.action, e.targetId, e.metadata]),
+      ).toEqual([
+        [
+          'document_template.audience_change',
+          t.id,
+          {
+            from: 'selected',
+            assignTo: 'all',
+            season: SEASON,
+            created: 1,
+            skipped: 1,
+          },
+        ],
+      ]);
+    });
+
+    it('all → selected keeps every assignment and assigns and emails nobody', async () => {
+      const a = ctx.subjects.seedInstructor({ email: 'a@example.com' });
+      ctx.subjects.seedInstructor({ email: 'b@example.com' });
+      const t = live({ assign_to: 'all' });
+      ctx.assignments.seed({
+        template_id: t.id,
+        subject_id: a.id,
+        season: SEASON,
+      });
+      const res = await changeAudience(t.id, { assignTo: 'selected' }).expect(
+        200,
+      );
+      expect(res.body).toMatchObject({
+        created: 0,
+        skipped: 0,
+        template: { assignTo: 'selected', assignedCount: 1 },
+      });
+      expect(ctx.templates.rows.get(t.id)?.assign_to).toBe('selected');
+      expect(
+        [...ctx.assignments.rows.values()].map((r) => [r.subject_id, r.status]),
+      ).toEqual([[a.id, 'assigned']]);
+      await flushBackground();
+      expect(ctx.mailer.sent).toHaveLength(0);
+      expect(ctx.audit.entries.at(-1)).toMatchObject({
+        action: 'document_template.audience_change',
+        metadata: { from: 'all', assignTo: 'selected', created: 0 },
+      });
+    });
+
+    it('auto-assigns on approval only while the audience is all', async () => {
+      const t = live({ assign_to: 'selected' });
+      const first = ctx.subjects.seedInstructor();
+      await ctx.onboarding.assignPublished(first.id);
+      expect(ctx.assignments.rows.size).toBe(0);
+
+      await changeAudience(t.id, { assignTo: 'all' }).expect(200);
+      const second = ctx.subjects.seedInstructor();
+      await ctx.onboarding.assignPublished(second.id);
+      expect(
+        [...ctx.assignments.rows.values()].map((r) => r.subject_id),
+      ).toEqual([first.id, second.id]);
+
+      await changeAudience(t.id, { assignTo: 'selected' }).expect(200);
+      const third = ctx.subjects.seedInstructor();
+      await ctx.onboarding.assignPublished(third.id);
+      expect(
+        [...ctx.assignments.rows.values()].map((r) => r.subject_id),
+      ).toEqual([first.id, second.id]);
+    });
+
+    it('switching back to all assigns only who is still missing', async () => {
+      ctx.subjects.seedInstructor({ email: 'a@example.com' });
+      const t = live({ assign_to: 'selected' });
+      await changeAudience(t.id, { assignTo: 'all' }).expect(200);
+      await changeAudience(t.id, { assignTo: 'selected' }).expect(200);
+      ctx.subjects.seedInstructor({ email: 'b@example.com' });
+      const again = await changeAudience(t.id, { assignTo: 'all' }).expect(200);
+      expect(again.body).toMatchObject({ created: 1, skipped: 1 });
+      await flushBackground();
+      expect(ctx.mailer.sent.map((m) => m.to)).toEqual([
+        'a@example.com',
+        'b@example.com',
+      ]);
+      expect(ctx.assignments.rows.size).toBe(2);
+    });
+
+    it('refuses a draft or retired document, the same audience, and all on a customer document', async () => {
+      const a = ctx.subjects.seedInstructor();
+      const d = draft();
+      const retired = live({ status: 'retired', assign_to: 'selected' });
+      for (const t of [d, retired]) {
+        const res = await changeAudience(t.id, { assignTo: 'all' }).expect(409);
+        expect((res.body as { message: string }).message).toBe(
+          AUDIENCE_NEEDS_LIVE,
+        );
+      }
+      const same = live({ assign_to: 'all' });
+      await changeAudience(same.id, { assignTo: 'all' })
+        .expect(409)
+        .expect((res) => {
+          expect((res.body as { message: string }).message).toBe(
+            AUDIENCE_UNCHANGED,
+          );
+        });
+      const waiver = live({ audience: 'customer', assign_to: 'selected' });
+      await changeAudience(waiver.id, { assignTo: 'all' }).expect(400);
+      expect(ctx.templates.rows.get(d.id)).toMatchObject({
+        status: 'draft',
+        assign_to: null,
+      });
+      expect(ctx.templates.rows.get(retired.id)?.assign_to).toBe('selected');
+      expect(ctx.templates.rows.get(waiver.id)?.assign_to).toBe('selected');
+      expect(
+        [...ctx.assignments.rows.values()].filter((r) => r.subject_id === a.id),
+      ).toHaveLength(0);
+      expect(ctx.audit.entries).toHaveLength(0);
+      await flushBackground();
+      expect(ctx.mailer.sent).toHaveLength(0);
+    });
+
+    it('validates the body', async () => {
+      const t = live({ assign_to: 'selected' });
+      await changeAudience(t.id, {}).expect(400);
+      await changeAudience(t.id, { assignTo: 'everyone' }).expect(400);
+      await changeAudience(t.id, { assignTo: 'all', season: SEASON }).expect(
+        400,
+      );
+      expect(ctx.templates.rows.get(t.id)?.assign_to).toBe('selected');
+    });
+
+    it('409s when the document was retired concurrently', async () => {
+      ctx.subjects.seedInstructor();
+      const t = live({ assign_to: 'selected' });
+      jest.spyOn(ctx.templates, 'updateIfStatus').mockResolvedValueOnce(null);
+      await changeAudience(t.id, { assignTo: 'all' }).expect(409);
+      expect(ctx.assignments.rows.size).toBe(0);
+      expect(ctx.audit.entries).toHaveLength(0);
+    });
+
+    it('falls back to CURRENT_SEASON when a live document has no season', async () => {
+      ctx.subjects.seedInstructor();
+      const t = live({ assign_to: 'selected', season: null });
+      const res = await changeAudience(t.id, { assignTo: 'all' }).expect(200);
+      expect(res.body).toMatchObject({
+        created: 1,
+        template: { season: SEASON },
+      });
+      expect([...ctx.assignments.rows.values()][0]?.season).toBe(SEASON);
     });
   });
 

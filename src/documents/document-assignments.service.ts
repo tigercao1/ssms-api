@@ -226,7 +226,7 @@ export class DocumentAssignmentsService {
     }
   }
 
-  private async knownInstructors(ids: string[]): Promise<string[]> {
+  async knownInstructors(ids: string[]): Promise<string[]> {
     const unique = [...new Set(ids)];
     const found = await this.subjects.existingInstructorIds(unique);
     const unknown = unique.filter((id) => !found.has(id));

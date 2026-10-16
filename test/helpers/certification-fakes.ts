@@ -10,7 +10,10 @@ import {
   type InstructorCertificationKeyRow,
   type NewCertificationUploadRow,
 } from '../../src/documents/certification-uploads.repository';
-import type { CertificationUploadRow } from '../../src/documents/documents.types';
+import type {
+  CertificationUploadRow,
+  ReviewStatus,
+} from '../../src/documents/documents.types';
 import type { MailerService } from '../../src/mailer/mailer.service';
 import type {
   SendEmailRequest,
@@ -75,8 +78,13 @@ export class InMemoryCertificationUploadsRepository extends CertificationUploads
   update(
     id: string,
     patch: CertificationUploadWrite,
+    fromStatuses?: ReviewStatus[],
   ): Promise<CertificationUploadRow | null> {
-    const index = this.rows.findIndex((r) => r.id === id);
+    const index = this.rows.findIndex(
+      (r) =>
+        r.id === id &&
+        (!fromStatuses || fromStatuses.includes(r.review_status)),
+    );
     if (index < 0) {
       return Promise.resolve(null);
     }

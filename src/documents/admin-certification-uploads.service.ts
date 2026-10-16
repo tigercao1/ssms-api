@@ -104,8 +104,16 @@ export class AdminCertificationUploadsService {
         patch.expiry_reminder_sent_at = null;
       }
     }
-    const row = await this.uploads.update(id, patch);
+    const row = await this.uploads.update(
+      id,
+      patch,
+      dto.reviewStatus === 'rejected' ? undefined : ['pending', 'approved'],
+    );
     if (!row) {
+      const current = await this.uploads.findById(id);
+      if (current?.review_status === 'rejected') {
+        throw new ConflictException(REJECTED_CERTIFICATION_FINAL);
+      }
       throw new NotFoundException(CERTIFICATION_UPLOAD_NOT_FOUND);
     }
     await this.audit.record({
@@ -121,9 +129,11 @@ export class AdminCertificationUploadsService {
         after: pick(row, fields),
       },
     });
-    if (row.review_status === 'rejected' && !wasRejected) {
+    if (row.review_status === 'rejected') {
       await this.deleteFile(row, actor);
-      await this.emailRejection(row);
+      if (!wasRejected) {
+        await this.emailRejection(row);
+      }
     }
     const rows = await this.subjects.listCertificationUploads(
       row.instructor_id,

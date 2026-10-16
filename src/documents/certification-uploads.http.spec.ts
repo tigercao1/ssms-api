@@ -1123,14 +1123,52 @@ describe('certification uploads over HTTP', () => {
       expect(ctx.mailer.sent).toEqual([]);
     });
 
-    it('lets a rejected upload be re-saved as rejected without deleting or emailing again', async () => {
+    it('lets a rejected upload be re-saved as rejected, retrying the delete without emailing again', async () => {
       await reject().expect(200);
       const remove = jest.spyOn(ctx.storage, 'delete');
       await reject({ reviewNote: 'Expired card' }).expect(200);
       await flushBackground();
-      expect(remove).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalledWith(row.file_key);
       expect(ctx.mailer.sent).toHaveLength(1);
       expect(ctx.subjects.uploads[0].review_note).toBe('Expired card');
+    });
+
+    it('retries a failed file delete when the rejection is saved again', async () => {
+      ctx.storage.seed(row.file_key, PDF, 'application/pdf');
+      const remove = jest
+        .spyOn(ctx.storage, 'delete')
+        .mockRejectedValueOnce(new Error('r2 down'));
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      await reject().expect(200);
+      expect(ctx.storage.objects.has(row.file_key)).toBe(true);
+      await reject().expect(200);
+      await flushBackground();
+      expect(remove).toHaveBeenCalledTimes(2);
+      expect(ctx.storage.objects.has(row.file_key)).toBe(false);
+      expect(
+        ctx.audit.entries
+          .filter((e) => e.action === 'certification_upload.file_delete')
+          .map((e) => e.metadata?.deleted),
+      ).toEqual([false, true]);
+      expect(ctx.mailer.sentOf('certification.rejected')).toHaveLength(1);
+    });
+
+    it('409s a delayed approval that read the upload before a concurrent rejection', async () => {
+      const stale = { ...ctx.subjects.uploads[0] };
+      await reject().expect(200);
+      jest.spyOn(ctx.uploads, 'findById').mockResolvedValueOnce(stale);
+      const res = await http()
+        .patch(`/admin/certification-uploads/${row.id}`)
+        .set('Authorization', admin)
+        .send({ reviewStatus: 'approved' })
+        .expect(409);
+      expect(messageOf(res)).toBe(REJECTED_CERTIFICATION_FINAL);
+      expect(ctx.subjects.uploads[0].review_status).toBe('rejected');
+      expect(
+        ctx.audit.entries.filter(
+          (e) => e.action === 'certification_upload.review',
+        ),
+      ).toHaveLength(1);
     });
 
     it.each(['approved', 'pending'])(

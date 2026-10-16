@@ -28,7 +28,14 @@ describe('SupabaseCertificationUploadsRepository', () => {
   it('finds, inserts and updates uploads', async () => {
     const row = { id: ID };
     const { client, queries } = recordingSupabase({
-      certification_uploads: [ok(row), ok(null), ok(row), ok(row), ok(null)],
+      certification_uploads: [
+        ok(row),
+        ok(null),
+        ok(row),
+        ok(row),
+        ok(null),
+        ok(row),
+      ],
     });
     const repo = new SupabaseCertificationUploadsRepository(client);
     await expect(repo.findById(ID)).resolves.toEqual(row);
@@ -38,6 +45,9 @@ describe('SupabaseCertificationUploadsRepository', () => {
       repo.update(ID, { review_status: 'approved' }),
     ).resolves.toEqual(row);
     await expect(repo.update(ID, { review_note: null })).resolves.toBeNull();
+    await expect(
+      repo.update(ID, { review_status: 'approved' }, ['pending', 'approved']),
+    ).resolves.toEqual(row);
     expect(queries[0].ops).toEqual([
       ['select', CERTIFICATION_UPLOAD_COLUMNS],
       ['eq', 'id', ID],
@@ -51,6 +61,13 @@ describe('SupabaseCertificationUploadsRepository', () => {
     expect(queries[3].ops).toEqual([
       ['update', { review_status: 'approved' }],
       ['eq', 'id', ID],
+      ['select', CERTIFICATION_UPLOAD_COLUMNS],
+      ['maybeSingle'],
+    ]);
+    expect(queries[5].ops).toEqual([
+      ['update', { review_status: 'approved' }],
+      ['eq', 'id', ID],
+      ['in', 'review_status', ['pending', 'approved']],
       ['select', CERTIFICATION_UPLOAD_COLUMNS],
       ['maybeSingle'],
     ]);

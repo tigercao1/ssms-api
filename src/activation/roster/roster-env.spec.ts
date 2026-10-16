@@ -84,4 +84,47 @@ describe('loadSsmsEnv', () => {
       loadSsmsEnv('/definitely/not/a/repo', { SSMS_ENV: 'dev' }),
     ).toThrow(/SUPABASE_URL is not set/);
   });
+
+  describe('portal links in prod emails', () => {
+    const PROD_FILE = [
+      "SSMS_ENV_NAME='prod'",
+      "SUPABASE_URL='https://prodref.supabase.co'",
+      "SUPABASE_SECRET_KEY='sb_secret_p'",
+    ].join('\n');
+
+    it('defaults to the production portal when PORTAL_URL is unset', () => {
+      const env: Record<string, string | undefined> = { SSMS_ENV: 'prod' };
+      loadSsmsEnv('/repo', env, files(PROD_FILE));
+      expect(env.PORTAL_URL).toBe('https://app.ssnow.club');
+    });
+
+    it('keeps an explicit PORTAL_URL', () => {
+      const env: Record<string, string | undefined> = {
+        SSMS_ENV: 'prod',
+        PORTAL_URL: 'https://portal.example.com',
+      };
+      loadSsmsEnv('/repo', env, files(PROD_FILE));
+      expect(env.PORTAL_URL).toBe('https://portal.example.com');
+    });
+
+    it.each([
+      'http://localhost:5173',
+      'http://127.0.0.1:5173/',
+      'HTTP://LOCALHOST',
+    ])('refuses %s', (url) => {
+      expect(() =>
+        loadSsmsEnv(
+          '/repo',
+          { SSMS_ENV: 'prod', PORTAL_URL: url },
+          files(PROD_FILE),
+        ),
+      ).toThrow(/a local address/);
+    });
+
+    it('leaves dev on its local default', () => {
+      const env: Record<string, string | undefined> = { SSMS_ENV: 'dev' };
+      loadSsmsEnv('/repo', env, files(DEV_FILE));
+      expect(env.PORTAL_URL).toBeUndefined();
+    });
+  });
 });

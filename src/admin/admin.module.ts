@@ -6,7 +6,6 @@ import { MailerModule } from '../mailer/mailer.module';
 import { MediaModule } from '../media/media.module';
 import { SeasonsModule } from '../seasons/seasons.module';
 import { AdminMediaController } from './admin-media.controller';
-import { AdminSeasonsController } from './admin-seasons.controller';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -35,7 +34,7 @@ import { AdminService } from './admin.service';
     DocumentsModule,
     SeasonsModule,
   ],
-  controllers: [AdminSeasonsController, AdminController, AdminMediaController],
+  controllers: [AdminController, AdminMediaController],
   providers: [
     AdminService,
     { provide: AdminRepository, useClass: SupabaseAdminRepository },

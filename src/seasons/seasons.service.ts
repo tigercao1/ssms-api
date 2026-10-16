@@ -38,6 +38,10 @@ export interface AdminSeason extends Season {
   inUse: boolean;
 }
 
+export interface SeasonUsage {
+  referenceCount: number;
+}
+
 export interface SeasonDates {
   startsOn?: string;
   endsOn?: string;
@@ -106,6 +110,11 @@ export class SeasonsService {
         inUse: (await this.repo.referenceCount(row.key)) > 0,
       })),
     );
+  }
+
+  async usage(key: string): Promise<SeasonUsage> {
+    await this.findOrThrow(key);
+    return { referenceCount: await this.repo.referenceCount(key) };
   }
 
   async create(input: NewSeason, actor: AuditActor): Promise<AdminSeason> {

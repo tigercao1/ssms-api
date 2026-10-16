@@ -20,10 +20,20 @@ import {
   startDocumentsApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/documents-fakes';
+import {
+  FAKE_PORTAL_URL,
+  flushBackground,
+  RecordingMailer,
+} from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { MailerService } from '../mailer/mailer.service';
 import { AdminCertificationUploadsController } from './admin-certification-uploads.controller';
-import { AdminCertificationUploadsService } from './admin-certification-uploads.service';
+import {
+  AdminCertificationUploadsService,
+  REJECTED_CERTIFICATION_FILE_DELETED,
+  REJECTED_CERTIFICATION_FINAL,
+} from './admin-certification-uploads.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { MAX_CERTIFICATION_BYTES } from './certification-files';
 import {
@@ -80,6 +90,7 @@ async function build() {
   const subjects = new InMemoryDocumentSubjectsRepository();
   const uploads = new InMemoryCertificationUploadsRepository(subjects);
   const audit = recordingAudit();
+  const mailer = new RecordingMailer();
   const app = await startDocumentsApp(
     Test.createTestingModule({
       controllers: [
@@ -101,6 +112,7 @@ async function build() {
         { provide: DocumentSubjectsRepository, useValue: subjects },
         { provide: CertificationUploadsRepository, useValue: uploads },
         { provide: AuditService, useValue: audit },
+        { provide: MailerService, useValue: mailer.asService() },
         { provide: ConfigService, useValue: { get: () => undefined } },
       ],
     }),
@@ -112,7 +124,7 @@ async function build() {
     { org: 'csia', track: 'regular', level: 2 },
     { org: 'casi', track: 'park', level: 1 },
   ]);
-  return { app, storage, subjects, uploads, audit, instructor };
+  return { app, storage, subjects, uploads, audit, mailer, instructor };
 }
 
 type Ctx = Awaited<ReturnType<typeof build>>;
@@ -1000,6 +1012,150 @@ describe('certification uploads over HTTP', () => {
         .set('Authorization', admin)
         .send({ reviewStatus: 'approved' })
         .expect(404);
+    });
+
+    function reject(body: Record<string, unknown> = {}) {
+      return http()
+        .patch(`/admin/certification-uploads/${row.id}`)
+        .set('Authorization', admin)
+        .send({ reviewStatus: 'rejected', ...body });
+    }
+
+    it('rejects: deletes the file, audits the delete and emails the instructor', async () => {
+      ctx.storage.seed(row.file_key, PDF, 'application/pdf');
+      ctx.subjects.instructors.get(ctx.instructor.id)!.preferred_language =
+        'zh-CN';
+      await reject({ reviewNote: 'Blurry photo' }).expect(200);
+      await flushBackground();
+      expect(ctx.storage.objects.has(row.file_key)).toBe(false);
+      expect(ctx.audit.entries.map((e) => e.action)).toEqual([
+        'certification_upload.review',
+        'certification_upload.file_delete',
+      ]);
+      expect(ctx.audit.entries[1]).toMatchObject({
+        targetId: row.id,
+        actor: { userId: ADMIN_USER_ID, role: 'admin' },
+        metadata: {
+          instructorId: ctx.instructor.id,
+          fileKey: row.file_key,
+          deleted: true,
+        },
+      });
+      expect(ctx.mailer.sent).toEqual([
+        {
+          template: 'certification.rejected',
+          to: ctx.instructor.email,
+          language: 'zh-CN',
+          vars: {
+            displayName: ctx.instructor.display_name_en,
+            org: 'csia',
+            track: 'regular',
+            level: 2,
+            reason: 'Blurry photo',
+            uploadUrl: `${FAKE_PORTAL_URL}/onboarding`,
+          },
+          mode: 'background',
+          instructorId: ctx.instructor.id,
+          authUserId: ctx.instructor.auth_user_id,
+          metadata: {
+            certificationUploadId: row.id,
+            certification: 'csia:regular',
+          },
+          idempotencyKey: `certification.rejected:${row.id}`,
+        },
+      ]);
+    });
+
+    it('emails bilingually without a level when the profile no longer lists the certification', async () => {
+      ctx.subjects.instructors.get(ctx.instructor.id)!.preferred_language =
+        null;
+      ctx.subjects.certifications.set(ctx.instructor.id, []);
+      await reject().expect(200);
+      await flushBackground();
+      expect(ctx.mailer.sent[0]).toMatchObject({
+        language: 'bilingual',
+        vars: { level: null, reason: null },
+      });
+    });
+
+    it('still rejects, audits and emails when deleting the file fails', async () => {
+      jest.spyOn(ctx.storage, 'delete').mockRejectedValue(new Error('r2 down'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const res = await reject().expect(200);
+      await flushBackground();
+      expect(res.body).toMatchObject({ reviewStatus: 'rejected' });
+      expect(ctx.subjects.uploads[0].review_status).toBe('rejected');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(ctx.audit.entries.map((e) => e.metadata)).toEqual([
+        expect.objectContaining({ after: { review_status: 'rejected' } }),
+        expect.objectContaining({ deleted: false }),
+      ]);
+      expect(ctx.mailer.sentOf('certification.rejected')).toHaveLength(1);
+    });
+
+    it('still rejects when the instructor cannot be loaded for the email', async () => {
+      jest
+        .spyOn(ctx.subjects, 'findInstructor')
+        .mockRejectedValue(new Error('db down'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      await reject().expect(200);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(ctx.mailer.sent).toEqual([]);
+    });
+
+    it('skips the email when the instructor row is gone', async () => {
+      ctx.subjects.instructors.delete(ctx.instructor.id);
+      await reject().expect(200);
+      expect(ctx.mailer.sent).toEqual([]);
+    });
+
+    it('neither deletes nor emails on approve', async () => {
+      ctx.storage.seed(row.file_key, PDF, 'application/pdf');
+      const remove = jest.spyOn(ctx.storage, 'delete');
+      await http()
+        .patch(`/admin/certification-uploads/${row.id}`)
+        .set('Authorization', admin)
+        .send({ reviewStatus: 'approved' })
+        .expect(200);
+      await flushBackground();
+      expect(remove).not.toHaveBeenCalled();
+      expect(ctx.storage.objects.has(row.file_key)).toBe(true);
+      expect(ctx.mailer.sent).toEqual([]);
+    });
+
+    it('lets a rejected upload be re-saved as rejected without deleting or emailing again', async () => {
+      await reject().expect(200);
+      const remove = jest.spyOn(ctx.storage, 'delete');
+      await reject({ reviewNote: 'Expired card' }).expect(200);
+      await flushBackground();
+      expect(remove).not.toHaveBeenCalled();
+      expect(ctx.mailer.sent).toHaveLength(1);
+      expect(ctx.subjects.uploads[0].review_note).toBe('Expired card');
+    });
+
+    it.each(['approved', 'pending'])(
+      '409s moving a rejected upload to %s',
+      async (reviewStatus) => {
+        await reject().expect(200);
+        const res = await http()
+          .patch(`/admin/certification-uploads/${row.id}`)
+          .set('Authorization', admin)
+          .send({ reviewStatus })
+          .expect(409);
+        expect(messageOf(res)).toBe(REJECTED_CERTIFICATION_FINAL);
+        expect(ctx.subjects.uploads[0].review_status).toBe('rejected');
+      },
+    );
+
+    it('410s the file URL of a rejected upload without presigning or auditing', async () => {
+      ctx.subjects.uploads[0].review_status = 'rejected';
+      const res = await http()
+        .get(`/admin/certification-uploads/${row.id}/url`)
+        .set('Authorization', admin)
+        .expect(410);
+      expect(messageOf(res)).toBe(REJECTED_CERTIFICATION_FILE_DELETED);
+      expect(ctx.storage.presigned).toEqual([]);
+      expect(ctx.audit.entries).toEqual([]);
     });
 
     it('404s when the row disappears mid-review', async () => {

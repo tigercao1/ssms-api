@@ -325,6 +325,11 @@ export const zhCN: MessageCatalog = {
         park: '{org} 公园 {level} 级',
         carving: '{org} 刻滑 {level} 级',
       },
+      unleveledLabels: {
+        regular: '{org}',
+        park: '{org} 公园',
+        carving: '{org} 刻滑',
+      },
       expiring: {
         subject: '您的 {certification} 证书将于 {validUntil} 到期',
         preheader: '请上传续期后的证书，以便继续安排教学。',
@@ -346,6 +351,18 @@ export const zhCN: MessageCatalog = {
         ],
         button: '上传新证书',
         finePrint: '如果您已经上传了续期后的证书，请忽略这封邮件。',
+      },
+      rejected: {
+        subject: '请重新上传您的 {certification} 证书',
+        preheader: '我们无法接受您上传的证书。',
+        heading: '您上传的证书未通过审核',
+        paragraphs: [
+          '我们审核了您上传的 {certification} 证书，但无法接受。',
+          '请在教练平台上传一份清晰、有效的证书，以便我们核实您的资质。',
+        ],
+        reasonLabel: '团队备注：',
+        button: '上传证书',
+        finePrint: '您收到这封邮件，是因为您在 SSnow 的教练资料中上传了证书。',
       },
     },
     admin: {

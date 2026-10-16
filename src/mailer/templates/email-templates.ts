@@ -152,6 +152,36 @@ function sampleCertificationExpiry({
   };
 }
 
+function certificationRejectedBlocks(
+  catalog: MessageCatalog,
+  vars: EmailTemplateVars['certification.rejected'],
+): EmailBlocks {
+  const copy = catalog.email.certification.rejected;
+  const org = vars.org.toUpperCase();
+  const certification =
+    vars.level === null
+      ? interpolate(catalog.email.certification.unleveledLabels[vars.track], {
+          org,
+        })
+      : interpolate(catalog.email.certification.labels[vars.track], {
+          org,
+          level: vars.level,
+        });
+  const blocks = fill(copy, { certification });
+  const [intro, ...rest] = blocks.paragraphs;
+  const reason = vars.reason?.trim();
+  return {
+    ...blocks,
+    greeting: greet(catalog, vars.displayName),
+    paragraphs: [
+      intro,
+      ...(reason ? [`${copy.reasonLabel} ${reason}`] : []),
+      ...rest,
+    ],
+    button: { label: copy.button, url: vars.uploadUrl },
+  };
+}
+
 const SAMPLE_SUPABASE_URL = 'https://example.supabase.co';
 
 function sampleVerifyUrl(context: SampleContext, type: string): string {
@@ -416,6 +446,17 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
         vars,
       ),
     sample: sampleCertificationExpiry,
+  },
+  'certification.rejected': {
+    build: certificationRejectedBlocks,
+    sample: ({ portalUrl }) => ({
+      displayName: SAMPLE_NAME,
+      org: 'csia',
+      track: 'regular',
+      level: 2,
+      reason: 'The photo is blurry; please upload a clear scan of the card.',
+      uploadUrl: `${portalUrl}/onboarding`,
+    }),
   },
   'admin.instructor_pending': {
     build: (catalog, vars) => {

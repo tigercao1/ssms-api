@@ -67,3 +67,70 @@ describe('certification expiry emails', () => {
     );
   });
 });
+
+describe('certification rejected email', () => {
+  const rejected = {
+    displayName: 'Lin Wei',
+    org: 'casi' as const,
+    track: 'park' as const,
+    level: 1,
+    reason: '  Blurry photo  ',
+    uploadUrl: 'https://portal.example.com/onboarding',
+  };
+
+  it.each([
+    [
+      'en',
+      'Please upload your CASI Park Level 1 certification again',
+      'A note from our team: Blurry photo',
+    ],
+    ['zh-CN', '请重新上传您的 CASI 公园 1 级 证书', '团队备注： Blurry photo'],
+  ] as const)(
+    'in %s names the certification, quotes the note and links to re-upload',
+    (language, subject, note) => {
+      const email = renderer.render(
+        'certification.rejected',
+        language,
+        rejected,
+      );
+      expect(email.subject).toBe(subject);
+      expect(email.text).toContain(note);
+      expect(email.html).toContain(
+        'href="https://portal.example.com/onboarding"',
+      );
+      expect(email.text).toContain('https://portal.example.com/onboarding');
+    },
+  );
+
+  it('renders both languages when bilingual', () => {
+    const email = renderer.render(
+      'certification.rejected',
+      'bilingual',
+      rejected,
+    );
+    expect(email.subject).toContain('CASI Park Level 1');
+    expect(email.subject).toContain('CASI 公园 1 级');
+    expect(email.text).toContain('A note from our team: Blurry photo');
+    expect(email.text).toContain('团队备注： Blurry photo');
+  });
+
+  it('names the certification without a level and omits a blank note', () => {
+    const email = renderer.render('certification.rejected', 'en', {
+      ...rejected,
+      org: 'csia',
+      track: 'carving',
+      level: null,
+      reason: '   ',
+    });
+    expect(email.subject).toBe(
+      'Please upload your CSIA Carving certification again',
+    );
+    expect(email.text).not.toContain('A note from our team');
+  });
+
+  it('samples a re-upload link and a note', () => {
+    const sample = renderer.sampleVars('certification.rejected');
+    expect(sample.uploadUrl).toBe('https://portal.example.com/onboarding');
+    expect(sample.reason).toBeTruthy();
+  });
+});

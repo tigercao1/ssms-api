@@ -341,6 +341,11 @@ export const en: MessageCatalog = {
         park: '{org} Park Level {level}',
         carving: '{org} Carving Level {level}',
       },
+      unleveledLabels: {
+        regular: '{org}',
+        park: '{org} Park',
+        carving: '{org} Carving',
+      },
       expiring: {
         subject: 'Your {certification} certification expires on {validUntil}',
         preheader:
@@ -365,6 +370,19 @@ export const en: MessageCatalog = {
         button: 'Upload new certification',
         finePrint:
           "If you've already uploaded your renewed certification, you can ignore this email.",
+      },
+      rejected: {
+        subject: 'Please upload your {certification} certification again',
+        preheader: 'We could not accept the certification proof you uploaded.',
+        heading: 'Your certification proof was not accepted',
+        paragraphs: [
+          'We reviewed the {certification} proof you uploaded and could not accept it.',
+          'Please upload a clear, current copy in the instructor portal so we can verify your certification.',
+        ],
+        reasonLabel: 'A note from our team:',
+        button: 'Upload certification',
+        finePrint:
+          "You're receiving this because you uploaded a certification to your Serendipity Snow Club instructor profile.",
       },
     },
     admin: {

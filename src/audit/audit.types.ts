@@ -78,6 +78,9 @@ export const AUDIT_ACTIONS = {
   seasonCreate: 'season.create',
   seasonUpdate: 'season.update',
   seasonDelete: 'season.delete',
+  lessonInsuranceMarkPaid: 'lesson_insurance.mark_paid',
+  lessonInsuranceMarkUnpaid: 'lesson_insurance.mark_unpaid',
+  lessonInsuranceVoid: 'lesson_insurance.void',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -118,6 +121,7 @@ export interface AuditEntry {
     | 'document_assignment'
     | 'certification_upload'
     | 'season'
+    | 'lesson_insurance_record'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

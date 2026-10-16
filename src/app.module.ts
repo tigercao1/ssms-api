@@ -23,6 +23,7 @@ import { LessonsModule } from './lessons/lessons.module';
 import { CustomersModule } from './customers/customers.module';
 import { BookingModule } from './booking/booking.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { InsuranceModule } from './insurance/insurance.module';
 import { ClassImportModule } from './class-import/class-import.module';
 import { DocumentsModule } from './documents/documents.module';
 import { ShopifyWebhooksModule } from './shopify-webhooks/shopify-webhooks.module';
@@ -61,6 +62,7 @@ import { ShopifyWebhooksModule } from './shopify-webhooks/shopify-webhooks.modul
     CustomersModule,
     BookingModule,
     PayrollModule,
+    InsuranceModule,
     ClassImportModule,
     DocumentsModule,
     ShopifyWebhooksModule,

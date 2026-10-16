@@ -67,14 +67,17 @@ describe('SupabaseSeasonsRepository', () => {
       document_templates: { data: null, error: null, count: 2 },
       document_assignments: { data: null, error: null, count: null },
       instructor_invites: { data: null, error: null, count: 3 },
+      lesson_insurance_records: { data: null, error: null, count: 1 },
     });
     const repo = new SupabaseSeasonsRepository(client);
-    await expect(repo.referenceCount('2026/27')).resolves.toBe(5);
+    await expect(repo.referenceCount('2026/27')).resolves.toBe(6);
     expect(calls.map((c) => c.target)).toEqual([
       'document_templates',
       'document_assignments',
       'instructor_invites',
+      'lesson_insurance_records',
     ]);
+    expect(calls[3].ops[1]).toEqual(['eq', 'season_key', '2026/27']);
     expect(calls[0].ops).toEqual([
       ['select', 'season', { count: 'exact', head: true }],
       ['eq', 'season', '2026/27'],

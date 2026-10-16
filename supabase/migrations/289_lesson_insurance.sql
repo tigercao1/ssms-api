@@ -91,7 +91,12 @@ create table if not exists lesson_insurance_records (
       and coverage is null)
   ),
   constraint lesson_insurance_records_paid_check
-    check ((payment_status = 'paid') = (paid_on is not null)),
+    check (
+      (payment_status = 'paid'
+        or (payment_status = 'voided' and voided_from_status is not distinct from 'paid'))
+      = (paid_on is not null)
+      and (paid_on is not null or (paid_note is null and paid_by is null))
+    ),
   constraint lesson_insurance_records_voided_check
     check ((payment_status = 'voided') = (
       voided_at is not null and voided_reason is not null and voided_from_status is not null

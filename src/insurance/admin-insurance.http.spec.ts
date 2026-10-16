@@ -386,7 +386,7 @@ describe('/admin/insurance', () => {
   describe('void', () => {
     it('voids from any status, keeps where it came from, audits it, and leaves the total', async () => {
       const paid = await seed(ADA_INSTRUCTOR, '2026-12-01', 2, 4);
-      await post(`${paid}/mark-paid`).expect(200);
+      await post(`${paid}/mark-paid`, { note: 'e-transfer' }).expect(200);
       for (const day of ['02', '03', '04', '05']) {
         await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4, true);
       }
@@ -402,6 +402,9 @@ describe('/admin/insurance', () => {
         voidedBy: INSURANCE_ADMIN_ID,
         voidedFromStatus: 'paid',
         voidedAt: expect.any(String) as unknown,
+        paidOn: '2026-10-15',
+        paidNote: 'e-transfer',
+        paidBy: INSURANCE_ADMIN_ID,
       });
       expect(ctx.audit.entries.at(-1)).toMatchObject({
         action: 'lesson_insurance.void',
@@ -424,6 +427,17 @@ describe('/admin/insurance', () => {
 
       await post(`${free}/void`, { reason: 'test' }).expect(200);
       expect(ctx.repo.rows.get(free)?.voided_from_status).toBe('not_required');
+      const unpaid = await seed(ADA_INSTRUCTOR, '2026-12-07', 1, 1);
+      const voidedUnpaid = await post(`${unpaid}/void`, {
+        reason: 'test',
+      }).expect(200);
+      expect(voidedUnpaid.body).toMatchObject({
+        paymentStatus: 'voided',
+        voidedFromStatus: 'unpaid',
+        paidOn: null,
+        paidNote: null,
+        paidBy: null,
+      });
       await post(`${paid}/void`, { reason: 'again' }).expect(409, {
         statusCode: 409,
         message: ALREADY_VOIDED,

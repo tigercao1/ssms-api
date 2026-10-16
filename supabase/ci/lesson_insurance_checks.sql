@@ -249,6 +249,73 @@ $$;
 
 do $$
 declare
+  a constant uuid := '22222222-2222-4222-8222-2222222222a1';
+  admin_id constant uuid := '11111111-1111-4111-8111-1111111111a2';
+  paid_id uuid := (pg_temp.lesson(a, '2028-01-10', 1, 1) ->> 'id')::uuid;
+  unpaid_id uuid := (pg_temp.lesson(a, '2028-01-11', 1, 1) ->> 'id')::uuid;
+  owed_before int;
+  rec lesson_insurance_records;
+begin
+  update lesson_insurance_records
+     set payment_status = 'paid', paid_on = '2026-10-15', paid_note = 'e-transfer', paid_by = admin_id
+   where id = paid_id and payment_status = 'unpaid';
+  owed_before := pg_temp.owed(a, '2027/28');
+
+  update lesson_insurance_records
+     set payment_status = 'voided', voided_at = now(), voided_reason = 'duplicate',
+         voided_by = admin_id, voided_from_status = 'paid'
+   where id = paid_id and payment_status = 'paid'
+  returning * into rec;
+  if rec.id is null or rec.payment_status <> 'voided' or rec.voided_from_status <> 'paid'
+     or rec.paid_on <> '2026-10-15' or rec.paid_note <> 'e-transfer' or rec.paid_by <> admin_id then
+    raise exception 'voiding a paid record should keep its payment: %', rec;
+  end if;
+  if pg_temp.owed(a, '2027/28') <> owed_before - rec.amount_cents then
+    raise exception 'a voided paid record should leave the total';
+  end if;
+
+  update lesson_insurance_records
+     set payment_status = 'voided', voided_at = now(), voided_reason = 'duplicate',
+         voided_by = admin_id, voided_from_status = 'unpaid'
+   where id = unpaid_id and payment_status = 'unpaid'
+  returning * into rec;
+  if rec.id is null or rec.voided_from_status <> 'unpaid'
+     or rec.paid_on is not null or rec.paid_note is not null or rec.paid_by is not null then
+    raise exception 'voiding an unpaid record should have no payment: %', rec;
+  end if;
+
+  begin
+    update lesson_insurance_records set paid_on = '2026-10-15' where id = unpaid_id;
+    raise exception 'a record voided from unpaid with paid_on was accepted';
+  exception when check_violation then null;
+  end;
+  begin
+    update lesson_insurance_records set paid_on = null where id = paid_id;
+    raise exception 'a record voided from paid without paid_on was accepted';
+  exception when check_violation then null;
+  end;
+
+  paid_id := (pg_temp.lesson(a, '2028-01-12', 1, 1) ->> 'id')::uuid;
+  update lesson_insurance_records
+     set payment_status = 'paid', paid_on = '2026-10-15', paid_note = 'e-transfer', paid_by = admin_id
+   where id = paid_id;
+  begin
+    update lesson_insurance_records set payment_status = 'unpaid', paid_on = null where id = paid_id;
+    raise exception 'an unpaid record keeping a paid note was accepted';
+  exception when check_violation then null;
+  end;
+  update lesson_insurance_records
+     set payment_status = 'unpaid', paid_on = null, paid_note = null, paid_by = null
+   where id = paid_id and payment_status = 'paid'
+  returning * into rec;
+  if rec.payment_status <> 'unpaid' or rec.paid_on is not null then
+    raise exception 'marking a paid record unpaid should clear its payment: %', rec;
+  end if;
+end
+$$;
+
+do $$
+declare
   t text;
   r text;
 begin

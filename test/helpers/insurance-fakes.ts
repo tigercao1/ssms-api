@@ -306,6 +306,21 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     if (!row || row.payment_status !== from) {
       return Promise.resolve(null);
     }
+    const next = { ...row, ...patch };
+    const keepsPayment =
+      next.payment_status === 'paid' ||
+      (next.payment_status === 'voided' && next.voided_from_status === 'paid');
+    if (
+      keepsPayment !== (next.paid_on !== null) ||
+      (next.paid_on === null &&
+        (next.paid_note !== null || next.paid_by !== null))
+    ) {
+      return Promise.reject(
+        new Error(
+          'violates check constraint lesson_insurance_records_paid_check',
+        ),
+      );
+    }
     Object.assign(row, patch, { updated_at: this.now().toISOString() });
     return Promise.resolve(structuredClone(row));
   }

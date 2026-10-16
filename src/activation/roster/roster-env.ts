@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseEnv } from 'node:util';
+import { DEFAULT_PORTAL_URL } from '../../mailer/mailer.config';
 
 export type EnvMap = Record<string, string | undefined>;
 
@@ -18,6 +19,8 @@ const realFiles: EnvFiles = {
  * Loads `.env.<SSMS_ENV>` into `env` (existing values win), with the same
  * guards as `scripts/env.sh`: SSMS_ENV must be dev or prod, the file's
  * SSMS_ENV_NAME must match, and SSMS_EXPECT_PROJECT_REF must match the URL.
+ * For prod, links in emails default to the production portal and may never
+ * point at a local one.
  */
 export function loadSsmsEnv(
   repoRoot: string,
@@ -48,6 +51,14 @@ export function loadSsmsEnv(
     throw new Error(
       `Project ref mismatch: expected '${env.SSMS_EXPECT_PROJECT_REF}' but SUPABASE_URL resolves to '${ref ?? ''}'.`,
     );
+  }
+  if (target === 'prod') {
+    env.PORTAL_URL = env.PORTAL_URL?.trim() || DEFAULT_PORTAL_URL;
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(env.PORTAL_URL)) {
+      throw new Error(
+        `PORTAL_URL is ${env.PORTAL_URL}, a local address; prod emails must link to the real portal.`,
+      );
+    }
   }
   for (const key of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) {
     if (!env[key]?.trim()) {

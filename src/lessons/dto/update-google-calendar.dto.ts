@@ -7,7 +7,6 @@ import {
   Matches,
   ValidateIf,
 } from 'class-validator';
-import type { CalendarMatchStatus } from '../instructor-calendars.repository';
 
 export const GOOGLE_CALENDAR_ID_MAX_LENGTH = 320;
 
@@ -24,5 +23,5 @@ export class UpdateGoogleCalendarDto {
 
   @IsOptional()
   @IsIn(['suggested', 'confirmed'])
-  matchStatus?: CalendarMatchStatus;
+  matchStatus?: 'suggested' | 'confirmed';
 }

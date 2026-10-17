@@ -9,6 +9,7 @@ import {
   matchInstructor,
   matchRow,
   matchRows,
+  nameKey,
   phoneKey,
   summarize,
 } from './class-import-matching';
@@ -44,6 +45,15 @@ function input(csv: Parameters<typeof csvLine>[0] = {}, rowNo = 1): MatchInput {
     classId: null,
   };
 }
+
+describe('nameKey', () => {
+  it('folds case, width, spaces and punctuation', () => {
+    expect(nameKey(' Eric  Wang ')).toBe('ericwang');
+    expect(nameKey('Ｅｒｉｃ・Ｗａｎｇ')).toBe('ericwang');
+    expect(nameKey('陈 艾迪')).toBe('陈艾迪');
+    expect(nameKey(null)).toBe('');
+  });
+});
 
 describe('matchInstructor', () => {
   it.each([

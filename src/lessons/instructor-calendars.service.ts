@@ -12,12 +12,7 @@ import type { GoogleCalendar } from '../google/google.types';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
 import { GOOGLE_UNAVAILABLE } from '../google/google-error.filter';
 import {
-  type CalendarCandidate,
-  proposeCalendarMatches,
-} from './calendar-matching';
-import {
   type CalendarInstructorRow,
-  type CalendarMatchStatus,
   type InstructorCalendarRow,
   InstructorCalendarsRepository,
 } from './instructor-calendars.repository';
@@ -30,7 +25,6 @@ export interface InstructorGoogleCalendar {
   instructorId: string;
   googleCalendarId: string | null;
   calendarSummary: string | null;
-  matchStatus: CalendarMatchStatus | null;
   updatedAt: string | null;
 }
 
@@ -40,8 +34,6 @@ export interface InstructorCalendarOverview extends InstructorGoogleCalendar {
   email: string | null;
   approvalStatus: string;
   isActive: boolean;
-  candidates: CalendarCandidate[];
-  suggestion: CalendarCandidate | null;
 }
 
 export interface InstructorCalendarsOverview {
@@ -51,12 +43,6 @@ export interface InstructorCalendarsOverview {
 
 export interface SetInstructorCalendarInput {
   googleCalendarId: string | null;
-  matchStatus?: CalendarMatchStatus;
-}
-
-export interface SuggestCalendarsResult {
-  suggested: number;
-  overview: InstructorCalendarsOverview;
 }
 
 @Injectable()
@@ -94,13 +80,11 @@ export class InstructorCalendarsService {
       const write = {
         google_calendar_id: next,
         calendar_summary: await this.summaryFor(next, before),
-        match_status: input.matchStatus ?? 'confirmed',
       };
       if (
         before &&
         before.google_calendar_id === write.google_calendar_id &&
-        before.calendar_summary === write.calendar_summary &&
-        before.match_status === write.match_status
+        before.calendar_summary === write.calendar_summary
       ) {
         return current;
       }
@@ -148,8 +132,6 @@ export class InstructorCalendarsService {
       metadata: {
         from: from.googleCalendarId,
         to: to.googleCalendarId,
-        fromStatus: from.matchStatus,
-        toStatus: to.matchStatus,
         fromSummary: from.calendarSummary,
         toSummary: to.calendarSummary,
       },
@@ -162,63 +144,10 @@ export class InstructorCalendarsService {
       this.repo.list(),
     ]);
     const google = await this.loadCalendars();
-    return buildOverview(instructors, links, google.calendars, {
+    return buildOverview(instructors, links, {
       connected: google.connected,
       error: google.error,
     });
-  }
-
-  async suggest(actor: AuditActor): Promise<SuggestCalendarsResult> {
-    if (!(await this.google.isConnected())) {
-      throw new GoogleNotConnectedError();
-    }
-    const calendars = await this.google.listCalendars();
-    const [instructors, links] = await Promise.all([
-      this.repo.listInstructors(),
-      this.repo.list(),
-    ]);
-    const before = buildOverview(instructors, links, calendars, {
-      connected: true,
-      error: null,
-    });
-    const stored: { instructorId: string; googleCalendarId: string }[] = [];
-    for (const entry of before.instructors) {
-      if (entry.googleCalendarId || !entry.suggestion) {
-        continue;
-      }
-      const inserted = await this.repo.insertIfAbsent(
-        entry.instructorId,
-        {
-          google_calendar_id: entry.suggestion.calendarId,
-          calendar_summary: entry.suggestion.calendarSummary,
-          match_status: 'suggested',
-        },
-        actor.userId ?? null,
-      );
-      if (inserted) {
-        stored.push({
-          instructorId: entry.instructorId,
-          googleCalendarId: entry.suggestion.calendarId,
-        });
-      }
-    }
-    if (stored.length > 0) {
-      await this.audit.record({
-        action: AUDIT_ACTIONS.instructorGoogleCalendarSuggest,
-        actor: { ...actor, role: 'admin' },
-        metadata: { suggested: stored },
-      });
-    }
-    const overview = buildOverview(
-      instructors,
-      await this.repo.list(),
-      calendars,
-      {
-        connected: true,
-        error: null,
-      },
-    );
-    return { suggested: stored.length, overview };
   }
 
   private async loadCalendars(): Promise<{
@@ -262,7 +191,6 @@ function toCalendar(
     instructorId,
     googleCalendarId: row?.google_calendar_id ?? null,
     calendarSummary: row?.calendar_summary ?? null,
-    matchStatus: row?.match_status ?? null,
     updatedAt: row?.updated_at ?? null,
   };
 }
@@ -270,37 +198,18 @@ function toCalendar(
 function buildOverview(
   instructors: CalendarInstructorRow[],
   links: InstructorCalendarRow[],
-  calendars: GoogleCalendar[],
   google: InstructorCalendarsOverview['google'],
 ): InstructorCalendarsOverview {
   const linkByInstructor = new Map(links.map((l) => [l.instructor_id, l]));
-  const owners = new Map(
-    links.map((l) => [l.google_calendar_id, l.instructor_id]),
-  );
-  const proposals = proposeCalendarMatches(
-    instructors.map((i) => ({
-      id: i.id,
-      email: i.email,
-      displayNameEn: i.display_name_en,
-      displayNameZh: i.display_name_zh,
-    })),
-    calendars,
-    owners,
-  );
   return {
     google,
-    instructors: instructors.map((i) => {
-      const proposal = proposals.get(i.id);
-      return {
-        ...toCalendar(i.id, linkByInstructor.get(i.id) ?? null),
-        displayNameEn: i.display_name_en,
-        displayNameZh: i.display_name_zh,
-        email: i.email,
-        approvalStatus: i.approval_status,
-        isActive: i.is_active,
-        candidates: proposal?.candidates ?? [],
-        suggestion: proposal?.suggestion ?? null,
-      };
-    }),
+    instructors: instructors.map((i) => ({
+      ...toCalendar(i.id, linkByInstructor.get(i.id) ?? null),
+      displayNameEn: i.display_name_en,
+      displayNameZh: i.display_name_zh,
+      email: i.email,
+      approvalStatus: i.approval_status,
+      isActive: i.is_active,
+    })),
   };
 }

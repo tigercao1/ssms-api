@@ -24,6 +24,8 @@ import { MailerService } from '../mailer/mailer.service';
 import type { EmailTemplateVars } from '../mailer/mailer.types';
 import { AdminRepository } from './admin.repository';
 import {
+  AdminInstructorListRecord,
+  AdminInstructorListRow,
   AdminInstructorRecord,
   AdminInstructorRow,
   CreateReferenceInput,
@@ -45,7 +47,7 @@ import { CreateReferenceDto } from './dto/create-reference.dto';
 import { INSTRUCTOR_LIST_DEFAULT_LIMIT } from './dto/list-instructors-query.dto';
 
 export interface AdminInstructorPage {
-  instructors: AdminInstructorRecord[];
+  instructors: AdminInstructorListRecord[];
   total: number;
 }
 
@@ -130,7 +132,7 @@ export class AdminService {
         ? undefined
         : { limit: size, offset: pageOffset(page ?? 1, size) },
     );
-    return { instructors: rows.map((row) => this.toRecord(row)), total };
+    return { instructors: rows.map((row) => this.toListRecord(row)), total };
   }
 
   /** Fetch a single instructor's core record (admin detail). */
@@ -609,6 +611,14 @@ export class AdminService {
     id: string,
   ): NotFoundException {
     return new NotFoundException(`No '${slug}' entry with id '${id}'`);
+  }
+
+  private toListRecord(row: AdminInstructorListRow): AdminInstructorListRecord {
+    const { instructor_calendars: calendar, ...instructor } = row;
+    return {
+      ...this.toRecord(instructor),
+      calendarConnected: calendar !== null,
+    };
   }
 
   private toRecord(row: AdminInstructorRow): AdminInstructorRecord {

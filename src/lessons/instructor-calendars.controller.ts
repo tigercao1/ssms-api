@@ -3,12 +3,9 @@ import {
   Controller,
   Get,
   Headers,
-  HttpCode,
-  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
-  Post,
   UseFilters,
   UseGuards,
 } from '@nestjs/common';
@@ -23,7 +20,6 @@ import {
   type InstructorCalendarsOverview,
   type InstructorGoogleCalendar,
   InstructorCalendarsService,
-  type SuggestCalendarsResult,
 } from './instructor-calendars.service';
 
 @Controller('admin')
@@ -36,15 +32,6 @@ export class InstructorCalendarsController {
   @Get('instructor-calendars')
   overview(): Promise<InstructorCalendarsOverview> {
     return this.calendars.overview();
-  }
-
-  @Post('instructor-calendars/suggest')
-  @HttpCode(HttpStatus.OK)
-  suggest(
-    @CurrentUser() user: SupabaseJwtPayload,
-    @Headers('user-agent') userAgent?: string,
-  ): Promise<SuggestCalendarsResult> {
-    return this.calendars.suggest(toActor(user, userAgent));
   }
 
   @Patch('instructor-calendars/:instructorId')
@@ -73,10 +60,7 @@ export class InstructorCalendarsController {
   ): Promise<InstructorGoogleCalendar> {
     return this.calendars.set(
       id,
-      {
-        googleCalendarId: dto.googleCalendarId,
-        matchStatus: dto.matchStatus,
-      },
+      { googleCalendarId: dto.googleCalendarId },
       toActor(user, userAgent),
     );
   }

@@ -13,6 +13,7 @@ import {
   BEN_CAL,
   BEN_ID,
   BLUE_ID,
+  CAL_CAL,
   CAL_ID,
   DEV_ID,
   EVA_ID,
@@ -362,7 +363,7 @@ describe('booking admin HTTP', () => {
         expect.arrayContaining([
           expect.objectContaining({
             instructorId: CAL_ID,
-            reason: 'calendar_not_confirmed',
+            reason: 'calendar_not_writable',
           }),
           expect.objectContaining({
             instructorId: DEV_ID,
@@ -381,6 +382,27 @@ describe('booking admin HTTP', () => {
         '2026-12-12T13:00:00.000Z',
         '2026-12-12T23:00:00.000Z',
       );
+    });
+
+    it('offers any linked calendar that Google can write to', async () => {
+      await ctx.app.close();
+      ctx = await build(
+        fakeBookingGoogle({
+          calendars: [
+            { id: AMY_CAL, summary: 'Amy', accessRole: 'owner' },
+            { id: CAL_CAL, summary: 'Cal', accessRole: 'writer' },
+          ],
+        }),
+      );
+      const res = await get(
+        `date=2026-12-12&lessonTypeId=${PRIVATE_1H}&instructorIds=${CAL_ID}`,
+      ).expect(200);
+      expect(
+        avail(res).instructors.map(
+          (i: { instructorId: string }) => i.instructorId,
+        ),
+      ).toEqual([CAL_ID]);
+      expect(avail(res).unavailable).toEqual([]);
     });
 
     it('reports requested instructors that are inactive or have no calendar', async () => {
@@ -524,7 +546,7 @@ describe('booking admin HTTP', () => {
           }),
           expect.objectContaining({
             instructorId: CAL_ID,
-            reason: 'calendar_not_confirmed',
+            reason: 'google_not_connected',
           }),
         ]),
       );
@@ -816,11 +838,30 @@ describe('booking admin HTTP', () => {
       },
     );
 
-    it('needs a confirmed, writable calendar to write the event', async () => {
+    it('needs a linked, writable calendar to write the event', async () => {
       for (const instructorId of [CAL_ID, DEV_ID]) {
         const res = await post(booking({ instructorId })).expect(409);
         expect(err(res).message).toBe(CALENDAR_UNAVAILABLE);
       }
+    });
+
+    it('writes the event to any linked, writable calendar', async () => {
+      await ctx.app.close();
+      ctx = await build(
+        fakeBookingGoogle({
+          calendars: [
+            { id: AMY_CAL, summary: 'Amy', accessRole: 'owner' },
+            { id: CAL_CAL, summary: 'Cal', accessRole: 'writer' },
+          ],
+        }),
+      );
+      const res = await post(booking({ instructorId: CAL_ID })).expect(201);
+      expect(many(res)[0]).toMatchObject({
+        instructorId: CAL_ID,
+        googleCalendarId: CAL_CAL,
+        calendarSync: 'ok',
+      });
+      expect(ctx.google.insertEvent.mock.calls[0][0]).toBe(CAL_CAL);
     });
 
     it('lets the admin skip the calendar for a future lesson', async () => {

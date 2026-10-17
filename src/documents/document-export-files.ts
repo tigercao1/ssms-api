@@ -22,12 +22,16 @@ export const MANIFEST_HEADER = [
 /** Why a signed copy is left out of the ZIP. */
 export type SkipReason = 'missing' | 'too large';
 
-/** Makes `value` safe as one path segment in a ZIP on Windows, macOS and Linux. */
-export function sanitizeSegment(value: string, fallback: string): string {
-  const cleaned = value
+function clean(value: string | null | undefined): string {
+  return (value ?? '')
     .replace(UNSAFE_PATH_CHARS, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
+    .trim();
+}
+
+/** Makes `value` safe as one path segment in a ZIP on Windows, macOS and Linux. */
+export function sanitizeSegment(value: string, fallback: string): string {
+  const cleaned = clean(value)
     .slice(0, MAX_SEGMENT_LENGTH)
     .replace(/[\s.]+$/, '');
   return cleaned || fallback;
@@ -42,12 +46,12 @@ export function exportFolderName(title: string, season: string | null): string {
 }
 
 function personName(row: TemplateAssignmentDbRow): string {
-  const last = row.last_name?.trim();
-  const first = row.first_name?.trim();
+  const last = clean(row.last_name);
+  const first = clean(row.first_name);
   if (last && first) {
     return `${last}, ${first}`;
   }
-  return last || first || row.signer_name?.trim() || row.email || row.id;
+  return last || first || clean(row.signer_name) || clean(row.email) || row.id;
 }
 
 /** `<Last>, <First> - <YYYY-MM-DD>` (Toronto date of signing), without extension. */

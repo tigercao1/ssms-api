@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { InMemoryCertificationUploadsRepository } from '../../test/helpers/certification-fakes';
+import { InMemoryDocumentExportsRepository } from '../../test/helpers/document-exports-fakes';
 import {
   seasonsProviders,
   seasonsRepo,
@@ -20,6 +21,7 @@ import {
   InMemoryDocumentAssignmentsRepository,
   InMemoryDocumentSubjectsRepository,
   InMemoryDocumentTemplatesRepository,
+  InMemoryPrivateStorage,
   startDocumentsApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/documents-fakes';
@@ -39,6 +41,8 @@ import { CertificationUploadsRepository } from './certification-uploads.reposito
 import { addDays, torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentAssignmentsService } from './document-assignments.service';
+import { DocumentExportRetentionService } from './document-export-retention.service';
+import { DocumentExportsRepository } from './document-exports.repository';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentRemindersAuthGuard } from './document-reminders-auth.guard';
 import { DocumentRemindersService } from './document-reminders.service';
@@ -46,6 +50,7 @@ import { DocumentSigningService } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import { InternalDocumentsController } from './internal-documents.controller';
+import { PrivateStorageClient } from './private-storage.client';
 
 const TOKEN = 'reminders-secret-123';
 const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
@@ -75,6 +80,11 @@ async function build(env: Record<string, string | undefined> = {}) {
   const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
   const uploads = new InMemoryCertificationUploadsRepository(subjects);
+  const exportsRepo = new InMemoryDocumentExportsRepository(
+    assignments,
+    subjects,
+  );
+  const storage = new InMemoryPrivateStorage();
   const audit = recordingAudit();
   const mailer = new RecordingMailer();
   const app = await startDocumentsApp(
@@ -92,6 +102,9 @@ async function build(env: Record<string, string | undefined> = {}) {
         DocumentNotificationsService,
         DocumentRemindersService,
         CertificationExpiryService,
+        DocumentExportRetentionService,
+        { provide: DocumentExportsRepository, useValue: exportsRepo },
+        { provide: PrivateStorageClient, useValue: storage },
         { provide: CertificationUploadsRepository, useValue: uploads },
         DocumentRemindersAuthGuard,
         { provide: DocumentSigningService, useValue: {} },
@@ -119,6 +132,8 @@ async function build(env: Record<string, string | undefined> = {}) {
     audit,
     mailer,
     template,
+    exportsRepo,
+    storage,
   };
 }
 
@@ -312,6 +327,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(res.body).toEqual({
           documents: { due: 0, reminded: 0, emails: 0 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
+          exports: { expired: 0 },
         });
         await run(admin).expect(200);
       });
@@ -402,6 +418,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(res.body).toEqual({
           documents: { due: 5, reminded: 3, emails: 2 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
+          exports: { expired: 0 },
         });
         expect(
           ctx.mailer.sent.map((m) => [m.template, m.to, m.metadata]),
@@ -436,6 +453,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(again.body).toEqual({
           documents: { due: 2, reminded: 0, emails: 0 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
+          exports: { expired: 0 },
         });
         expect(ctx.mailer.sent).toHaveLength(2);
       });
@@ -463,6 +481,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(res.body).toEqual({
           documents: { due: 2, reminded: 0, emails: 0 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
+          exports: { expired: 0 },
         });
         expect(ctx.mailer.sent).toHaveLength(1);
         expect(ctx.assignments.rows.get(rowA.id)?.reminder_sent_at).toBeNull();
@@ -497,6 +516,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(res.body).toEqual({
           documents: { due: 0, reminded: 0, emails: 0 },
           certifications: { expiring: 1, expired: 1, failed: 0 },
+          exports: { expired: 0 },
         });
         expect(
           ctx.mailer.sent.map((m) => [m.template, m.to, m.idempotencyKey]),
@@ -517,6 +537,7 @@ describe('documents emails and reminders HTTP', () => {
         expect(again.body).toEqual({
           documents: { due: 0, reminded: 0, emails: 0 },
           certifications: { expiring: 0, expired: 0, failed: 0 },
+          exports: { expired: 0 },
         });
         expect(ctx.mailer.sent).toHaveLength(2);
       });
@@ -605,6 +626,66 @@ describe('documents emails and reminders HTTP', () => {
         ).resolves.toMatchObject({
           certifications: { expiring: 0, expired: 1, failed: 0 },
         });
+      });
+    });
+
+    describe('export retention', () => {
+      beforeEach(async () => {
+        ctx = await build({ DOCUMENT_REMINDERS_TOKEN: TOKEN });
+      });
+
+      it('deletes ZIPs of ready exports past expires_at and marks them expired', async () => {
+        const templateId = ctx.template.id;
+        const old = ctx.exportsRepo.seed({
+          template_id: templateId,
+          status: 'ready',
+          zip_key: 'exports/old.zip',
+          expires_at: daysAgo(0.5),
+        });
+        const fresh = ctx.exportsRepo.seed({
+          template_id: templateId,
+          status: 'ready',
+          zip_key: 'exports/fresh.zip',
+          expires_at: new Date(Date.now() + DAY).toISOString(),
+        });
+        const failed = ctx.exportsRepo.seed({
+          template_id: templateId,
+          status: 'failed',
+          expires_at: daysAgo(2),
+        });
+        ctx.storage.seed('exports/old.zip', Buffer.from('zip'));
+        ctx.storage.seed('exports/fresh.zip', Buffer.from('zip'));
+
+        const res = await run(`Bearer ${TOKEN}`).expect(200);
+
+        expect(res.body.exports).toEqual({ expired: 1 });
+        expect(ctx.storage.deleted).toEqual(['exports/old.zip']);
+        expect(ctx.storage.objects.has('exports/fresh.zip')).toBe(true);
+        expect(ctx.exportsRepo.rows.get(old.id)?.status).toBe('expired');
+        expect(ctx.exportsRepo.rows.get(fresh.id)?.status).toBe('ready');
+        expect(ctx.exportsRepo.rows.get(failed.id)?.status).toBe('failed');
+      });
+
+      it('leaves an export ready when deleting its ZIP fails, so the next run retries', async () => {
+        const row = ctx.exportsRepo.seed({
+          template_id: ctx.template.id,
+          status: 'ready',
+          zip_key: 'exports/stuck.zip',
+          expires_at: daysAgo(1),
+        });
+        jest
+          .spyOn(ctx.storage, 'delete')
+          .mockRejectedValueOnce(new Error('R2 down'));
+
+        const res = await run(`Bearer ${TOKEN}`).expect(200);
+
+        expect(res.body.exports).toEqual({ expired: 0 });
+        expect(ctx.exportsRepo.rows.get(row.id)?.status).toBe('ready');
+        expect(errorLog).toHaveBeenCalledWith(
+          expect.stringContaining('R2 down'),
+        );
+        await run(`Bearer ${TOKEN}`).expect(200);
+        expect(ctx.exportsRepo.rows.get(row.id)?.status).toBe('expired');
       });
     });
   });

@@ -40,7 +40,7 @@ export function sanitizeSegment(value: string, fallback: string): string {
 /** `<Template title> (<season>)`, or just the title without a season. */
 export function exportFolderName(title: string, season: string | null): string {
   return sanitizeSegment(
-    season ? `${title} (${season})` : title,
+    season ? `${title} (${season.replace(/\//g, '-')})` : title,
     'Signed documents',
   );
 }

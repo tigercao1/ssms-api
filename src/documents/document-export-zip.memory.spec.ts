@@ -165,7 +165,7 @@ describe('signed-copies export memory', () => {
       result = await writeSignedCopiesZip({
         storage,
         key: 'exports/memory.zip',
-        folder: 'Agreement (2026/27)',
+        folder: 'Agreement (2026-27)',
         rows,
       });
     } finally {

@@ -1,10 +1,14 @@
 import { Readable } from 'node:stream';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { ServiceUnavailableException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
@@ -169,6 +173,121 @@ describe('R2PrivateStorageClient', () => {
     const del = sent(1) as DeleteObjectCommand;
     expect(del).toBeInstanceOf(DeleteObjectCommand);
     expect(del.input).toEqual({ Bucket: 'ssms-private', Key: 'k' });
+  });
+
+  it('presigns a GET with an exact Content-Disposition when given', async () => {
+    const client = new R2PrivateStorageClient(configWith(ENV));
+    const url = new URL(
+      (
+        await client.presignGet('exports/e.zip', {
+          contentDisposition: 'attachment; filename="a-2026-27-signed.zip"',
+          filename: 'ignored.zip',
+        })
+      ).url,
+    );
+    expect(url.searchParams.get('response-content-disposition')).toBe(
+      'attachment; filename="a-2026-27-signed.zip"',
+    );
+  });
+
+  it('streams an upload as a multipart upload of 5 MiB parts', async () => {
+    send.mockImplementation((command: unknown) =>
+      Promise.resolve(
+        command instanceof CreateMultipartUploadCommand
+          ? { UploadId: 'up-1' }
+          : command instanceof UploadPartCommand
+            ? { ETag: `"${command.input.PartNumber}"` }
+            : {},
+      ),
+    );
+    const client = new R2PrivateStorageClient(configWith(ENV));
+    const body = Readable.from([Buffer.alloc(6 * 1024 * 1024, 1)]);
+    await expect(
+      client.uploadStream('exports/e.zip', body, 'application/zip'),
+    ).resolves.toBe(6 * 1024 * 1024);
+    const commands = (send.mock.calls as unknown[][]).map((c) => c[0]);
+    expect((commands[0] as CreateMultipartUploadCommand).input).toEqual({
+      Bucket: 'ssms-private',
+      Key: 'exports/e.zip',
+      ContentType: 'application/zip',
+    });
+    const parts = commands.filter(
+      (c): c is UploadPartCommand => c instanceof UploadPartCommand,
+    );
+    expect(
+      parts.map((p) => [
+        p.input.PartNumber,
+        p.input.ContentLength,
+        p.input.UploadId,
+      ]),
+    ).toEqual([
+      [1, 5 * 1024 * 1024, 'up-1'],
+      [2, 1024 * 1024, 'up-1'],
+    ]);
+    const complete = commands.at(-1) as CompleteMultipartUploadCommand;
+    expect(complete).toBeInstanceOf(CompleteMultipartUploadCommand);
+    expect(complete.input).toEqual({
+      Bucket: 'ssms-private',
+      Key: 'exports/e.zip',
+      UploadId: 'up-1',
+      MultipartUpload: {
+        Parts: [
+          { PartNumber: 1, ETag: '"1"' },
+          { PartNumber: 2, ETag: '"2"' },
+        ],
+      },
+    });
+  });
+
+  it('aborts the multipart upload when a part fails', async () => {
+    send.mockImplementation((command: unknown) =>
+      command instanceof CreateMultipartUploadCommand
+        ? Promise.resolve({ UploadId: 'up-2' })
+        : command instanceof UploadPartCommand
+          ? Promise.reject(new Error('part refused'))
+          : Promise.resolve({}),
+    );
+    const client = new R2PrivateStorageClient(configWith(ENV));
+    await expect(
+      client.uploadStream(
+        'k.zip',
+        Readable.from([Buffer.from('x')]),
+        'application/zip',
+      ),
+    ).rejects.toThrow('part refused');
+    const abort = (send.mock.calls as unknown[][]).at(-1)?.[0];
+    expect(abort).toBeInstanceOf(AbortMultipartUploadCommand);
+    expect((abort as AbortMultipartUploadCommand).input).toEqual({
+      Bucket: 'ssms-private',
+      Key: 'k.zip',
+      UploadId: 'up-2',
+    });
+  });
+
+  it('fails an upload R2 gives no upload id, and parts without an ETag', async () => {
+    send.mockResolvedValueOnce({});
+    const client = new R2PrivateStorageClient(configWith(ENV));
+    await expect(
+      client.uploadStream('k.zip', Readable.from([]), 'application/zip'),
+    ).rejects.toThrow('No upload id for k.zip');
+
+    send.mockReset();
+    send.mockImplementation((command: unknown) =>
+      Promise.resolve(
+        command instanceof CreateMultipartUploadCommand
+          ? { UploadId: 'up-3' }
+          : {},
+      ),
+    );
+    await client.uploadStream(
+      'k.zip',
+      Readable.from([Buffer.from('x')]),
+      'application/zip',
+    );
+    const complete = (send.mock.calls as unknown[][]).at(-1)?.[0];
+    expect(
+      (complete as CompleteMultipartUploadCommand).input.MultipartUpload,
+    ).toEqual({ Parts: [{ PartNumber: 1, ETag: '' }] });
   });
 
   it('byteCap passes small streams and errors past the cap', async () => {

@@ -234,22 +234,18 @@ export class InMemoryBookingRepository extends BookingRepository {
     {
       instructor_id: AMY_ID,
       google_calendar_id: AMY_CAL,
-      match_status: 'confirmed',
     },
     {
       instructor_id: BEN_ID,
       google_calendar_id: BEN_CAL,
-      match_status: 'confirmed',
     },
     {
       instructor_id: CAL_ID,
       google_calendar_id: CAL_CAL,
-      match_status: 'suggested',
     },
     {
       instructor_id: DEV_ID,
       google_calendar_id: DEV_CAL,
-      match_status: 'confirmed',
     },
   ];
   lessonTypes: BookingLessonTypeRow[] = [

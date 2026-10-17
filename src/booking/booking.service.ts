@@ -50,7 +50,7 @@ export const CLASS_NOT_FOUND = 'Class not found';
 export const CLASS_CANCELLED = 'Cancelled classes cannot be edited';
 export const INSTRUCTOR_BUSY = 'The instructor is not free at that time';
 export const CALENDAR_UNAVAILABLE =
-  'The instructor has no confirmed, writable Google calendar';
+  'The instructor has no linked, writable Google calendar';
 export const PAST_REPEAT = 'Past lessons cannot repeat';
 export const FUTURE_STATUS = 'A lesson in the future must be scheduled';
 export const NOTHING_TO_UPDATE = 'Nothing to update';
@@ -154,7 +154,7 @@ export class BookingService {
       dto.repeat?.count ?? 1,
       lessonType.duration_min,
     );
-    const calendarId = await this.confirmedCalendar(instructor.id);
+    const calendarId = await this.linkedCalendar(instructor.id);
     if (addToCalendar) {
       await this.requireWritable(calendarId);
     }
@@ -259,7 +259,7 @@ export class BookingService {
     };
     const past = next.start.getTime() < this.clock.now();
     const currentCalendar = current.google_calendar_id;
-    const calendarId = await this.confirmedCalendar(instructorId);
+    const calendarId = await this.linkedCalendar(instructorId);
     if (currentCalendar && instructorChanged) {
       await this.requireWritable(calendarId);
     }
@@ -466,11 +466,9 @@ export class BookingService {
     return ordered as BookingCustomerRow[];
   }
 
-  private async confirmedCalendar(
-    instructorId: string,
-  ): Promise<string | null> {
+  private async linkedCalendar(instructorId: string): Promise<string | null> {
     const [link] = await this.repo.listCalendarLinks([instructorId]);
-    return link?.match_status === 'confirmed' ? link.google_calendar_id : null;
+    return link?.google_calendar_id ?? null;
   }
 
   private async requireWritable(calendarId: string | null): Promise<void> {

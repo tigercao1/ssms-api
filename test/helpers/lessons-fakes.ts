@@ -239,28 +239,6 @@ export class InMemoryInstructorCalendarsRepository extends InstructorCalendarsRe
     return Promise.resolve({ ...row });
   }
 
-  insertIfAbsent(
-    instructorId: string,
-    input: InstructorCalendarInput,
-    userId: string | null,
-  ): Promise<boolean> {
-    if (this.rows.has(instructorId)) {
-      return Promise.resolve(false);
-    }
-    try {
-      this.assertCalendarFree(instructorId, input.google_calendar_id);
-    } catch {
-      return Promise.resolve(false);
-    }
-    this.rows.set(instructorId, {
-      instructor_id: instructorId,
-      ...input,
-      updated_at: this.clock.tick(),
-      updated_by: userId,
-    });
-    return Promise.resolve(true);
-  }
-
   remove(instructorId: string): Promise<void> {
     this.rows.delete(instructorId);
     return Promise.resolve();

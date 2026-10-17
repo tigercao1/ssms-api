@@ -13,6 +13,7 @@ import {
 } from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import {
+  AdminInstructorListRow,
   AdminInstructorPatch,
   AdminInstructorRow,
   AuthUserRole,
@@ -29,6 +30,8 @@ const INSTRUCTOR_COLUMNS =
   'display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
   'is_active, min_student_age, display_order, inserted_at, updated_at';
+
+const INSTRUCTOR_LIST_COLUMNS = `${INSTRUCTOR_COLUMNS}, instructor_calendars(instructor_id)`;
 
 const INSTRUCTOR_SEARCH_COLUMNS = [
   'display_name_en',
@@ -49,7 +52,7 @@ export abstract class AdminRepository {
   abstract listInstructors(
     filter: ListInstructorsFilter,
     page?: PageRequest,
-  ): Promise<RowPage<AdminInstructorRow>>;
+  ): Promise<RowPage<AdminInstructorListRow>>;
   abstract findInstructorById(id: string): Promise<AdminInstructorRow | null>;
   /** Apply a core-column patch (approval_status / is_active) and return it. */
   abstract updateInstructor(
@@ -103,16 +106,16 @@ export class SupabaseAdminRepository extends AdminRepository {
   async listInstructors(
     filter: ListInstructorsFilter,
     page?: PageRequest,
-  ): Promise<RowPage<AdminInstructorRow>> {
+  ): Promise<RowPage<AdminInstructorListRow>> {
     // Deterministic order: newest applications first, id as a stable tiebreaker.
-    const ordered = this.instructorsMatching(filter, INSTRUCTOR_COLUMNS, {
+    const ordered = this.instructorsMatching(filter, INSTRUCTOR_LIST_COLUMNS, {
       count: 'exact',
     })
       .order('inserted_at', { ascending: false })
       .order('id', { ascending: true });
     const { data, error, count } = (await (page
       ? ordered.range(page.offset, page.offset + page.limit - 1)
-      : ordered)) as CountedResult<AdminInstructorRow[]>;
+      : ordered)) as CountedResult<AdminInstructorListRow[]>;
 
     if (error?.code === PGRST_RANGE_NOT_SATISFIABLE) {
       return { rows: [], total: await this.countInstructors(filter) };

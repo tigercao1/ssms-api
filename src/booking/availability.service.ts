@@ -24,7 +24,6 @@ export const LESSON_TYPE_NOT_FOUND = 'Lesson type not found';
 export type UnavailableReason =
   | 'inactive'
   | 'no_calendar'
-  | 'calendar_not_confirmed'
   | 'calendar_not_writable'
   | 'calendar_error'
   | 'google_not_connected'
@@ -205,8 +204,6 @@ export class AvailabilityService {
         unavailable.push(unavailableFor('inactive')(instructor));
       } else if (!link) {
         unavailable.push(unavailableFor('no_calendar')(instructor));
-      } else if (link.match_status !== 'confirmed') {
-        unavailable.push(unavailableFor('calendar_not_confirmed')(instructor));
       } else {
         linked.push({ instructor, calendarId: link.google_calendar_id });
       }

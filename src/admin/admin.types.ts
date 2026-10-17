@@ -51,6 +51,10 @@ export interface AdminInstructorRow {
   updated_at: string;
 }
 
+export interface AdminInstructorListRow extends AdminInstructorRow {
+  instructor_calendars: { instructor_id: string } | null;
+}
+
 /** camelCase presenter returned to admins for list/detail/transition results. */
 export interface AdminInstructorRecord {
   id: string;
@@ -71,6 +75,10 @@ export interface AdminInstructorRecord {
   isActive: boolean;
   insertedAt: string;
   updatedAt: string;
+}
+
+export interface AdminInstructorListRecord extends AdminInstructorRecord {
+  calendarConnected: boolean;
 }
 
 /** Optional narrowing applied to `GET /admin/instructors`. */

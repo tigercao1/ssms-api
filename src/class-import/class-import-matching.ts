@@ -1,4 +1,3 @@
-import { nameKey } from '../lessons/calendar-matching';
 import { rowFields } from './class-import-csv';
 import {
   BLOCKING_PROBLEMS,
@@ -10,6 +9,13 @@ import {
 
 const MIN_NAME_KEY_LENGTH = 2;
 const MIN_PHONE_DIGITS = 7;
+
+export function nameKey(value: string | null | undefined): string {
+  return (value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+}
 
 export interface InstructorRef {
   id: string;

@@ -44,7 +44,6 @@ export interface BookingInstructorRow {
 export interface CalendarLinkRow {
   instructor_id: string;
   google_calendar_id: string;
-  match_status: 'suggested' | 'confirmed';
 }
 
 export interface BookingLessonTypeRow {
@@ -240,7 +239,7 @@ export class SupabaseBookingRepository extends BookingRepository {
     }
     const { data, error } = (await this.supabase
       .from('instructor_calendars')
-      .select('instructor_id, google_calendar_id, match_status')
+      .select('instructor_id, google_calendar_id')
       .in('instructor_id', instructorIds)) as DbResult<CalendarLinkRow[]>;
     check(error, 'list instructor calendars');
     return data ?? [];

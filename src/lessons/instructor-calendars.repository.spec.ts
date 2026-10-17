@@ -7,13 +7,11 @@ const row = {
   instructor_id: ID,
   google_calendar_id: 'eddie@example.com',
   calendar_summary: 'Eddie',
-  match_status: 'confirmed',
   updated_at: '2026-10-10T00:00:00Z',
 };
 const input = {
   google_calendar_id: 'eddie@example.com',
   calendar_summary: 'Eddie',
-  match_status: 'suggested' as const,
 };
 const fail = { data: null, error: { message: 'boom' } };
 
@@ -60,24 +58,6 @@ describe('SupabaseInstructorCalendarsRepository', () => {
     );
   });
 
-  it('inserts a suggestion only when the instructor has no row yet', async () => {
-    const { client, queries } = recordingSupabase({
-      instructor_calendars: [
-        { data: [{ instructor_id: ID }], error: null },
-        { data: [], error: null },
-        { data: null, error: { message: 'dup', code: '23505' } },
-      ],
-    });
-    const repo = new SupabaseInstructorCalendarsRepository(client);
-    await expect(repo.insertIfAbsent(ID, input, null)).resolves.toBe(true);
-    await expect(repo.insertIfAbsent(ID, input, null)).resolves.toBe(false);
-    await expect(repo.insertIfAbsent(ID, input, null)).resolves.toBe(false);
-    expect(queries[0].ops[0][2]).toEqual({
-      onConflict: 'instructor_id',
-      ignoreDuplicates: true,
-    });
-  });
-
   it('deletes the row on remove', async () => {
     const { client, queries } = recordingSupabase();
     const repo = new SupabaseInstructorCalendarsRepository(client);
@@ -99,11 +79,6 @@ describe('SupabaseInstructorCalendarsRepository', () => {
     [
       'upsert',
       (r: SupabaseInstructorCalendarsRepository) => r.upsert(ID, input, null),
-    ],
-    [
-      'insertIfAbsent',
-      (r: SupabaseInstructorCalendarsRepository) =>
-        r.insertIfAbsent(ID, input, null),
     ],
     ['remove', (r: SupabaseInstructorCalendarsRepository) => r.remove(ID)],
   ])('%s surfaces database errors', async (_name, call) => {

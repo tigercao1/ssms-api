@@ -39,7 +39,6 @@ export const AUDIT_ACTIONS = {
   googleDisconnect: 'google.disconnect',
   googleTokenInvalid: 'google.token_invalid',
   instructorGoogleCalendarUpdate: 'instructor.google_calendar_update',
-  instructorGoogleCalendarSuggest: 'instructor.google_calendar_suggest',
   lessonTypeCreate: 'lesson_type.create',
   lessonTypeUpdate: 'lesson_type.update',
   payRateCreate: 'pay_rate.create',

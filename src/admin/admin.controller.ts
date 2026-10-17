@@ -73,7 +73,7 @@ export class AdminController {
     private readonly seasons: SeasonsService,
   ) {}
 
-  /** T6.3 — list instructors of every status, optional `?status=`/`?active=`. */
+  /** T6.3 — list instructors of every status, optional `?status=`/`?active=`/`?calendarConnected=`. */
   @Get('instructors')
   async listInstructors(
     @Query() query: ListInstructorsQueryDto,
@@ -83,6 +83,7 @@ export class AdminController {
       {
         status: query.status,
         isActive: query.active,
+        calendarConnected: query.calendarConnected,
         q: query.q,
       },
       query.page,

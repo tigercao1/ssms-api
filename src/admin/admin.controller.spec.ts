@@ -67,6 +67,18 @@ describe('AdminController', () => {
     );
   });
 
+  it('GET /admin/instructors?calendarConnected= → forwards the calendar filter', async () => {
+    await controller.listInstructors(
+      { calendarConnected: false, status: 'approved' },
+      res(),
+    );
+    expect(service.listInstructors).toHaveBeenCalledWith(
+      { status: 'approved', calendarConnected: false },
+      undefined,
+      undefined,
+    );
+  });
+
   it('GET /admin/instructors?q= → forwards the search text', async () => {
     await controller.listInstructors({ q: '王' }, res());
     expect(service.listInstructors).toHaveBeenCalledWith(

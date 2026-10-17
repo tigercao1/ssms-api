@@ -85,6 +85,7 @@ export interface AdminInstructorListRecord extends AdminInstructorRecord {
 export interface ListInstructorsFilter {
   status?: ApprovalStatus;
   isActive?: boolean;
+  calendarConnected?: boolean;
   q?: string;
 }
 

@@ -66,6 +66,11 @@ class InMemoryInstructorList {
       .filter(
         (r) => filter.isActive === undefined || r.is_active === filter.isActive,
       )
+      .filter(
+        (r) =>
+          filter.calendarConnected === undefined ||
+          (r.instructor_calendars !== null) === filter.calendarConnected,
+      )
       .filter((r) => tokens.every((t) => text(r).includes(t)))
       .sort(
         (a, b) =>
@@ -157,6 +162,48 @@ describe('GET /admin/instructors', () => {
     expect(res.headers['x-total-count']).toBe('4');
   });
 
+  it('narrows to instructors with a calendar connected, with the filtered total', async () => {
+    ctx = await build(20);
+    const res = await list('?calendarConnected=true').expect(200);
+    expect(ids(res)).toEqual(newestFirst(20, 16, 12, 8, 4));
+    expect(res.headers['x-total-count']).toBe('5');
+    expect(
+      (res.body as AdminInstructorListRecord[]).every(
+        (r) => r.calendarConnected,
+      ),
+    ).toBe(true);
+  });
+
+  it('narrows to instructors without a calendar connected, with the filtered total', async () => {
+    ctx = await build(10);
+    const res = await list('?calendarConnected=false').expect(200);
+    expect(ids(res)).toEqual(newestFirst(10, 9, 7, 6, 5, 3, 2, 1));
+    expect(res.headers['x-total-count']).toBe('8');
+    expect(ctx.repo.calls[0].filter).toEqual({ calendarConnected: false });
+  });
+
+  it('pages within the calendar filter combined with status, with the filtered total', async () => {
+    ctx = await build();
+    const res = await list(
+      '?calendarConnected=false&status=pending&page=2&limit=5',
+    ).expect(200);
+    expect(ids(res)).toEqual(newestFirst(39, 33, 30, 27, 21));
+    expect(res.headers['x-total-count']).toBe('15');
+    expect(ctx.repo.calls[0]).toEqual({
+      filter: { status: 'pending', calendarConnected: false },
+      page: { limit: 5, offset: 5 },
+    });
+  });
+
+  it('answers a calendar-filtered page past the end with no rows and the filtered total', async () => {
+    ctx = await build();
+    const res = await list('?calendarConnected=true&page=2&limit=20').expect(
+      200,
+    );
+    expect(res.body).toEqual([]);
+    expect(res.headers['x-total-count']).toBe('15');
+  });
+
   it('defaults to 50 per page when only page is given', async () => {
     ctx = await build();
     const first = await list('?page=1').expect(200);
@@ -218,6 +265,9 @@ describe('GET /admin/instructors', () => {
     'limit=101',
     'limit=2.5',
     'limit=abc',
+    'calendarConnected=yes',
+    'calendarConnected=1',
+    'calendarConnected=',
   ])('rejects %s with 400', async (query) => {
     ctx = await build();
     await list(`?${query}`).expect(400);

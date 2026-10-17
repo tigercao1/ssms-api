@@ -955,6 +955,30 @@ describe('documents HTTP', () => {
         expect(ctx.audit.entries).toEqual([]);
       });
 
+      it('shows a document as completed in the list once anyone completed it, even if later archived', async () => {
+        const t = ctx.templates.seed({ status: 'retired' });
+        ctx.assignments.seed({
+          template_id: t.id,
+          subject_id: ctx.subjects.seedInstructor().id,
+          status: 'archived',
+          completed_at: '2026-10-01T00:00:00Z',
+        });
+        const list = await http()
+          .get('/admin/documents/templates')
+          .set('Authorization', admin)
+          .expect(200);
+        expect(
+          (
+            list.body as { id: string; hasCompletedAssignments: boolean }[]
+          ).find((row) => row.id === t.id),
+        ).toMatchObject({ hasCompletedAssignments: true });
+        await http()
+          .post(`/admin/documents/templates/${t.id}/source/upload-url`)
+          .set('Authorization', admin)
+          .send({ contentLength: 1000 })
+          .expect(409);
+      });
+
       it('refuses with 409 when a completion lands during the delete', async () => {
         const t = ctx.templates.seed();
         seedFiles(t.id);

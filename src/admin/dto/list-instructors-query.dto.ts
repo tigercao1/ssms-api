@@ -15,8 +15,8 @@ import type { ApprovalStatus } from '../admin.types';
 export const INSTRUCTOR_LIST_DEFAULT_LIMIT = 50;
 
 /**
- * Query string for `GET /admin/instructors` (T6.3). Both filters are optional;
- * with neither, every instructor of every status is returned.
+ * Query string for `GET /admin/instructors` (T6.3). Every filter is optional;
+ * with none, every instructor of every status is returned.
  */
 export class ListInstructorsQueryDto {
   /** Narrow by approval workflow state. */
@@ -33,6 +33,15 @@ export class ListInstructorsQueryDto {
   })
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  calendarConnected?: boolean;
 
   @IsOptional()
   @Transform(({ value }: { value: unknown }) =>

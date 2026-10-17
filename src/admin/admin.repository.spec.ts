@@ -226,6 +226,70 @@ describe('SupabaseAdminRepository', () => {
     ]);
   });
 
+  it.each([
+    [true, ['not', 'instructor_calendars', 'is', null]],
+    [false, ['is', 'instructor_calendars', null]],
+  ])(
+    'listInstructors with calendarConnected=%s filters on the calendar embed',
+    async (calendarConnected, calendarOp) => {
+      const { client, queries } = recordingSupabase({
+        instructors: { data: [], error: null, count: 0 },
+      });
+      await new SupabaseAdminRepository(client).listInstructors(
+        { status: 'approved', calendarConnected },
+        { limit: 50, offset: 0 },
+      );
+      expect(queries[0].ops).toEqual([
+        [
+          'select',
+          expect.stringMatching(/, instructor_calendars\(instructor_id\)$/),
+          { count: 'exact' },
+        ],
+        ['eq', 'approval_status', 'approved'],
+        calendarOp,
+        ['order', 'inserted_at', { ascending: false }],
+        ['order', 'id', { ascending: true }],
+        ['range', 0, 49],
+      ]);
+    },
+  );
+
+  it.each([
+    [true, ['not', 'instructor_calendars', 'is', null]],
+    [false, ['is', 'instructor_calendars', null]],
+  ])(
+    'listInstructors counts a past-the-end page with calendarConnected=%s through the calendar embed',
+    async (calendarConnected, calendarOp) => {
+      const { client, queries } = recordingSupabase({
+        instructors: [
+          {
+            data: null,
+            error: {
+              message: 'Requested range not satisfiable',
+              code: 'PGRST103',
+            },
+          },
+          { data: null, error: null, count: 3 },
+        ],
+      });
+      await expect(
+        new SupabaseAdminRepository(client).listInstructors(
+          { isActive: true, calendarConnected },
+          { limit: 50, offset: 500 },
+        ),
+      ).resolves.toEqual({ rows: [], total: 3 });
+      expect(queries[1].ops).toEqual([
+        [
+          'select',
+          'id, instructor_calendars(instructor_id)',
+          { count: 'exact', head: true },
+        ],
+        ['eq', 'is_active', true],
+        calendarOp,
+      ]);
+    },
+  );
+
   it('listInstructors surfaces a failed past-the-end count as 500', async () => {
     const { client } = recordingSupabase({
       instructors: [

@@ -31,7 +31,9 @@ const INSTRUCTOR_COLUMNS =
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
   'is_active, min_student_age, display_order, inserted_at, updated_at';
 
-const INSTRUCTOR_LIST_COLUMNS = `${INSTRUCTOR_COLUMNS}, instructor_calendars(instructor_id)`;
+const INSTRUCTOR_CALENDAR_EMBED = 'instructor_calendars(instructor_id)';
+
+const INSTRUCTOR_LIST_COLUMNS = `${INSTRUCTOR_COLUMNS}, ${INSTRUCTOR_CALENDAR_EMBED}`;
 
 const INSTRUCTOR_SEARCH_COLUMNS = [
   'display_name_en',
@@ -131,7 +133,11 @@ export class SupabaseAdminRepository extends AdminRepository {
   private async countInstructors(
     filter: ListInstructorsFilter,
   ): Promise<number> {
-    const { error, count } = (await this.instructorsMatching(filter, 'id', {
+    const columns =
+      filter.calendarConnected === undefined
+        ? 'id'
+        : `id, ${INSTRUCTOR_CALENDAR_EMBED}`;
+    const { error, count } = (await this.instructorsMatching(filter, columns, {
       count: 'exact',
       head: true,
     })) as CountedResult<null>;
@@ -155,6 +161,12 @@ export class SupabaseAdminRepository extends AdminRepository {
     }
     if (filter.isActive !== undefined) {
       query = query.eq('is_active', filter.isActive);
+    }
+    if (filter.calendarConnected === true) {
+      query = query.not('instructor_calendars', 'is', null);
+    }
+    if (filter.calendarConnected === false) {
+      query = query.is('instructor_calendars', null);
     }
     for (const token of searchTokens(filter.q)) {
       query = query.or(ilikeAny(INSTRUCTOR_SEARCH_COLUMNS, token));

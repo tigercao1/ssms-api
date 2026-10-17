@@ -86,7 +86,6 @@ export interface RegisterInput {
   locationId: string | null;
   locationOther: string | null;
   students: InsuranceStudent[] | null;
-  topUp: boolean;
   idempotencyKey: string;
   actor: string | null;
 }
@@ -95,13 +94,10 @@ export type RegisterOutcome =
   | { outcome: 'created' | 'existing'; id: string }
   | { outcome: 'no_season' }
   | {
-      outcome: 'cap_reached';
+      outcome: 'already_covered' | 'already_has_pass';
       season_key: string;
-      list_cents: number;
       owed_cents: number;
-      top_up_cents: number;
-    }
-  | { outcome: 'already_covered'; season_key: string; owed_cents: number };
+    };
 
 export interface InsuranceRecordFilter {
   seasonKey: string;
@@ -127,6 +123,7 @@ export abstract class LessonInsuranceRepository {
   abstract instructorByAuthUser(
     authUserId: string,
   ): Promise<InsuranceInstructorRow | null>;
+  abstract instructorById(id: string): Promise<InsuranceInstructorRow | null>;
   abstract register(input: RegisterInput): Promise<RegisterOutcome>;
   abstract findRecord(id: string): Promise<AdminInsuranceRecordRow | null>;
   abstract recordsFor(
@@ -165,6 +162,16 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
     return data;
   }
 
+  async instructorById(id: string): Promise<InsuranceInstructorRow | null> {
+    const { data, error } = (await this.supabase
+      .from('instructors')
+      .select(INSURANCE_INSTRUCTOR_COLUMNS)
+      .eq('id', id)
+      .maybeSingle()) as DbResult<InsuranceInstructorRow>;
+    check(error, 'load instructor');
+    return data;
+  }
+
   async register(input: RegisterInput): Promise<RegisterOutcome> {
     const { data, error } = (await this.supabase.rpc(
       'lesson_insurance_register',
@@ -177,7 +184,7 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
         p_location_id: input.locationId,
         p_location_other: input.locationOther,
         p_students: input.students,
-        p_top_up: input.topUp,
+        p_top_up: false,
         p_idempotency_key: input.idempotencyKey,
         p_actor: input.actor,
       },

@@ -80,20 +80,14 @@ begin
     raise exception 'owed should be 38000, got %', pg_temp.owed(a, '2026/27');
   end if;
 
-  r := pg_temp.lesson(a, '2027-02-01', 1, 2);
-  if r ->> 'outcome' <> 'cap_reached' or (r ->> 'list_cents')::int <> 2000
-     or (r ->> 'owed_cents')::int <> 38000 or (r ->> 'top_up_cents')::int <> 2000 then
-    raise exception '380 owed + 20 list should be cap_reached with a 20 top-up: %', r;
-  end if;
-  if pg_temp.owed(a, '2026/27') <> 38000 then
-    raise exception 'cap_reached created a record';
-  end if;
-
-  r := pg_temp.lesson(a, '2027-02-01', 1, 2, true);
+  r := pg_temp.lesson(a, '2027-02-01', 2, 2);
   rec := pg_temp.rec(r);
-  if rec.amount_cents <> 2000 or rec.list_cents <> 2000 or rec.coverage <> 'cap_top_up'
-     or rec.payment_status <> 'unpaid' then
-    raise exception 'the top-up should be 2000 cap_top_up: %', rec;
+  if r ->> 'outcome' <> 'created' or rec.amount_cents <> 2000 or rec.list_cents <> 4000
+     or rec.coverage <> 'cap_top_up' or rec.payment_status <> 'unpaid' then
+    raise exception '380 owed + 40 list should charge the 20 remainder as cap_top_up: % %', r, rec;
+  end if;
+  if pg_temp.owed(a, '2026/27') <> 40000 then
+    raise exception 'crossing the cap should owe exactly 40000, got %', pg_temp.owed(a, '2026/27');
   end if;
 
   r := pg_temp.lesson(a, '2027-02-02', 2, 3);
@@ -133,6 +127,36 @@ begin
   rec := pg_temp.rec(r);
   if rec.amount_cents <> 0 or rec.coverage <> 'season_pass' or rec.payment_status <> 'not_required' then
     raise exception 'a lesson under a season pass should be free with season_pass coverage: %', rec;
+  end if;
+  r := pg_temp.pass(b, '2026/27');
+  if r ->> 'outcome' <> 'already_has_pass' then
+    raise exception 'a second pass should be already_has_pass: %', r;
+  end if;
+  update lesson_insurance_records
+     set payment_status = 'voided', voided_at = now(), voided_reason = 'CI',
+         voided_from_status = payment_status
+   where instructor_id = b and kind = 'lesson' and lesson_date = '2026-11-15';
+  r := pg_temp.pass(b, '2026/27');
+  if r ->> 'outcome' <> 'already_has_pass' then
+    raise exception 'a pass under the cap after a void should still be already_has_pass: %', r;
+  end if;
+  update lesson_insurance_records
+     set payment_status = 'voided', voided_at = now(), voided_reason = 'CI',
+         voided_from_status = payment_status
+   where instructor_id = b and kind = 'season_pass';
+  r := pg_temp.lesson(b, '2026-11-21', 1, 2);
+  rec := pg_temp.rec(r);
+  if rec.amount_cents <> 2000 or rec.coverage <> 'per_lesson' or rec.payment_status <> 'unpaid' then
+    raise exception 'a lesson after voiding the pass should be charged again: %', rec;
+  end if;
+  r := pg_temp.pass(b, '2026/27');
+  rec := pg_temp.rec(r);
+  if r ->> 'outcome' <> 'created' or rec.amount_cents <> 38000 then
+    raise exception 'a new pass after voiding the old one should cost 400 - owed: % %', r, rec;
+  end if;
+  if (select count(*) from lesson_insurance_records
+       where instructor_id = b and kind = 'season_pass' and payment_status <> 'voided') <> 1 then
+    raise exception 'an instructor has more than one live season pass';
   end if;
   r := pg_temp.pass(b, '2099/00');
   if r ->> 'outcome' <> 'no_season' then

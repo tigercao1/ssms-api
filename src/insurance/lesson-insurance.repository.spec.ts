@@ -29,6 +29,20 @@ describe('SupabaseLessonInsuranceRepository', () => {
     ]);
   });
 
+  it('loads the instructor by id', async () => {
+    const row = { id: ID, approval_status: 'pending' };
+    const { client, calls } = recordingPayrollSupabase({
+      instructors: ok(row),
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(repo.instructorById(ID)).resolves.toEqual(row);
+    expect(calls[0].ops).toEqual([
+      ['select', INSURANCE_INSTRUCTOR_COLUMNS],
+      ['eq', 'id', ID],
+      ['maybeSingle'],
+    ]);
+  });
+
   it('registers through the plpgsql function and keeps its error code', async () => {
     const { client, calls } = recordingPayrollSupabase({
       'rpc:lesson_insurance_register': [
@@ -47,7 +61,6 @@ describe('SupabaseLessonInsuranceRepository', () => {
       locationId: null,
       locationOther: 'Blue',
       students: [{ name: 'Ada', waiverConfirmed: true }],
-      topUp: true,
       idempotencyKey: KEY,
       actor: 'auth-1',
     };
@@ -64,7 +77,7 @@ describe('SupabaseLessonInsuranceRepository', () => {
       p_location_id: null,
       p_location_other: 'Blue',
       p_students: [{ name: 'Ada', waiverConfirmed: true }],
-      p_top_up: true,
+      p_top_up: false,
       p_idempotency_key: KEY,
       p_actor: 'auth-1',
     });

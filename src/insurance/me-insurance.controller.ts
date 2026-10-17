@@ -14,7 +14,6 @@ import { EmailVerifiedGuard } from '../auth/email-verified.guard';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
-  BuySeasonPassDto,
   InsuranceSeasonQueryDto,
   RegisterLessonDto,
 } from './dto/insurance.dto';
@@ -50,14 +49,5 @@ export class MeInsuranceController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<InsuranceRecord> {
     return respond(res, await this.insurance.registerLesson(user.sub, dto));
-  }
-
-  @Post('season-pass')
-  async seasonPass(
-    @Body() dto: BuySeasonPassDto,
-    @CurrentUser() user: SupabaseJwtPayload,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<InsuranceRecord> {
-    return respond(res, await this.insurance.buySeasonPass(user.sub, dto));
   }
 }

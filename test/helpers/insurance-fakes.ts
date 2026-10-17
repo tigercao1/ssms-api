@@ -134,6 +134,13 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     );
   }
 
+  instructorById(id: string): Promise<InsuranceInstructorRow | null> {
+    const found = this.instructors.get(id);
+    return Promise.resolve(
+      found ? { id: found.id, approval_status: found.approval_status } : null,
+    );
+  }
+
   register(input: RegisterInput): Promise<RegisterOutcome> {
     this.registerCalls.push(input);
     const idemKey = `${input.instructorId}|${input.idempotencyKey}`;
@@ -177,15 +184,6 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
           ? 'season_pass'
           : 'capped';
       } else if (owed + list >= CAP) {
-        if (!input.topUp) {
-          return Promise.resolve({
-            outcome: 'cap_reached',
-            season_key: season.key,
-            list_cents: list,
-            owed_cents: owed,
-            top_up_cents: CAP - owed,
-          });
-        }
         amount = CAP - owed;
         coverage = 'cap_top_up';
       } else {
@@ -193,6 +191,13 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
         coverage = 'per_lesson';
       }
     } else {
+      if (mine.some((r) => r.kind === 'season_pass')) {
+        return Promise.resolve({
+          outcome: 'already_has_pass',
+          season_key: season.key,
+          owed_cents: owed,
+        });
+      }
       if (owed >= CAP) {
         return Promise.resolve({
           outcome: 'already_covered',

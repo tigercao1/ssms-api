@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -14,6 +16,7 @@ import type { SeasonRow } from '../seasons/seasons.repository';
 import { SeasonsService } from '../seasons/seasons.service';
 import {
   type AdminInsuranceRecordsQueryDto,
+  type GrantSeasonPassDto,
   INSURANCE_LIST_DEFAULT_LIMIT,
 } from './dto/insurance.dto';
 import {
@@ -35,6 +38,12 @@ export const MARK_PAID_NEEDS_UNPAID =
 export const MARK_UNPAID_NEEDS_PAID = 'Only a paid record can be marked unpaid';
 export const ALREADY_VOIDED = 'This record is already voided';
 export const RECORD_CHANGED = 'This record changed; reload and try again';
+export const INSTRUCTOR_NOT_FOUND = 'Instructor not found';
+export const INSTRUCTOR_NOT_APPROVED =
+  'Only an approved instructor can be granted a season pass';
+export const NO_CURRENT_SEASON = 'No current season is set up';
+export const ALREADY_COVERED = 'This season is already covered';
+export const ALREADY_HAS_PASS = 'This instructor already has a season pass';
 
 export interface InstructorInsuranceSummary {
   instructorId: string;
@@ -45,6 +54,7 @@ export interface InstructorInsuranceSummary {
   paidCents: number;
   unpaidCents: number;
   coverage: SeasonCoverage;
+  seasonPassRecordId: string | null;
   records: number;
 }
 
@@ -94,6 +104,11 @@ export class AdminInsuranceService {
         nameZh: rows[0].instructor?.display_name_zh ?? null,
         email: rows[0].instructor?.email ?? null,
         ...totalsOf(rows),
+        seasonPassRecordId:
+          rows.find(
+            (row) =>
+              row.kind === 'season_pass' && row.payment_status !== 'voided',
+          )?.id ?? null,
         records: rows.length,
       }))
       .sort(
@@ -121,6 +136,76 @@ export class AdminInsuranceService {
       { limit, offset: pageOffset(query.page ?? 1, limit) },
     );
     return { records: rows.map(toAdminRecord), total };
+  }
+
+  async grantSeasonPass(
+    instructorId: string,
+    dto: GrantSeasonPassDto,
+    actor: AuditActor,
+  ): Promise<AdminInsuranceRecord> {
+    const instructor = await this.repo.instructorById(instructorId);
+    if (!instructor) {
+      throw new NotFoundException(INSTRUCTOR_NOT_FOUND);
+    }
+    if (instructor.approval_status !== 'approved') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'not_approved',
+        message: INSTRUCTOR_NOT_APPROVED,
+      });
+    }
+    const season = await this.seasonFor(dto.season);
+    if (!season) {
+      throw new BadRequestException(NO_CURRENT_SEASON);
+    }
+    const outcome = await this.repo.register({
+      instructorId,
+      kind: 'season_pass',
+      seasonKey: season.key,
+      lessonDate: null,
+      durationHours: null,
+      locationId: null,
+      locationOther: null,
+      students: null,
+      idempotencyKey: randomUUID(),
+      actor: actor.userId ?? null,
+    });
+    if (
+      outcome.outcome === 'already_covered' ||
+      outcome.outcome === 'already_has_pass'
+    ) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: outcome.outcome,
+        message:
+          outcome.outcome === 'already_covered'
+            ? ALREADY_COVERED
+            : ALREADY_HAS_PASS,
+        owedCents: outcome.owed_cents,
+      });
+    }
+    if (outcome.outcome !== 'created') {
+      throw new Error(`Unexpected season pass outcome ${outcome.outcome}`);
+    }
+    const created = await this.findOrThrow(outcome.id);
+    const note = dto.note ? dto.note : null;
+    await this.audit.record({
+      action: AUDIT_ACTIONS.lessonInsuranceGrantSeasonPass,
+      actor: { ...actor, role: actor.role ?? 'admin' },
+      targetType: 'lesson_insurance_record',
+      targetId: created.id,
+      metadata: {
+        recordNo: created.record_no,
+        instructorId,
+        seasonKey: created.season_key,
+        amountCents: created.amount_cents,
+        note,
+        paidOn: dto.paidOn ?? null,
+      },
+    });
+    return dto.paidOn
+      ? this.markPaid(created.id, { paidOn: dto.paidOn, note }, actor)
+      : toAdminRecord(created);
   }
 
   async markPaid(

@@ -86,13 +86,21 @@ export class RegisterLessonDto {
   idempotencyKey!: string;
 }
 
-export class BuySeasonPassDto {
+export class GrantSeasonPassDto {
   @IsOptional()
   @Matches(SEASON_KEY, { message: SEASON_MESSAGE })
   season?: string;
 
-  @IsUUID('all')
-  idempotencyKey!: string;
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @IsOptional()
+  @Matches(DATE_ONLY, { message: DATE_MESSAGE })
+  @IsISO8601({ strict: true })
+  paidOn?: string;
 }
 
 export class AdminInsuranceRecordsQueryDto extends InsuranceSeasonQueryDto {

@@ -24,8 +24,13 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AdminInsuranceController } from './admin-insurance.controller';
 import {
+  ALREADY_COVERED,
+  ALREADY_HAS_PASS,
   ALREADY_VOIDED,
   AdminInsuranceService,
+  INSTRUCTOR_NOT_APPROVED,
+  INSTRUCTOR_NOT_FOUND,
+  NO_CURRENT_SEASON,
   MARK_PAID_NEEDS_UNPAID,
   MARK_UNPAID_NEEDS_PAID,
   RECORD_CHANGED,
@@ -87,7 +92,6 @@ describe('/admin/insurance', () => {
     lessonDate: string,
     durationHours: number,
     count: number,
-    topUp = false,
   ) => {
     const outcome = await ctx.repo.register({
       instructorId,
@@ -101,7 +105,6 @@ describe('/admin/insurance', () => {
         name: `S${i}`,
         waiverConfirmed: true,
       })),
-      topUp,
       idempotencyKey: randomUUID(),
       actor: null,
     } satisfies RegisterInput);
@@ -111,6 +114,11 @@ describe('/admin/insurance', () => {
     http()
       .post(`/admin/insurance/records/${path}`)
       .set('Authorization', auth)
+      .send(body);
+  const grant = (instructorId: string, body: object = {}) =>
+    http()
+      .post(`/admin/insurance/instructors/${instructorId}/season-pass`)
+      .set('Authorization', ADMIN_AUTH)
       .send(body);
   const mine = async () =>
     (
@@ -137,6 +145,7 @@ describe('/admin/insurance', () => {
       http().post(`/admin/insurance/records/${id}/mark-paid`),
       http().post(`/admin/insurance/records/${id}/mark-unpaid`),
       http().post(`/admin/insurance/records/${id}/void`).send({ reason: 'x' }),
+      http().post(`/admin/insurance/instructors/${ADA_INSTRUCTOR}/season-pass`),
     ]) {
       await call.set('Authorization', ADA_AUTH).expect(403);
     }
@@ -148,7 +157,7 @@ describe('/admin/insurance', () => {
       await seed(BO_INSTRUCTOR, '2026-12-01', 2, 4);
       await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 1);
       for (const day of ['02', '03', '04', '05', '06']) {
-        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4, true);
+        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4);
       }
       await seed(ADA_INSTRUCTOR, '2027-12-01', 1, 1);
       const paid = [...ctx.repo.rows.values()].find(
@@ -168,6 +177,7 @@ describe('/admin/insurance', () => {
             paidCents: 0,
             unpaidCents: 40000,
             coverage: 'capped',
+            seasonPassRecordId: null,
             records: 6,
           },
           {
@@ -179,6 +189,7 @@ describe('/admin/insurance', () => {
             paidCents: 8000,
             unpaidCents: 0,
             coverage: 'none',
+            seasonPassRecordId: null,
             records: 1,
           },
         ]);
@@ -284,6 +295,166 @@ describe('/admin/insurance', () => {
     });
   });
 
+  describe('POST instructors/:instructorId/season-pass', () => {
+    it('grants 400 minus what is owed as one unpaid season pass, audited, and later lessons are free', async () => {
+      await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 1);
+      const res = await grant(ADA_INSTRUCTOR, {
+        note: ' paid up front ',
+      }).expect(201);
+      const record = res.body as AdminInsuranceRecord;
+      expect(record).toMatchObject({
+        instructorId: ADA_INSTRUCTOR,
+        kind: 'season_pass',
+        seasonKey: '2026/27',
+        listCents: 40000,
+        amountCents: 39000,
+        coverage: null,
+        paymentStatus: 'unpaid',
+        paidOn: null,
+        paidNote: null,
+        createdBy: INSURANCE_ADMIN_ID,
+        recordNo: 'INS-20261015-0002',
+      });
+      expect(ctx.audit.entries).toEqual([
+        {
+          action: 'lesson_insurance.grant_season_pass',
+          actor: { userId: INSURANCE_ADMIN_ID, role: 'admin', userAgent: null },
+          targetType: 'lesson_insurance_record',
+          targetId: record.id,
+          metadata: {
+            recordNo: 'INS-20261015-0002',
+            instructorId: ADA_INSTRUCTOR,
+            seasonKey: '2026/27',
+            amountCents: 39000,
+            note: 'paid up front',
+            paidOn: null,
+          },
+        },
+      ]);
+      const passes = () =>
+        [...ctx.repo.rows.values()].filter(
+          (r) => r.instructor_id === ADA_INSTRUCTOR && r.kind === 'season_pass',
+        );
+      expect(passes()).toHaveLength(1);
+      await grant(ADA_INSTRUCTOR).expect(409, {
+        statusCode: 409,
+        code: 'already_has_pass',
+        message: ALREADY_HAS_PASS,
+        owedCents: 40000,
+      });
+      expect(passes()).toHaveLength(1);
+      expect(await mine()).toMatchObject({
+        owedCents: 40000,
+        coverage: 'season_pass',
+      });
+      const free = await seed(ADA_INSTRUCTOR, '2026-12-02', 2, 3);
+      expect(ctx.repo.rows.get(free)).toMatchObject({
+        amount_cents: 0,
+        coverage: 'season_pass',
+        payment_status: 'not_required',
+      });
+      const summary = await http()
+        .get('/admin/insurance/summary')
+        .set('Authorization', ADMIN_AUTH)
+        .expect(200);
+      expect(summary.body).toEqual([
+        expect.objectContaining({
+          instructorId: ADA_INSTRUCTOR,
+          coverage: 'season_pass',
+          seasonPassRecordId: record.id,
+        }),
+      ]);
+    });
+
+    it('marks the pass paid in the same request when paidOn is given', async () => {
+      const res = await grant(BO_INSTRUCTOR, {
+        season: '2027/28',
+        paidOn: '2026-10-14',
+        note: 'e-transfer 9',
+      }).expect(201);
+      expect(res.body).toMatchObject({
+        instructorId: BO_INSTRUCTOR,
+        seasonKey: '2027/28',
+        amountCents: 40000,
+        paymentStatus: 'paid',
+        paidOn: '2026-10-14',
+        paidNote: 'e-transfer 9',
+        paidBy: INSURANCE_ADMIN_ID,
+      });
+      expect(ctx.audit.entries.map((e) => e.action)).toEqual([
+        'lesson_insurance.grant_season_pass',
+        'lesson_insurance.mark_paid',
+      ]);
+      expect(
+        [...ctx.repo.rows.values()].filter((r) => r.kind === 'season_pass'),
+      ).toHaveLength(1);
+    });
+
+    it('voiding the pass makes the next lesson charged again', async () => {
+      const { id: passId } = (await grant(ADA_INSTRUCTOR).expect(201))
+        .body as AdminInsuranceRecord;
+      await post(`${passId}/void`, { reason: 'granted by mistake' }).expect(
+        200,
+      );
+      const summary = await http()
+        .get('/admin/insurance/summary')
+        .set('Authorization', ADMIN_AUTH)
+        .expect(200);
+      expect(summary.body).toEqual([
+        expect.objectContaining({ seasonPassRecordId: null, coverage: 'none' }),
+      ]);
+      const next = await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 2);
+      expect(ctx.repo.rows.get(next)).toMatchObject({
+        amount_cents: 2000,
+        coverage: 'per_lesson',
+        payment_status: 'unpaid',
+      });
+      await grant(ADA_INSTRUCTOR).expect(201);
+    });
+
+    it('409s already_covered once the season is capped', async () => {
+      for (const day of ['01', '02', '03', '04', '05']) {
+        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4);
+      }
+      await grant(ADA_INSTRUCTOR).expect(409, {
+        statusCode: 409,
+        code: 'already_covered',
+        message: ALREADY_COVERED,
+        owedCents: 40000,
+      });
+      expect(ctx.audit.entries).toEqual([]);
+    });
+
+    it('404s an unknown instructor, 409s one not approved, and 400s a bad id, season or date', async () => {
+      await grant(randomUUID()).expect(404, {
+        statusCode: 404,
+        message: INSTRUCTOR_NOT_FOUND,
+        error: 'Not Found',
+      });
+      for (const approval of ['pending', 'rejected'] as const) {
+        ctx.repo.instructors.get(CAROL_INSTRUCTOR)!.approval_status = approval;
+        await grant(CAROL_INSTRUCTOR).expect(409, {
+          statusCode: 409,
+          code: 'not_approved',
+          message: INSTRUCTOR_NOT_APPROVED,
+        });
+      }
+      await grant('not-a-uuid').expect(400);
+      await grant(ADA_INSTRUCTOR, { season: '2099/00' }).expect(400);
+      await grant(ADA_INSTRUCTOR, { season: 'bad' }).expect(400);
+      await grant(ADA_INSTRUCTOR, { paidOn: '2026-13-01' }).expect(400);
+      await grant(ADA_INSTRUCTOR, { idempotencyKey: randomUUID() }).expect(400);
+      expect(ctx.repo.rows.size).toBe(0);
+      await ctx.app.close();
+      ctx = await build(new InMemorySeasonsRepository([]));
+      await grant(ADA_INSTRUCTOR).expect(400, {
+        statusCode: 400,
+        message: NO_CURRENT_SEASON,
+        error: 'Bad Request',
+      });
+    });
+  });
+
   describe('mark paid / unpaid', () => {
     it('marks an unpaid record paid on today in Toronto by default, audits it, and only from unpaid', async () => {
       const id = await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 2);
@@ -350,7 +521,7 @@ describe('/admin/insurance', () => {
 
     it('refuses free records, unknown ids, bad ids and bad dates', async () => {
       for (const day of ['01', '02', '03', '04', '05']) {
-        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4, true);
+        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4);
       }
       const free = await seed(ADA_INSTRUCTOR, '2026-12-06', 1, 1);
       expect(ctx.repo.rows.get(free)?.payment_status).toBe('not_required');
@@ -388,7 +559,7 @@ describe('/admin/insurance', () => {
       const paid = await seed(ADA_INSTRUCTOR, '2026-12-01', 2, 4);
       await post(`${paid}/mark-paid`, { note: 'e-transfer' }).expect(200);
       for (const day of ['02', '03', '04', '05']) {
-        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4, true);
+        await seed(ADA_INSTRUCTOR, `2026-12-${day}`, 2, 4);
       }
       const free = await seed(ADA_INSTRUCTOR, '2026-12-06', 1, 1);
       expect((await mine()).owedCents).toBe(40000);

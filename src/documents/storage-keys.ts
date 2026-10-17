@@ -31,6 +31,8 @@ export const storageKeys = {
   /** What the instructor declared when asking for a certification upload URL, read back on confirm. */
   instructorCertificationIntent: (instructorId: string, uploadId: string) =>
     `subjects/instructor/${instructorId}/certifications/${uploadId}.intent.json`,
+  /** Bulk export ZIP of a template's signed copies, deleted after 24 hours. */
+  documentExport: (exportId: string) => `exports/${exportId}.zip`,
   /** Signed copy of a customer's assignment. */
   customerDocument: (customerId: string, assignmentId: string) =>
     `subjects/customer/${customerId}/documents/${assignmentId}.pdf`,

@@ -1,15 +1,20 @@
 import { Readable, Transform } from 'node:stream';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   type GetObjectCommandOutput,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { type MultipartTarget, uploadInParts } from './multipart-upload';
 
 export const PRIVATE_STORAGE_ENV = [
   'R2_ACCOUNT_ID',
@@ -27,6 +32,13 @@ export const DOWNLOAD_URL_TTL_SECONDS = 300;
 export interface PresignedUrl {
   url: string;
   expiresAt: string;
+}
+
+/** Options for a presigned GET. */
+export interface PresignGetInput {
+  expiresIn?: number;
+  filename?: string;
+  contentDisposition?: string;
 }
 
 /** Metadata returned by a HEAD request. */
@@ -57,10 +69,13 @@ export abstract class PrivateStorageClient {
     key: string,
     input: { contentType: string; contentLength: number; expiresIn?: number },
   ): Promise<PresignedUrl>;
-  /** Presigned GET, optionally served as an attachment named `filename`. */
+  /**
+   * Presigned GET, optionally served as an attachment named `filename`, or
+   * with the exact `contentDisposition` header when that is given.
+   */
   abstract presignGet(
     key: string,
-    input?: { expiresIn?: number; filename?: string },
+    input?: PresignGetInput,
   ): Promise<PresignedUrl>;
   /** HEAD; `null` when the object does not exist. */
   abstract head(key: string): Promise<StoredObjectHead | null>;
@@ -73,6 +88,16 @@ export abstract class PrivateStorageClient {
     body: Uint8Array,
     contentType: string,
   ): Promise<void>;
+  /**
+   * Streams `body` into `key` as a multipart upload (5 MiB parts, at most two
+   * in flight), never holding more than a few parts in memory. Aborts the
+   * upload if `body` errors. Resolves to the bytes written.
+   */
+  abstract uploadStream(
+    key: string,
+    body: Readable,
+    contentType: string,
+  ): Promise<number>;
   abstract delete(key: string): Promise<void>;
 }
 
@@ -157,7 +182,7 @@ export class R2PrivateStorageClient extends PrivateStorageClient {
 
   async presignGet(
     key: string,
-    input: { expiresIn?: number; filename?: string } = {},
+    input: PresignGetInput = {},
   ): Promise<PresignedUrl> {
     const expiresIn = input.expiresIn ?? DOWNLOAD_URL_TTL_SECONDS;
     const { client, bucket } = this.connect();
@@ -166,9 +191,11 @@ export class R2PrivateStorageClient extends PrivateStorageClient {
       new GetObjectCommand({
         Bucket: bucket,
         Key: key,
-        ResponseContentDisposition: input.filename
-          ? `attachment; filename*=UTF-8''${encodeURIComponent(input.filename)}`
-          : undefined,
+        ResponseContentDisposition:
+          input.contentDisposition ??
+          (input.filename
+            ? `attachment; filename*=UTF-8''${encodeURIComponent(input.filename)}`
+            : undefined),
       }),
       { expiresIn },
     );
@@ -230,6 +257,67 @@ export class R2PrivateStorageClient extends PrivateStorageClient {
         ContentLength: body.byteLength,
       }),
     );
+  }
+
+  uploadStream(
+    key: string,
+    body: Readable,
+    contentType: string,
+  ): Promise<number> {
+    const { client, bucket } = this.connect();
+    const target: MultipartTarget = {
+      start: async () => {
+        const res = await client.send(
+          new CreateMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            ContentType: contentType,
+          }),
+        );
+        if (!res.UploadId) {
+          throw new Error(`No upload id for ${key}`);
+        }
+        return res.UploadId;
+      },
+      uploadPart: async (uploadId, partNumber, part) => {
+        const res = await client.send(
+          new UploadPartCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            PartNumber: partNumber,
+            Body: part,
+            ContentLength: part.length,
+          }),
+        );
+        return res.ETag ?? '';
+      },
+      complete: async (uploadId, parts) => {
+        await client.send(
+          new CompleteMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            MultipartUpload: {
+              Parts: parts.map((p) => ({
+                PartNumber: p.partNumber,
+                ETag: p.etag,
+              })),
+            },
+          }),
+        );
+      },
+      abort: async (uploadId) => {
+        await client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+          }),
+        );
+      },
+    };
+    return uploadInParts(body, target);
   }
 
   async delete(key: string): Promise<void> {

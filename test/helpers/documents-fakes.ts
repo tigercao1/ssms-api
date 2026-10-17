@@ -41,6 +41,7 @@ import {
   ObjectTooLargeError,
   PrivateStorageClient,
   type PresignedUrl,
+  readAll,
   type StoredObjectHead,
 } from '../../src/documents/private-storage.client';
 import { Readable } from 'node:stream';
@@ -149,6 +150,16 @@ export class InMemoryPrivateStorage extends PrivateStorageClient {
   put(key: string, body: Uint8Array, contentType: string): Promise<void> {
     this.seed(key, body, contentType);
     return Promise.resolve();
+  }
+
+  async uploadStream(
+    key: string,
+    body: Readable,
+    contentType: string,
+  ): Promise<number> {
+    const bytes = await readAll(body);
+    this.seed(key, bytes, contentType);
+    return bytes.length;
   }
 
   delete(key: string): Promise<void> {

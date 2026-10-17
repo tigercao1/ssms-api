@@ -7,6 +7,7 @@ import { AdminCertificationUploadsController } from './admin-certification-uploa
 import { AdminCertificationUploadsService } from './admin-certification-uploads.service';
 import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
+import { AdminDocumentExportsController } from './admin-document-exports.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
 import { CertificationExpiryService } from './certification-expiry.service';
 import {
@@ -20,6 +21,13 @@ import {
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentCompletedEmailHandler } from './document-completed-email.handler';
 import { DocumentCompletedHandler } from './document-completed.handler';
+import { DocumentExportQueue } from './document-export-queue';
+import { DocumentExportRetentionService } from './document-export-retention.service';
+import {
+  DocumentExportsRepository,
+  SupabaseDocumentExportsRepository,
+} from './document-exports.repository';
+import { DocumentExportsService } from './document-exports.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentOnboardingService } from './document-onboarding.service';
 import { DocumentPublishingService } from './document-publishing.service';
@@ -51,6 +59,7 @@ import {
   controllers: [
     AdminDocumentTemplatesController,
     AdminDocumentAssignmentsController,
+    AdminDocumentExportsController,
     MeDocumentsController,
     AdminDocumentRemindersController,
     InternalDocumentsController,
@@ -71,7 +80,14 @@ import {
       provide: DocumentSubjectsRepository,
       useClass: SupabaseDocumentSubjectsRepository,
     },
+    {
+      provide: DocumentExportsRepository,
+      useClass: SupabaseDocumentExportsRepository,
+    },
     PdfWorkQueue,
+    DocumentExportQueue,
+    DocumentExportsService,
+    DocumentExportRetentionService,
     DocumentTemplatesService,
     DocumentPublishingService,
     DocumentAssignmentsService,

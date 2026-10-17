@@ -13,6 +13,8 @@ import {
 } from './certification-expiry.service';
 import { torontoToday } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
+import { DocumentExportRetentionService } from './document-export-retention.service';
+import type { DocumentExportRetentionResult } from './document-exports.types';
 import { ASSIGNMENT_NOT_FOUND } from './document-assignments.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -45,6 +47,7 @@ export interface AssignmentRemindersResult {
 export interface DailyRemindersResult {
   documents: AssignmentRemindersResult;
   certifications: CertificationExpiryResult;
+  exports: DocumentExportRetentionResult;
 }
 
 /**
@@ -61,6 +64,7 @@ export class DocumentRemindersService {
     private readonly notifications: DocumentNotificationsService,
     private readonly audit: AuditService,
     private readonly certificationExpiry: CertificationExpiryService,
+    private readonly exportRetention: DocumentExportRetentionService,
   ) {}
 
   /** Runs every daily reminder job and returns each job's counts. */
@@ -71,6 +75,7 @@ export class DocumentRemindersService {
         torontoToday(now),
         now,
       ),
+      exports: await this.exportRetention.run(now),
     };
   }
 

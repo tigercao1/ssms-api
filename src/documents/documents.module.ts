@@ -120,6 +120,7 @@ import {
     DocumentSubjectsRepository,
     PdfWorkQueue,
     DocumentAssignmentsService,
+    MeDocumentsService,
     DocumentNotificationsService,
     DocumentOnboardingService,
     CertificationExpiryService,

@@ -454,6 +454,7 @@ export interface Checklist {
   season: string | null;
   locked: boolean;
   lockReason: ChecklistLockReason | null;
+  complete: boolean;
   items: ChecklistItem[];
 }
 

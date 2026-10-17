@@ -1,9 +1,14 @@
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import {
   ADMIN_AUTH,
+  certificationUploadRow,
   INSTRUCTOR_AUTH,
   INSTRUCTOR_USER_ID,
+  InMemoryDocumentAssignmentsRepository,
+  InMemoryDocumentSubjectsRepository,
+  InMemoryDocumentTemplatesRepository,
   startDocumentsApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/documents-fakes';
@@ -14,7 +19,15 @@ import {
   InMemoryPayrollRepository,
 } from '../../test/helpers/payroll-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
+import {
+  seasonsProviders,
+  seasonsRepo,
+} from '../../test/helpers/seasons-fakes';
 import { AuditService } from '../audit/audit.service';
+import { DocumentAssignmentsRepository } from '../documents/document-assignments.repository';
+import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
+import { DocumentTemplatesRepository } from '../documents/document-templates.repository';
+import { MeDocumentsService } from '../documents/me-documents.service';
 import { MeLessonsController } from './me-lessons.controller';
 import { MeLessonsService, type MyLessonsResponse } from './me-lessons.service';
 import { addDays } from './payroll-time';
@@ -27,19 +40,38 @@ const ACTOR = { userId: null };
 async function build(status: ApprovalStatus = 'approved', now = NOW) {
   const repo = new InMemoryPayrollRepository();
   repo.addInstructorUser(INSTRUCTOR_USER_ID, ADA_ID, status);
+  const templates = new InMemoryDocumentTemplatesRepository();
+  const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
   const app = await startDocumentsApp(
     Test.createTestingModule({
       controllers: [MeLessonsController],
       providers: [
         MeLessonsService,
         PayrollService,
+        MeDocumentsService,
+        ...seasonsProviders(seasonsRepo('2025-26', '2026-27')),
+        { provide: ConfigService, useValue: { get: () => undefined } },
         { provide: PayrollRepository, useValue: repo },
+        { provide: DocumentTemplatesRepository, useValue: templates },
+        { provide: DocumentAssignmentsRepository, useValue: assignments },
+        { provide: DocumentSubjectsRepository, useValue: subjects },
         { provide: AuditService, useValue: recordingAudit() },
         { provide: PAYROLL_CLOCK, useValue: () => new Date(now) },
       ],
     }),
   );
-  return { app, repo, payroll: app.get(PayrollService) };
+  return {
+    app,
+    repo,
+    templates,
+    assignments,
+    subjects,
+    payroll: app.get(PayrollService),
+  };
 }
 
 describe('GET /me/lessons', () => {
@@ -126,6 +158,104 @@ describe('GET /me/lessons', () => {
         ['2026-01-12', 'awaiting', 1],
         ['2025-12-29', 'paid', 1],
       ]);
+    });
+  });
+
+  describe('onboarding', () => {
+    const locked = {
+      locked: true,
+      lockReason: 'onboarding_incomplete',
+      upcoming: { lessons: [], projected: [], needsRateCount: 0 },
+      periods: [],
+    };
+
+    beforeEach(async () => {
+      ctx = await build();
+      ctx.repo.addRate({ hourlyRate: 90, from: '2025-01-01' });
+      ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+      ctx.repo.addClass({ startsAt: '2026-02-05T15:00:00Z' });
+    });
+
+    const assign = (
+      status: 'assigned' | 'completed' | 'archived',
+      overrides: { required?: boolean; season?: string } = {},
+    ) =>
+      ctx.assignments.seed({
+        template_id: ctx.templates.seed({ required: overrides.required }).id,
+        subject_id: ADA_ID,
+        status,
+        ...(overrides.season ? { season: overrides.season } : {}),
+      });
+
+    const certify = (
+      review_status?: 'approved' | 'pending' | 'rejected',
+      valid_until = '2026-10-31',
+    ) => {
+      ctx.subjects.certifications.set(ADA_ID, [
+        { org: 'csia', track: 'regular', level: 2 },
+      ]);
+      if (!review_status) return;
+      ctx.subjects.uploads.push(
+        certificationUploadRow({
+          instructor_id: ADA_ID,
+          review_status,
+          valid_until,
+        }),
+      );
+    };
+
+    it('locks an approved instructor with a required document left and reads no lessons or pay', async () => {
+      assign('completed');
+      assign('assigned');
+      const classes = jest.spyOn(ctx.repo, 'classesForInstructor');
+      const lines = jest.spyOn(ctx.repo, 'linesForInstructor');
+      await expect(mine()).resolves.toEqual(locked);
+      expect(classes).not.toHaveBeenCalled();
+      expect(lines).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing', undefined, undefined],
+      ['expired', 'approved', '2026-01-19'],
+      ['rejected', 'rejected', '2026-10-31'],
+    ] as const)(
+      'locks an instructor whose certification is %s',
+      async (_name, review, validUntil) => {
+        certify(review, validUntil);
+        await expect(mine()).resolves.toEqual(locked);
+      },
+    );
+
+    it('unlocks once every required document is completed and every certification is satisfied', async () => {
+      assign('completed');
+      assign('assigned', { required: false });
+      assign('assigned', { season: '2025-26' });
+      assign('archived');
+      certify('pending', '2026-01-25');
+      const body = await mine();
+      expect(body).toMatchObject({ locked: false, lockReason: null });
+      expect(body.upcoming.lessons).toHaveLength(1);
+      expect(body.periods).toHaveLength(1);
+    });
+
+    it('unlocks without the reload once the last document is completed', async () => {
+      const last = assign('assigned');
+      await expect(mine()).resolves.toEqual(locked);
+      ctx.assignments.rows.set(last.id, {
+        ...ctx.assignments.rows.get(last.id)!,
+        status: 'completed',
+      });
+      await expect(mine()).resolves.toMatchObject({ locked: false });
+    });
+
+    it('keeps the rejected lock ahead of onboarding', async () => {
+      await ctx.app.close();
+      ctx = await build('rejected');
+      assign('assigned');
+      await expect(mine()).resolves.toMatchObject({
+        locked: true,
+        lockReason: 'rejected',
+      });
     });
   });
 

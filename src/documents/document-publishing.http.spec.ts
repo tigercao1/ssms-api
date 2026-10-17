@@ -924,6 +924,7 @@ describe('document publishing HTTP', () => {
         season: SEASON,
         locked: true,
         lockReason: 'pending_approval',
+        complete: false,
         items: [
           {
             type: 'document',
@@ -977,6 +978,7 @@ describe('document publishing HTTP', () => {
         season: SEASON,
         locked: true,
         lockReason: 'rejected',
+        complete: false,
         items: [],
       });
       const row = ctx.assignments.seed({
@@ -1010,6 +1012,7 @@ describe('document publishing HTTP', () => {
           season: SEASON,
           locked: true,
           lockReason: 'deactivated',
+          complete: false,
           items: [],
         });
         const row = ctx.assignments.seed({
@@ -1042,6 +1045,7 @@ describe('document publishing HTTP', () => {
         season: '2026/27',
         locked: true,
         lockReason: 'pending_approval',
+        complete: false,
         items: [],
       });
       ctx.templates.seed({
@@ -1092,6 +1096,7 @@ describe('document publishing HTTP', () => {
       expect(unlocked.body).toMatchObject({
         locked: false,
         lockReason: null,
+        complete: false,
         items: [
           expect.objectContaining({ assignmentId: row.id, status: 'viewed' }),
           expect.objectContaining({ type: 'certification' }),

@@ -1195,6 +1195,88 @@ describe('documents HTTP', () => {
       ]);
     });
 
+    it('is complete once every required document is completed and every certification is satisfied', async () => {
+      const { me, agreement, handbook } = await setup();
+      const optional = ctx.templates.seed({ required: false, source_key: 'k' });
+      ctx.assignments.seed({
+        template_id: agreement.id,
+        subject_id: me.id,
+        status: 'completed',
+      });
+      const toRead = ctx.assignments.seed({
+        template_id: handbook.id,
+        subject_id: me.id,
+      });
+      ctx.assignments.seed({ template_id: optional.id, subject_id: me.id });
+      ctx.assignments.seed({
+        template_id: handbook.id,
+        subject_id: me.id,
+        season: '2025-26',
+      });
+      ctx.assignments.seed({
+        template_id: agreement.id,
+        subject_id: me.id,
+        status: 'archived',
+      });
+      ctx.subjects.certifications.set(me.id, [
+        { org: 'casi', track: 'regular', level: 2 },
+        { org: 'csia', track: 'park', level: 1 },
+        { org: 'csia', track: 'regular', level: 3 },
+      ]);
+      ctx.subjects.uploads.push(
+        certificationUploadRow({
+          instructor_id: me.id,
+          org: 'casi',
+          track: 'regular',
+          review_status: 'pending',
+        }),
+        certificationUploadRow({
+          instructor_id: me.id,
+          org: 'csia',
+          track: 'park',
+          valid_until: addDays(today, 10),
+        }),
+        certificationUploadRow({
+          instructor_id: me.id,
+          org: 'csia',
+          track: 'regular',
+          valid_until: addDays(today, 400),
+        }),
+      );
+      await expect(get().expect(200)).resolves.toMatchObject({
+        body: { locked: false, complete: false },
+      });
+      ctx.assignments.rows.set(toRead.id, {
+        ...ctx.assignments.rows.get(toRead.id)!,
+        status: 'completed',
+      });
+      await expect(get().expect(200)).resolves.toMatchObject({
+        body: { locked: false, complete: true },
+      });
+    });
+
+    it.each([
+      ['missing', []],
+      ['expired', [{ valid_until: addDays(today, -1) }]],
+      ['rejected', [{ review_status: 'rejected' as const }]],
+    ])(
+      'is not complete while a certification is %s',
+      async (_name, uploads) => {
+        const { me } = await setup();
+        ctx.subjects.certifications.set(me.id, [
+          { org: 'csia', track: 'regular', level: 3 },
+        ]);
+        for (const upload of uploads) {
+          ctx.subjects.uploads.push(
+            certificationUploadRow({ instructor_id: me.id, ...upload }),
+          );
+        }
+        await expect(get().expect(200)).resolves.toMatchObject({
+          body: { locked: false, complete: false },
+        });
+      },
+    );
+
     it('uses CURRENT_SEASON when set', async () => {
       const { me, agreement } = await setup({ CURRENT_SEASON: '2027-28' });
       ctx.assignments.seed({ template_id: agreement.id, subject_id: me.id });
@@ -1203,6 +1285,7 @@ describe('documents HTTP', () => {
         season: '2027-28',
         locked: false,
         lockReason: null,
+        complete: true,
         items: [],
       });
     });
@@ -1216,6 +1299,7 @@ describe('documents HTTP', () => {
         season: '2026-27',
         locked: false,
         lockReason: null,
+        complete: true,
         items: [],
       });
       expect(warn).toHaveBeenCalledWith(
@@ -1230,6 +1314,7 @@ describe('documents HTTP', () => {
         season: null,
         locked: false,
         lockReason: null,
+        complete: true,
         items: [],
       });
     });

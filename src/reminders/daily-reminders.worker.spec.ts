@@ -39,9 +39,11 @@ import { DocumentTemplatesRepository } from '../documents/document-templates.rep
 import { InternalDocumentsController } from '../documents/internal-documents.controller';
 import { MailerService } from '../mailer/mailer.service';
 import { SeasonsRepository } from '../seasons/seasons.repository';
+import { SeasonsService } from '../seasons/seasons.service';
 import { DailyReminderRunsRepository } from './daily-reminder-runs.repository';
 import {
   DailyRemindersWorker,
+  REMINDERS_HEARTBEAT_MS,
   REMINDERS_LEASE_SECONDS,
   REMINDERS_TICK_MS,
   remindersHour,
@@ -56,6 +58,17 @@ const TORONTO_8AM = new Date('2026-10-17T12:00:00Z');
 const TORONTO_10_59 = new Date('2026-10-17T14:59:59Z');
 const TORONTO_11AM = new Date('2026-10-17T15:00:00Z');
 const ON = { REMINDERS_SCHEDULE_ENABLED: 'true' };
+
+const pending: (() => void)[] = [];
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  pending.push(resolve);
+  return { promise, resolve };
+}
 
 async function build(
   env: Record<string, string | undefined> = ON,
@@ -143,6 +156,16 @@ async function build(
     invites,
     mailer,
     assignments,
+    subjects,
+    otherMachine: () =>
+      new DailyRemindersWorker(
+        app.get(ConfigService),
+        runs,
+        app.get(DocumentRemindersService),
+        app.get(CertificationExpiryService),
+        app.get(InviteRemindersService),
+        app.get(SeasonsService),
+      ),
     certifications: app.get(CertificationExpiryService),
     documents: app.get(DocumentRemindersService),
     seasons: app.get(SeasonsRepository),
@@ -184,6 +207,7 @@ describe('DailyRemindersWorker', () => {
   });
 
   afterEach(async () => {
+    pending.splice(0).forEach((resolve) => resolve());
     await ctx?.app.close();
     ctx = undefined;
     jest.useRealTimers();
@@ -562,11 +586,270 @@ describe('DailyRemindersWorker', () => {
     );
   });
 
+  describe('lease', () => {
+    const pauseOnInstructorLookup = (
+      c: NonNullable<typeof ctx>,
+      call: number,
+    ) => {
+      const reached = deferred();
+      const release = deferred();
+      const findInstructor = c.subjects.findInstructor.bind(
+        c.subjects,
+      ) as typeof c.subjects.findInstructor;
+      let calls = 0;
+      jest
+        .spyOn(c.subjects, 'findInstructor')
+        .mockImplementation(async (id) => {
+          calls += 1;
+          if (calls === call) {
+            reached.resolve();
+            await release.promise;
+          }
+          return findInstructor(id);
+        });
+      return { reached: reached.promise, release: release.resolve };
+    };
+
+    it('renews its lease while it works, so no other machine takes over while it is alive', async () => {
+      ctx = await build();
+      ctx.seedAll();
+      const renew = jest.spyOn(ctx.runs, 'renew');
+      const pause = pauseOnInstructorLookup(ctx, 1);
+
+      const original = ctx.worker.tick();
+      await pause.reached;
+      await jest.advanceTimersByTimeAsync(45 * MINUTE);
+      expect(renew).toHaveBeenCalled();
+      await expect(ctx.otherMachine().tick()).resolves.toEqual({
+        outcome: 'skipped',
+      });
+
+      pause.release();
+      await expect(original).resolves.toMatchObject({ outcome: 'ran' });
+      expect(ctx.templatesSent()).toEqual([
+        'certification.expiring',
+        'documents.reminder',
+        'invite.reminder',
+      ]);
+      expect(ctx.runs.runs.get('2026-10-17')?.attempts).toBe(1);
+
+      const renewals = renew.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(4 * REMINDERS_HEARTBEAT_MS);
+      expect(renew).toHaveBeenCalledTimes(renewals);
+    });
+
+    it('leaves one sender when another machine takes over while the original is still running', async () => {
+      ctx = await build();
+      ctx.seedDueDocument();
+      ctx.seedDueDocument();
+      ctx.seedExpiringCertification();
+      ctx.seedDueInvite();
+      const runCertifications = jest.spyOn(ctx.certifications, 'run');
+      const remindInvites = jest.spyOn(
+        ctx.app.get(InviteRemindersService),
+        'remind',
+      );
+      const pause = pauseOnInstructorLookup(ctx, 2);
+
+      const original = ctx.worker.tick();
+      await pause.reached;
+      expect(ctx.mailer.sent).toHaveLength(1);
+
+      jest.setSystemTime(TORONTO_11AM.getTime() + 31 * MINUTE);
+      await expect(ctx.otherMachine().tick()).resolves.toMatchObject({
+        outcome: 'ran',
+      });
+      const sentByTakeover = ctx.mailer.sent.length;
+
+      pause.release();
+      await expect(original).resolves.toEqual({
+        outcome: 'lost',
+        day: '2026-10-17',
+      });
+      expect(ctx.mailer.sent).toHaveLength(sentByTakeover);
+      expect(ctx.templatesSent()).toEqual([
+        'certification.expiring',
+        'documents.reminder',
+        'documents.reminder',
+        'invite.reminder',
+      ]);
+      expect(
+        new Set(ctx.mailer.sentOf('documents.reminder').map((m) => m.metadata))
+          .size,
+      ).toBe(2);
+      expect(runCertifications).toHaveBeenCalledTimes(1);
+      expect(remindInvites).toHaveBeenCalledTimes(1);
+      expect(ctx.runs.runs.get('2026-10-17')).toMatchObject({ attempts: 2 });
+    });
+
+    it('stops before its next email once it has lost the lease', async () => {
+      ctx = await build();
+      ctx.seedDueDocument();
+      ctx.seedDueDocument();
+      ctx.seedExpiringCertification();
+      ctx.seedDueInvite();
+      const runs = ctx.runs;
+      const send = ctx.mailer.send.bind(ctx.mailer) as RecordingMailer['send'];
+      jest.spyOn(ctx.mailer, 'send').mockImplementation(async (request) => {
+        const outcome = await send(request);
+        runs.expireLease('2026-10-17');
+        await runs.tryStart('2026-10-17', REMINDERS_LEASE_SECONDS);
+        return outcome;
+      });
+
+      await expect(ctx.worker.tick()).resolves.toEqual({
+        outcome: 'lost',
+        day: '2026-10-17',
+      });
+      expect(ctx.templatesSent()).toEqual(['documents.reminder']);
+      expect(ctx.runs.runs.get('2026-10-17')?.finished).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        'Daily reminders for 2026-10-17 stopped: its lease was lost or could not be renewed',
+      );
+      expect(summaries()).toEqual([]);
+    });
+
+    it.each([
+      ['certifications', 'certification.expiring'],
+      ['invites', 'invite.reminder'],
+    ])(
+      'stops its %s before the next email once it has lost the lease',
+      async (_part, template) => {
+        ctx = await build();
+        if (template === 'invite.reminder') {
+          ctx.seedDueInvite();
+          ctx.seedDueInvite();
+        } else {
+          ctx.seedExpiringCertification();
+          ctx.seedExpiringCertification();
+        }
+        const runs = ctx.runs;
+        const send = ctx.mailer.send.bind(
+          ctx.mailer,
+        ) as RecordingMailer['send'];
+        jest.spyOn(ctx.mailer, 'send').mockImplementation(async (request) => {
+          const outcome = await send(request);
+          runs.expireLease('2026-10-17');
+          await runs.tryStart('2026-10-17', REMINDERS_LEASE_SECONDS);
+          return outcome;
+        });
+
+        await expect(ctx.worker.tick()).resolves.toMatchObject({
+          outcome: 'lost',
+        });
+        expect(ctx.templatesSent()).toEqual([template]);
+      },
+    );
+
+    it('stops without sending when the lease cannot be renewed', async () => {
+      ctx = await build();
+      ctx.seedAll();
+      jest.spyOn(ctx.runs, 'renew').mockRejectedValue(new Error('db down'));
+
+      await expect(ctx.worker.tick()).resolves.toEqual({
+        outcome: 'lost',
+        day: '2026-10-17',
+      });
+      expect(ctx.mailer.sent).toEqual([]);
+    });
+  });
+
+  describe('document reminder claims', () => {
+    it('does not remind a document again the next day when its stamp failed after the email went out', async () => {
+      ctx = await build();
+      const row = ctx.seedDueDocument();
+      jest
+        .spyOn(ctx.assignments, 'update')
+        .mockRejectedValueOnce(new Error('connection reset'));
+
+      await ctx.worker.tick();
+      expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(1);
+      expect(ctx.assignments.rows.get(row.id)?.reminder_sent_at).toBeNull();
+
+      for (let day = 1; day <= 6; day++) {
+        jest.setSystemTime(TORONTO_11AM.getTime() + day * DAY);
+        await expect(ctx.worker.tick()).resolves.toMatchObject({
+          outcome: 'ran',
+          summary: { documents: { ok: true, result: { emails: 0 } } },
+        });
+      }
+      expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(1);
+
+      jest.setSystemTime(TORONTO_11AM.getTime() + 7 * DAY);
+      await ctx.worker.tick();
+      expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(2);
+      expect(ctx.assignments.rows.get(row.id)?.reminder_sent_at).toBe(
+        new Date(TORONTO_11AM.getTime() + 7 * DAY).toISOString(),
+      );
+    });
+
+    it('retries a document on the next day when its email failed', async () => {
+      ctx = await build();
+      const row = ctx.seedDueDocument();
+      ctx.mailer.outcome = 'failed';
+      await ctx.worker.tick();
+      expect(ctx.assignments.rows.get(row.id)?.reminder_sent_at).toBeNull();
+      expect(ctx.assignments.reminderClaims.has(row.id)).toBe(false);
+
+      ctx.mailer.outcome = 'sent';
+      jest.setSystemTime(TORONTO_11AM.getTime() + DAY);
+      await expect(ctx.worker.tick()).resolves.toMatchObject({
+        summary: { documents: { ok: true, result: { emails: 1 } } },
+      });
+      expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(2);
+      expect(ctx.assignments.rows.get(row.id)?.reminder_sent_at).toBe(
+        new Date(TORONTO_11AM.getTime() + DAY).toISOString(),
+      );
+    });
+  });
+
   describe('with the manual POST /internal/documents/reminders', () => {
     const post = () =>
       request(ctx!.app.getHttpServer())
         .post('/internal/documents/reminders')
         .set('Authorization', `Bearer ${TOKEN}`);
+
+    it('does not remind a document the scheduler is emailing at the same moment', async () => {
+      ctx = await build();
+      ctx.seedDueDocument();
+      const reached = deferred();
+      const release = deferred();
+      const send = ctx.mailer.send.bind(ctx.mailer) as RecordingMailer['send'];
+      jest.spyOn(ctx.mailer, 'send').mockImplementationOnce(async (request) => {
+        reached.resolve();
+        await release.promise;
+        return send(request);
+      });
+
+      const scheduled = ctx.worker.tick();
+      await reached.promise;
+      const res = await post().expect(200);
+      expect(res.body).toMatchObject({
+        documents: { due: 1, reminded: 0, emails: 0 },
+      });
+
+      release.resolve();
+      await expect(scheduled).resolves.toMatchObject({
+        summary: { documents: { ok: true, result: { emails: 1 } } },
+      });
+      expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(1);
+    });
+
+    it('does not remind a document the scheduler emailed but could not stamp', async () => {
+      ctx = await build();
+      ctx.seedDueDocument();
+      jest
+        .spyOn(ctx.assignments, 'update')
+        .mockRejectedValueOnce(new Error('connection reset'));
+      await ctx.worker.tick();
+
+      jest.setSystemTime(TORONTO_11AM.getTime() + DAY);
+      const res = await post().expect(200);
+      expect(res.body).toMatchObject({
+        documents: { due: 1, reminded: 0, emails: 0 },
+      });
+      expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(1);
+    });
 
     it('does not remind a document again after the scheduler ran today', async () => {
       ctx = await build();

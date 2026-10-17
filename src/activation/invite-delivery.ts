@@ -21,6 +21,7 @@ export interface InviteDeliveryDeps {
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
   now: () => Date;
+  canSend?: () => Promise<boolean>;
 }
 
 export interface InviteDeliveryFailure {
@@ -129,6 +130,9 @@ export async function deliverInvites(
   for (const [i, invite] of candidates.entries()) {
     if (i > 0) {
       await deps.sleep(SEND_INTERVAL_MS);
+    }
+    if (deps.canSend && !(await deps.canSend())) {
+      break;
     }
     const outcome = await deliverOne(deps, invite, kind, failed);
     if (outcome === 'sent') {

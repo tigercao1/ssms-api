@@ -73,6 +73,23 @@ revoke all on function public.try_start_daily_reminders(date, int)
 grant execute on function public.try_start_daily_reminders(date, int)
   to service_role;
 
+create or replace function public.renew_daily_reminders(
+  p_token uuid,
+  p_lease_seconds int
+) returns boolean
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  update daily_reminder_runs
+     set locked_until = now() + make_interval(secs => p_lease_seconds)
+   where lock_token = p_token
+     and finished_at is null;
+  return found;
+end;
+$$;
+
 create or replace function public.finish_daily_reminders(
   p_token uuid,
   p_documents_sent int,
@@ -102,7 +119,39 @@ begin
 end;
 $$;
 
+revoke all on function public.renew_daily_reminders(uuid, int)
+  from public, anon, authenticated;
+grant execute on function public.renew_daily_reminders(uuid, int)
+  to service_role;
+
 revoke all on function public.finish_daily_reminders(uuid, int, text, int, text, int, text)
   from public, anon, authenticated;
 grant execute on function public.finish_daily_reminders(uuid, int, text, int, text, int, text)
+  to service_role;
+
+alter table document_assignments
+  add column if not exists reminder_claimed_at timestamptz;
+
+create or replace function public.claim_document_reminders(
+  p_ids uuid[],
+  p_cutoff timestamptz,
+  p_at timestamptz
+) returns setof uuid
+language sql
+security invoker
+set search_path = public
+as $$
+  update document_assignments
+     set reminder_claimed_at = p_at
+   where id = any (p_ids)
+     and status in ('assigned', 'viewed')
+     and assigned_at < p_cutoff
+     and (reminder_sent_at is null or reminder_sent_at < p_cutoff)
+     and (reminder_claimed_at is null or reminder_claimed_at < p_cutoff)
+  returning id;
+$$;
+
+revoke all on function public.claim_document_reminders(uuid[], timestamptz, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.claim_document_reminders(uuid[], timestamptz, timestamptz)
   to service_role;

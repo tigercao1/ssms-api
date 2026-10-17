@@ -74,6 +74,12 @@ export abstract class DocumentAssignmentsRepository {
     subjectType: SubjectType,
     cutoff: Date,
   ): Promise<DocumentAssignmentRow[]>;
+  abstract claimForReminder(
+    ids: string[],
+    cutoff: Date,
+    at: Date,
+  ): Promise<string[]>;
+  abstract releaseReminderClaim(ids: string[], claimedAt: Date): Promise<void>;
 }
 
 @Injectable()
@@ -251,5 +257,31 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
     >;
     check(error, 'list document assignments due for a reminder');
     return data ?? [];
+  }
+
+  async claimForReminder(
+    ids: string[],
+    cutoff: Date,
+    at: Date,
+  ): Promise<string[]> {
+    const { data, error } = (await this.supabase.rpc(
+      'claim_document_reminders',
+      {
+        p_ids: ids,
+        p_cutoff: cutoff.toISOString(),
+        p_at: at.toISOString(),
+      },
+    )) as DbResult<string[]>;
+    check(error, 'claim document reminders');
+    return data ?? [];
+  }
+
+  async releaseReminderClaim(ids: string[], claimedAt: Date): Promise<void> {
+    const { error } = await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .update({ reminder_claimed_at: null })
+      .in('id', ids)
+      .eq('reminder_claimed_at', claimedAt.toISOString());
+    check(error, 'release document reminder claims');
   }
 }

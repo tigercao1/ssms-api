@@ -265,6 +265,7 @@ export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesReposi
  */
 export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRepository {
   readonly rows = new Map<string, Omit<DocumentAssignmentRow, 'template'>>();
+  readonly reminderClaims = new Map<string, string>();
   insertManyCalls = 0;
 
   constructor(
@@ -490,6 +491,34 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
         .sort((a, b) => a.assigned_at.localeCompare(b.assigned_at))
         .map((r) => this.withTemplate(r)),
     );
+  }
+
+  claimForReminder(ids: string[], cutoff: Date, at: Date): Promise<string[]> {
+    const before = cutoff.toISOString();
+    const claimed = ids.filter((id) => {
+      const r = this.rows.get(id);
+      const claim = this.reminderClaims.get(id);
+      return (
+        r !== undefined &&
+        (r.status === 'assigned' || r.status === 'viewed') &&
+        r.assigned_at < before &&
+        (r.reminder_sent_at === null || r.reminder_sent_at < before) &&
+        (claim === undefined || claim < before)
+      );
+    });
+    for (const id of claimed) {
+      this.reminderClaims.set(id, at.toISOString());
+    }
+    return Promise.resolve(claimed);
+  }
+
+  releaseReminderClaim(ids: string[], claimedAt: Date): Promise<void> {
+    for (const id of ids) {
+      if (this.reminderClaims.get(id) === claimedAt.toISOString()) {
+        this.reminderClaims.delete(id);
+      }
+    }
+    return Promise.resolve();
   }
 }
 

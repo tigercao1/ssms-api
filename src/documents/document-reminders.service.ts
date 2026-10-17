@@ -76,13 +76,16 @@ export class DocumentRemindersService {
 
   /**
    * Emails each instructor once about all of their open assignments that are
-   * over 7 days old and were not reminded in the last 7 days, then stamps
-   * `reminder_sent_at` on those assignments. Assignments of inactive or
-   * unapproved instructors, or of templates that are not live, are left
-   * alone. A failed email leaves its assignments due, so the next run
-   * retries them.
+   * over 7 days old and were not reminded or claimed in the last 7 days:
+   * claims them, emails, then stamps `reminder_sent_at`. Assignments of
+   * inactive or unapproved instructors, or of templates that are not live,
+   * are left alone. A failed email releases its claim so the next run
+   * retries; a claim whose email may have gone out holds for 7 days.
    */
-  async remindOpenAssignments(now: Date): Promise<AssignmentRemindersResult> {
+  async remindOpenAssignments(
+    now: Date,
+    canSend?: () => Promise<boolean>,
+  ): Promise<AssignmentRemindersResult> {
     const cutoff = new Date(
       now.getTime() - REMINDER_INTERVAL_MS + REMINDER_SLACK_MS,
     );
@@ -111,16 +114,32 @@ export class DocumentRemindersService {
         ) {
           continue;
         }
+        if (canSend && !(await canSend())) {
+          break;
+        }
+        const claimedIds = new Set(
+          await this.assignments.claimForReminder(
+            rows.map((row) => row.id),
+            cutoff,
+            now,
+          ),
+        );
+        const claimed = rows.filter((row) => claimedIds.has(row.id));
+        if (claimed.length === 0) {
+          continue;
+        }
         if (
           await this.remind(
             instructor,
-            rows,
+            claimed,
             now,
             `documents.reminder/${instructorId}/${day}`,
           )
         ) {
           result.emails += 1;
-          result.reminded += rows.length;
+          result.reminded += claimed.length;
+        } else {
+          await this.assignments.releaseReminderClaim([...claimedIds], now);
         }
       } catch (err) {
         this.logger.error(

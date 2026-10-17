@@ -18,7 +18,10 @@ export class InviteRemindersService {
     private readonly config: ConfigService,
   ) {}
 
-  remind(season: string): Promise<InviteDeliveryResult> {
+  remind(
+    season: string,
+    canSend?: () => Promise<boolean>,
+  ): Promise<InviteDeliveryResult> {
     const portal = this.mailer.portalLink('/');
     if (
       this.config.get<string>('NODE_ENV') === 'production' &&
@@ -37,6 +40,7 @@ export class InviteRemindersService {
         sleep: this.sleep,
         log: () => undefined,
         now: () => new Date(),
+        canSend,
       },
       season,
     );

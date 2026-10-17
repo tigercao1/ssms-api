@@ -27,6 +27,7 @@ export const REMINDERS_HOUR_KEY = 'REMINDERS_HOUR_TORONTO';
 export const DEFAULT_REMINDERS_HOUR = 11;
 export const REMINDERS_TICK_MS = 10 * 60_000;
 export const REMINDERS_LEASE_SECONDS = 30 * 60;
+export const REMINDERS_HEARTBEAT_MS = 5 * 60_000;
 export const MAX_REMINDERS_ERROR_LENGTH = 2_000;
 
 export type ReminderPart<T> =
@@ -48,6 +49,7 @@ export interface DailyRemindersSummary {
 export type DailyRemindersTick =
   | { outcome: 'off' | 'early' | 'skipped' }
   | { outcome: 'failed'; error: string }
+  | { outcome: 'lost'; day: string }
   | { outcome: 'ran'; summary: DailyRemindersSummary };
 
 export function remindersScheduleEnabled(config: ConfigService): boolean {
@@ -145,12 +147,19 @@ export class DailyRemindersWorker implements OnModuleInit, OnModuleDestroy {
       );
       return { outcome: 'skipped' };
     }
-    const summary: DailyRemindersSummary = {
-      day,
-      documents: await part(() => this.documents.remindOpenAssignments(now)),
-      certifications: await part(() => this.certifications.run(day, now)),
-      invites: await part(() => this.remindInvites()),
-    };
+    const lease = new RunLease(this.runs, token);
+    let summary: DailyRemindersSummary | null;
+    try {
+      summary = await this.runParts(day, now, lease);
+    } finally {
+      lease.stop();
+    }
+    if (!summary) {
+      this.logger.warn(
+        `Daily reminders for ${day} stopped: its lease was lost or could not be renewed`,
+      );
+      return { outcome: 'lost', day };
+    }
     this.logger.log(summaryLine(summary));
     logInviteProblems(this.logger, summary.invites);
     try {
@@ -175,12 +184,75 @@ export class DailyRemindersWorker implements OnModuleInit, OnModuleDestroy {
     return { outcome: 'ran', summary };
   }
 
-  private async remindInvites(): Promise<InviteRemindersOutcome> {
+  private async runParts(
+    day: string,
+    now: Date,
+    lease: RunLease,
+  ): Promise<DailyRemindersSummary | null> {
+    const canSend = () => lease.renew();
+    const documents = await part(() =>
+      this.documents.remindOpenAssignments(now, canSend),
+    );
+    if (!lease.holds()) {
+      return null;
+    }
+    const certifications = await part(() =>
+      this.certifications.run(day, now, canSend),
+    );
+    if (!lease.holds()) {
+      return null;
+    }
+    const invites = await part(() => this.remindInvites(canSend));
+    if (!lease.holds()) {
+      return null;
+    }
+    return { day, documents, certifications, invites };
+  }
+
+  private async remindInvites(
+    canSend: () => Promise<boolean>,
+  ): Promise<InviteRemindersOutcome> {
     const season = await this.seasons.currentKey();
     if (!season) {
       return { season: null, delivery: null };
     }
-    return { season, delivery: await this.invites.remind(season) };
+    return { season, delivery: await this.invites.remind(season, canSend) };
+  }
+}
+
+class RunLease {
+  private held = true;
+  private readonly timer: NodeJS.Timeout;
+
+  constructor(
+    private readonly runs: DailyReminderRunsRepository,
+    private readonly token: string,
+  ) {
+    this.timer = setInterval(() => void this.renew(), REMINDERS_HEARTBEAT_MS);
+  }
+
+  holds(): boolean {
+    return this.held;
+  }
+
+  async renew(): Promise<boolean> {
+    if (this.held) {
+      let renewed: boolean;
+      try {
+        renewed = await this.runs.renew(this.token, REMINDERS_LEASE_SECONDS);
+      } catch {
+        renewed = false;
+      }
+      this.held &&= renewed;
+    }
+    if (!this.held) {
+      this.stop();
+    }
+    return this.held;
+  }
+
+  stop(): void {
+    clearInterval(this.timer);
   }
 }
 

@@ -222,6 +222,16 @@ export class InMemoryDailyReminderRunsRepository extends DailyReminderRunsReposi
     return Promise.resolve(run.token);
   }
 
+  renew(token: string, leaseSeconds: number): Promise<boolean> {
+    for (const run of this.runs.values()) {
+      if (run.token === token && run.finished === null) {
+        run.lockedUntil = Date.now() + leaseSeconds * 1000;
+        return Promise.resolve(true);
+      }
+    }
+    return Promise.resolve(false);
+  }
+
   finish(token: string, outcome: DailyReminderRunOutcome): Promise<boolean> {
     for (const run of this.runs.values()) {
       if (run.token === token) {
@@ -232,6 +242,13 @@ export class InMemoryDailyReminderRunsRepository extends DailyReminderRunsReposi
       }
     }
     return Promise.resolve(false);
+  }
+
+  expireLease(day: string): void {
+    const run = this.runs.get(day);
+    if (run) {
+      run.lockedUntil = Date.now();
+    }
   }
 
   holdLease(day: string, untilMs: number): void {

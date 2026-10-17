@@ -16,6 +16,7 @@ export interface DailyReminderRunOutcome {
 
 export abstract class DailyReminderRunsRepository {
   abstract tryStart(day: string, leaseSeconds: number): Promise<string | null>;
+  abstract renew(token: string, leaseSeconds: number): Promise<boolean>;
   abstract finish(
     token: string,
     outcome: DailyReminderRunOutcome,
@@ -37,6 +38,15 @@ export class SupabaseDailyReminderRunsRepository extends DailyReminderRunsReposi
     )) as DbResult<string>;
     check(error, 'start daily reminders');
     return data ?? null;
+  }
+
+  async renew(token: string, leaseSeconds: number): Promise<boolean> {
+    const { data, error } = (await this.supabase.rpc('renew_daily_reminders', {
+      p_token: token,
+      p_lease_seconds: leaseSeconds,
+    })) as DbResult<boolean>;
+    check(error, 'renew daily reminders');
+    return data === true;
   }
 
   async finish(

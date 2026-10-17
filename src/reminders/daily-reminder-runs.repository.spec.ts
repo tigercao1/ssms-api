@@ -51,10 +51,26 @@ describe('SupabaseDailyReminderRunsRepository', () => {
     ]);
   });
 
+  it('renews the lease through the RPC and reports whether the token still holds it', async () => {
+    const { client, queries } = recordingSupabase({
+      'rpc:renew_daily_reminders': [
+        { data: true, error: null },
+        { data: false, error: null },
+      ],
+    });
+    const repo = new SupabaseDailyReminderRunsRepository(client);
+    await expect(repo.renew('token-1', 1800)).resolves.toBe(true);
+    await expect(repo.renew('token-1', 1800)).resolves.toBe(false);
+    expect(queries[0].ops).toEqual([
+      ['rpc', { p_token: 'token-1', p_lease_seconds: 1800 }],
+    ]);
+  });
+
   it('raises database errors', async () => {
     const { client } = recordingSupabase({
       'rpc:try_start_daily_reminders': fail,
       'rpc:finish_daily_reminders': fail,
+      'rpc:renew_daily_reminders': fail,
     });
     const repo = new SupabaseDailyReminderRunsRepository(client);
     await expect(repo.tryStart('2026-10-17', 1800)).rejects.toThrow(
@@ -67,5 +83,8 @@ describe('SupabaseDailyReminderRunsRepository', () => {
         invites: { sent: 0, error: null },
       }),
     ).rejects.toThrow('Failed to record daily reminders: boom');
+    await expect(repo.renew('t', 1800)).rejects.toThrow(
+      'Failed to renew daily reminders: boom',
+    );
   });
 });

@@ -198,7 +198,6 @@ export function templateRow(
   };
 }
 
-/** A `document_template_translations` row with sensible defaults. */
 export function translationRow(
   overrides: Partial<DocumentTemplateTranslationRow> &
     Pick<DocumentTemplateTranslationRow, 'template_id' | 'language'>,

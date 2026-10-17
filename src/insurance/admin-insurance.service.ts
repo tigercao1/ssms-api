@@ -55,6 +55,7 @@ export interface InstructorInsuranceSummary {
   unpaidCents: number;
   coverage: SeasonCoverage;
   seasonPassRecordId: string | null;
+  seasonPassPaymentStatus: 'unpaid' | 'paid' | null;
   records: number;
 }
 
@@ -75,6 +76,14 @@ interface StatusChange {
 export interface MarkPaidInput {
   paidOn?: string;
   note?: string | null;
+}
+
+function passPaymentStatus(
+  pass: AdminInsuranceRecordRow | undefined,
+): 'unpaid' | 'paid' | null {
+  return pass?.payment_status === 'paid' || pass?.payment_status === 'unpaid'
+    ? pass.payment_status
+    : null;
 }
 
 @Injectable()
@@ -100,15 +109,20 @@ export class AdminInsuranceService {
     return [...byInstructor.entries()]
       .map(([instructorId, rows]) => ({
         instructorId,
+        pass: rows.find(
+          (row) =>
+            row.kind === 'season_pass' && row.payment_status !== 'voided',
+        ),
+        rows,
+      }))
+      .map(({ instructorId, pass, rows }) => ({
+        instructorId,
         name: rows[0].instructor?.display_name_en ?? null,
         nameZh: rows[0].instructor?.display_name_zh ?? null,
         email: rows[0].instructor?.email ?? null,
         ...totalsOf(rows),
-        seasonPassRecordId:
-          rows.find(
-            (row) =>
-              row.kind === 'season_pass' && row.payment_status !== 'voided',
-          )?.id ?? null,
+        seasonPassRecordId: pass?.id ?? null,
+        seasonPassPaymentStatus: passPaymentStatus(pass),
         records: rows.length,
       }))
       .sort(

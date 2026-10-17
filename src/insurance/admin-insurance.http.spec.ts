@@ -178,6 +178,7 @@ describe('/admin/insurance', () => {
             unpaidCents: 40000,
             coverage: 'capped',
             seasonPassRecordId: null,
+            seasonPassPaymentStatus: null,
             records: 6,
           },
           {
@@ -190,6 +191,7 @@ describe('/admin/insurance', () => {
             unpaidCents: 0,
             coverage: 'none',
             seasonPassRecordId: null,
+            seasonPassPaymentStatus: null,
             records: 1,
           },
         ]);
@@ -362,6 +364,7 @@ describe('/admin/insurance', () => {
           instructorId: ADA_INSTRUCTOR,
           coverage: 'season_pass',
           seasonPassRecordId: record.id,
+          seasonPassPaymentStatus: 'unpaid',
         }),
       ]);
     });
@@ -388,6 +391,18 @@ describe('/admin/insurance', () => {
       expect(
         [...ctx.repo.rows.values()].filter((r) => r.kind === 'season_pass'),
       ).toHaveLength(1);
+      const summary = await http()
+        .get('/admin/insurance/summary')
+        .query({ season: '2027/28' })
+        .set('Authorization', ADMIN_AUTH)
+        .expect(200);
+      expect(summary.body).toEqual([
+        expect.objectContaining({
+          instructorId: BO_INSTRUCTOR,
+          seasonPassRecordId: (res.body as AdminInsuranceRecord).id,
+          seasonPassPaymentStatus: 'paid',
+        }),
+      ]);
     });
 
     it('voiding the pass makes the next lesson charged again', async () => {
@@ -401,7 +416,11 @@ describe('/admin/insurance', () => {
         .set('Authorization', ADMIN_AUTH)
         .expect(200);
       expect(summary.body).toEqual([
-        expect.objectContaining({ seasonPassRecordId: null, coverage: 'none' }),
+        expect.objectContaining({
+          seasonPassRecordId: null,
+          seasonPassPaymentStatus: null,
+          coverage: 'none',
+        }),
       ]);
       const next = await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 2);
       expect(ctx.repo.rows.get(next)).toMatchObject({

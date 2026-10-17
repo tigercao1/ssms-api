@@ -32,6 +32,9 @@ insert into document_assignments
   ('44444444-4444-4444-8444-444444444295', '33333333-3333-4333-8333-333333333295', 'instructor',
    '22222222-2222-4222-8222-222222222296', '2025/26', 'completed', '2026-10-05T00:00:00Z');
 
+update document_assignments set signed_key = 'subjects/instructor/x/documents/291.pdf'
+ where id = '44444444-4444-4444-8444-444444444291';
+
 do $$
 declare
   v_ids uuid[];
@@ -41,7 +44,7 @@ begin
   from (
     select id, total_count, row_number() over () as ord
     from public.document_template_assignments(
-      '33333333-3333-4333-8333-333333333295', null, 'all', null, null, 50, 0)
+      '33333333-3333-4333-8333-333333333295', null, 'all', null, null, false, 50, 0)
   ) t;
   if v_total <> 4 or v_ids <> array[
     '44444444-4444-4444-8444-444444444295', '44444444-4444-4444-8444-444444444291',
@@ -51,34 +54,40 @@ begin
   end if;
 
   select count(*) into v_total from public.document_template_assignments(
-    '33333333-3333-4333-8333-333333333295', '2026/27', 'open', null, null, 50, 0);
+    '33333333-3333-4333-8333-333333333295', '2026/27', 'open', null, null, false, 50, 0);
   if v_total <> 2 then
     raise exception 'season + open filter wrong: %', v_total;
   end if;
 
   select array_agg(id) into v_ids from public.document_template_assignments(
-    '33333333-3333-4333-8333-333333333295', null, 'all', array['%mid\_dle%', '%cy%'], null, 50, 0);
+    '33333333-3333-4333-8333-333333333295', null, 'all', array['%mid\_dle%', '%cy%'], null, false, 50, 0);
   if v_ids <> array['44444444-4444-4444-8444-444444444293']::uuid[] then
     raise exception 'escaped search wrong: %', v_ids;
   end if;
 
   select count(*) into v_total from public.document_template_assignments(
-    '33333333-3333-4333-8333-333333333295', null, 'all', array['%mid\_d_le%'], null, 50, 0);
+    '33333333-3333-4333-8333-333333333295', null, 'all', array['%mid\_d_le%'], null, false, 50, 0);
   if v_total <> 0 then
     raise exception 'escaped underscore matched a wildcard';
   end if;
 
   select count(*) into v_total from public.document_template_assignments(
     '33333333-3333-4333-8333-333333333295', null, 'completed', null,
-    array['44444444-4444-4444-8444-444444444291', '44444444-4444-4444-8444-444444444292']::uuid[],
+    array['44444444-4444-4444-8444-444444444291', '44444444-4444-4444-8444-444444444292']::uuid[], false,
     50, 0);
   if v_total <> 1 then
     raise exception 'id + completed filter wrong: %', v_total;
   end if;
 
+  select array_agg(id) into v_ids from public.document_template_assignments(
+    '33333333-3333-4333-8333-333333333295', null, 'completed', null, null, true, 50, 0);
+  if v_ids <> array['44444444-4444-4444-8444-444444444291']::uuid[] then
+    raise exception 'signed-only filter wrong: %', v_ids;
+  end if;
+
   select array_agg(id), max(total_count) into v_ids, v_total
   from public.document_template_assignments(
-    '33333333-3333-4333-8333-333333333295', null, 'all', null, null, 1, 1);
+    '33333333-3333-4333-8333-333333333295', null, 'all', null, null, false, 1, 1);
   if v_total <> 4 or v_ids <> array['44444444-4444-4444-8444-444444444291']::uuid[] then
     raise exception 'paging wrong: % (total %)', v_ids, v_total;
   end if;
@@ -112,7 +121,7 @@ begin
     raise exception 'document_exports is readable by client roles';
   end if;
   if has_function_privilege('authenticated',
-       'public.document_template_assignments(uuid, text, text, text[], uuid[], int, int)', 'execute') then
+       'public.document_template_assignments(uuid, text, text, text[], uuid[], boolean, int, int)', 'execute') then
     raise exception 'document_template_assignments is executable by authenticated';
   end if;
   if not (select relforcerowsecurity from pg_class where relname = 'document_exports') then

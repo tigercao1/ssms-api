@@ -48,7 +48,7 @@ export const EXPORT_NOT_SIGN_TEMPLATE =
 export const EXPORT_TOO_MANY = `An export holds at most ${MAX_EXPORT_FILES} signed copies`;
 export const EXPORT_NOTHING_COMPLETED = 'No completed signed copies match';
 export const EXPORT_INVALID_ASSIGNMENTS =
-  'Every assignment must be a completed copy of this template';
+  'Every assignment must be a completed, signed copy of this template in the chosen season';
 export const EXPORT_NOT_READY = 'Export is not ready';
 export const EXPORT_EXPIRED = 'Export has expired';
 export const EXPORT_FAILED = 'Export failed; please try again';
@@ -104,6 +104,7 @@ export class DocumentExportsService implements OnApplicationBootstrap {
       status: query.status ?? 'all',
       patterns: searchTokens(query.q).map((token) => likePattern(token)),
       ids: null,
+      signedOnly: false,
       limit,
       offset: pageOffset(query.page ?? 1, limit),
     };
@@ -116,9 +117,10 @@ export class DocumentExportsService implements OnApplicationBootstrap {
 
   /**
    * `POST /admin/documents/templates/:id/exports`: validates, records a
-   * `queued` export and queues it. 404 unknown template; 400 for a `read`
-   * template, an id that is not a completed copy of this template, nothing to
-   * export, or more than {@link MAX_EXPORT_FILES} matches.
+   * `queued` export and queues it. Only completed rows with a signed copy
+   * count, intersected with `season` when one is given. 404 unknown template;
+   * 400 for a `read` template, an id outside that set, nothing to export, or
+   * more than {@link MAX_EXPORT_FILES} matches.
    */
   async create(
     templateId: string,
@@ -132,16 +134,8 @@ export class DocumentExportsService implements OnApplicationBootstrap {
     const season = dto.season ?? null;
     const ids = dto.assignmentIds ? [...new Set(dto.assignmentIds)] : null;
     const matched = ids
-      ? await this.checkSelection(templateId, ids)
-      : await this.countAssignments({
-          templateId,
-          season,
-          status: 'completed',
-          patterns: [],
-          ids: null,
-          limit: 1,
-          offset: 0,
-        });
+      ? await this.checkSelection(templateId, season, ids)
+      : await this.countAssignments(exportable(templateId, season, null, 1));
     if (matched === 0) {
       throw new BadRequestException(EXPORT_NOTHING_COMPLETED);
     }
@@ -285,30 +279,24 @@ export class DocumentExportsService implements OnApplicationBootstrap {
   private async exportRows(
     row: DocumentExportRow,
   ): Promise<TemplateAssignmentDbRow[]> {
-    return this.exports.listTemplateAssignments({
-      templateId: row.template_id,
-      season: row.assignment_ids ? null : row.season,
-      status: 'completed',
-      patterns: [],
-      ids: row.assignment_ids,
-      limit: MAX_EXPORT_FILES,
-      offset: 0,
-    });
+    return this.exports.listTemplateAssignments(
+      exportable(
+        row.template_id,
+        row.season,
+        row.assignment_ids,
+        MAX_EXPORT_FILES,
+      ),
+    );
   }
 
   private async checkSelection(
     templateId: string,
+    season: string | null,
     ids: string[],
   ): Promise<number> {
-    const rows = await this.exports.listTemplateAssignments({
-      templateId,
-      season: null,
-      status: 'completed',
-      patterns: [],
-      ids,
-      limit: ids.length,
-      offset: 0,
-    });
+    const rows = await this.exports.listTemplateAssignments(
+      exportable(templateId, season, ids, ids.length),
+    );
     if (rows.length !== ids.length) {
       throw new BadRequestException(EXPORT_INVALID_ASSIGNMENTS);
     }
@@ -341,6 +329,24 @@ export class DocumentExportsService implements OnApplicationBootstrap {
     }
     return row;
   }
+}
+
+function exportable(
+  templateId: string,
+  season: string | null,
+  ids: string[] | null,
+  limit: number,
+): TemplateAssignmentQuery {
+  return {
+    templateId,
+    season,
+    status: 'completed',
+    patterns: [],
+    ids,
+    signedOnly: true,
+    limit,
+    offset: 0,
+  };
 }
 
 function errorMessage(err: unknown): string {

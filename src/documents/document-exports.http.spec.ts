@@ -437,8 +437,8 @@ describe('document exports HTTP', () => {
         error: null,
       });
       expect(
-        Date.parse(exportOf(done).expiresAt) -
-          Date.parse(exportOf(done).finishedAt),
+        Date.parse(exportOf(done).expiresAt ?? '') -
+          Date.parse(exportOf(done).finishedAt ?? ''),
       ).toBe(24 * 60 * 60 * 1000);
     });
 
@@ -463,9 +463,20 @@ describe('document exports HTTP', () => {
       expect(message(res)).toBe(EXPORT_NOT_SIGN_TEMPLATE);
     });
 
-    it('400s when nothing completed matches', async () => {
+    it('400s when nothing completed with a signed copy matches', async () => {
       open('Cy', 'Open');
       completed('Old', 'Season', '2025-10-03T15:00:00Z', { season: '2025-26' });
+      const noCopy = completed('No', 'Copy', '2026-10-03T15:00:00Z', {
+        signed_key: null,
+      });
+      const listed = await http()
+        .get(`/admin/documents/templates/${ctx.template.id}/assignments`)
+        .query({ season: '2026-27', status: 'completed' })
+        .set('Authorization', admin)
+        .expect(200);
+      expect(rows(listed)).toEqual([
+        expect.objectContaining({ id: noCopy.id, hasSignedCopy: false }),
+      ]);
       const res = await create({ season: '2026-27' }).expect(400);
       expect(message(res)).toBe(EXPORT_NOTHING_COMPLETED);
       expect(ctx.exportsRepo.rows.size).toBe(0);
@@ -489,10 +500,41 @@ describe('document exports HTTP', () => {
         subject_id: instructor('Fay', 'Other', 'f@example.com').id,
         status: 'completed',
       });
-      for (const ids of [[ann.id, pending.id], [foreign.id], [UNKNOWN_ID]]) {
+      const noCopy = completed('No', 'Copy', '2026-10-01T15:00:00Z', {
+        signed_key: null,
+      });
+      for (const ids of [
+        [ann.id, pending.id],
+        [foreign.id],
+        [UNKNOWN_ID],
+        [noCopy.id],
+      ]) {
         const res = await create({ assignmentIds: ids }).expect(400);
         expect(message(res)).toBe(EXPORT_INVALID_ASSIGNMENTS);
       }
+    });
+
+    it('intersects selected ids with the season when one is given', async () => {
+      const ann = completed('Ann', 'Wong', '2026-10-02T15:00:00Z');
+      const old = completed('Old', 'Season', '2025-10-03T15:00:00Z', {
+        season: '2025-26',
+      });
+
+      const res = await create({
+        season: '2025-26',
+        assignmentIds: [ann.id, old.id],
+      }).expect(400);
+      expect(message(res)).toBe(EXPORT_INVALID_ASSIGNMENTS);
+
+      const ok = await create({
+        season: '2025-26',
+        assignmentIds: [old.id],
+      }).expect(202);
+      await ctx.queue.idle();
+      expect(unzip(exportOf(ok).id).names).toEqual([
+        'Instructor agreement (2025-26)/Season, Old - 2025-10-03.pdf',
+        'manifest.csv',
+      ]);
     });
 
     it.each([
@@ -575,14 +617,14 @@ describe('document exports HTTP', () => {
       expect(manifest[4]).toBe(
         `Mia Missing,mia@example.com,Mia Missing,2026-09-29T15:00:00.000Z,2026-27,${missing.id},${SHA},,skipped: missing`,
       );
-      expect(manifest[5]).toContain(`${noKey.id},${SHA},,skipped: missing`);
-      expect(manifest[6]).toContain(`${huge.id},${SHA},,skipped: too large`);
-      expect(manifest[7]).toBe('');
+      expect(manifest[5]).toContain(`${huge.id},${SHA},,skipped: too large`);
+      expect(manifest[6]).toBe('');
+      expect(manifest.join('\n')).not.toContain(noKey.id);
 
       expect(ctx.exportsRepo.rows.get(id)).toMatchObject({
         status: 'ready',
         file_count: 3,
-        skipped_count: 3,
+        skipped_count: 2,
         zip_key: storageKeys.documentExport(id),
       });
     });

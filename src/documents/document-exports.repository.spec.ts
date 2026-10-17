@@ -91,6 +91,7 @@ describe('SupabaseDocumentExportsRepository', () => {
       status: 'completed' as const,
       patterns: ['%ann%'],
       ids: [ID],
+      signedOnly: true,
       limit: 50,
       offset: 100,
     };
@@ -107,6 +108,7 @@ describe('SupabaseDocumentExportsRepository', () => {
             p_status: 'completed',
             p_patterns: ['%ann%'],
             p_ids: [ID],
+            p_signed_only: true,
             p_limit: 50,
             p_offset: 100,
           },
@@ -162,6 +164,7 @@ describe('SupabaseDocumentExportsRepository', () => {
         status: 'all',
         patterns: [],
         ids: null,
+        signedOnly: false,
         limit: 1,
         offset: 0,
       }),

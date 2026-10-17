@@ -131,6 +131,7 @@ export class SupabaseDocumentExportsRepository extends DocumentExportsRepository
         p_status: query.status,
         p_patterns: query.patterns,
         p_ids: query.ids,
+        p_signed_only: query.signedOnly,
         p_limit: query.limit,
         p_offset: query.offset,
       },

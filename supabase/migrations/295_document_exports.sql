@@ -52,6 +52,7 @@ create function public.document_template_assignments(
   p_status text,
   p_patterns text[],
   p_ids uuid[],
+  p_signed_only boolean,
   p_limit int,
   p_offset int
 )
@@ -104,6 +105,7 @@ as $$
       or (p_status = 'open' and a.status in ('assigned', 'viewed'))
     )
     and (p_ids is null or a.id = any(p_ids))
+    and (not p_signed_only or a.signed_key is not null)
     and not exists (
       select 1
       from unnest(coalesce(p_patterns, '{}'::text[])) as p(pattern)
@@ -121,7 +123,7 @@ as $$
   offset p_offset;
 $$;
 
-revoke all on function public.document_template_assignments(uuid, text, text, text[], uuid[], int, int)
+revoke all on function public.document_template_assignments(uuid, text, text, text[], uuid[], boolean, int, int)
   from public, anon, authenticated;
-grant execute on function public.document_template_assignments(uuid, text, text, text[], uuid[], int, int)
+grant execute on function public.document_template_assignments(uuid, text, text, text[], uuid[], boolean, int, int)
   to service_role;

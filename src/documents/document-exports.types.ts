@@ -67,13 +67,17 @@ export interface TemplateAssignmentDbRow {
   total_count: number;
 }
 
-/** Filters for a template's assignments; `patterns` are ILIKE patterns that must all match. */
+/**
+ * Filters for a template's assignments; `patterns` are ILIKE patterns that
+ * must all match, and `signedOnly` keeps rows that have a signed copy.
+ */
 export interface TemplateAssignmentQuery {
   templateId: string;
   season: string | null;
   status: TemplateAssignmentFilter;
   patterns: string[];
   ids: string[] | null;
+  signedOnly: boolean;
   limit: number;
   offset: number;
 }

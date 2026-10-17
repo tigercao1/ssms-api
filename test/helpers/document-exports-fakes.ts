@@ -162,7 +162,8 @@ export class InMemoryDocumentExportsRepository extends DocumentExportsRepository
             (query.status === 'completed' && a.status === 'completed') ||
             (query.status === 'open' &&
               (a.status === 'assigned' || a.status === 'viewed'))) &&
-          (query.ids === null || query.ids.includes(a.id)),
+          (query.ids === null || query.ids.includes(a.id)) &&
+          (!query.signedOnly || a.signed_key !== null),
       )
       .map((a) => {
         const i = this.subjects.instructors.get(a.subject_id);

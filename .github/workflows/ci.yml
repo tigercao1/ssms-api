@@ -120,6 +120,9 @@ jobs:
       - name: Document template stats checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/document_template_stats_checks.sql
 
+      - name: Document exports checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/document_exports_checks.sql
+
       - name: Seasons checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/seasons_checks.sql
 

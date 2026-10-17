@@ -658,7 +658,9 @@ describe('documents emails and reminders HTTP', () => {
 
         const res = await run(`Bearer ${TOKEN}`).expect(200);
 
-        expect(res.body.exports).toEqual({ expired: 1 });
+        expect((res.body as { exports: unknown }).exports).toEqual({
+          expired: 1,
+        });
         expect(ctx.storage.deleted).toEqual(['exports/old.zip']);
         expect(ctx.storage.objects.has('exports/fresh.zip')).toBe(true);
         expect(ctx.exportsRepo.rows.get(old.id)?.status).toBe('expired');
@@ -679,7 +681,9 @@ describe('documents emails and reminders HTTP', () => {
 
         const res = await run(`Bearer ${TOKEN}`).expect(200);
 
-        expect(res.body.exports).toEqual({ expired: 0 });
+        expect((res.body as { exports: unknown }).exports).toEqual({
+          expired: 0,
+        });
         expect(ctx.exportsRepo.rows.get(row.id)?.status).toBe('ready');
         expect(errorLog).toHaveBeenCalledWith(
           expect.stringContaining('R2 down'),

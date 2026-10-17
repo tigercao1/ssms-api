@@ -741,6 +741,7 @@ describe('document language versions HTTP', () => {
       expect(doc.getPage(0).getSize()).toEqual({ width: 595, height: 842 });
       const text = await pdftotext(signed);
       expect(text).toContain('English version');
+      expect(text).toContain('English / 英文');
       expect(text).toContain(ctx.english.sha256);
     });
 

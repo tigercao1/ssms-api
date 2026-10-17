@@ -9,7 +9,11 @@ import {
   type PDFPage,
   rgb,
 } from '@cantoo/pdf-lib';
-import type { PageGeometry, TemplateFieldRow } from './documents.types';
+import type {
+  DocumentLanguage,
+  PageGeometry,
+  TemplateFieldRow,
+} from './documents.types';
 import { pageGeometry, sha256Hex } from './template-pdf';
 
 export const FONT_DIR = join(__dirname, '..', '..', 'assets', 'fonts');
@@ -46,7 +50,13 @@ export interface StampAudit {
   viewedAt: string | null;
   signedAt: string;
   linkEvidence?: string | null;
+  language?: DocumentLanguage | null;
 }
+
+const LANGUAGE_NAMES: Record<DocumentLanguage, string> = {
+  en: 'English / 英文',
+  zh: 'Chinese / 中文',
+};
 
 export interface StampInput {
   source: Uint8Array;
@@ -342,6 +352,12 @@ export function auditRows(audit: StampAudit): [string, string][] {
       'Document / 文件',
       [audit.titleEn, audit.titleZh].filter(Boolean).join('\n'),
     ],
+    ...(audit.language
+      ? ([['Version signed / 签署版本', LANGUAGE_NAMES[audit.language]]] as [
+          string,
+          string,
+        ][])
+      : []),
     ['Original document SHA-256 / 原始文件 SHA-256', audit.templateSha256],
     ['Assignment ID / 签署编号', audit.assignmentId],
     ['Signer / 签署人', audit.signerName],

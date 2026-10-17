@@ -311,6 +311,7 @@ export class DocumentSigningService {
           userAgent: evidence.userAgent,
           viewedAt: signer.viewed_at,
           signedAt: signer.completed_at,
+          language: version.language,
         },
       });
       const key = storageKeys.instructorDocument(instructor.id, row.id);

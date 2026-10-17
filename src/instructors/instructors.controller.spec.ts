@@ -16,6 +16,7 @@ describe('InstructorsController', () => {
   const service = {
     getOrCreateForUser: jest.fn().mockResolvedValue(fakeProfile),
     updateOwnProfile: jest.fn().mockResolvedValue(fakeProfile),
+    getCalendarStatus: jest.fn().mockResolvedValue({ connected: true }),
   };
   const usage = { limit: 5, used: 0, remaining: 5, resetsAt: null };
   const bioDrafts = {
@@ -68,6 +69,13 @@ describe('InstructorsController', () => {
     const dto = { displayNameEn: 'Jane' } as UpdateOwnInstructorProfileDto;
     await expect(controller.updateMe(user, dto)).resolves.toBe(fakeProfile);
     expect(service.updateOwnProfile).toHaveBeenCalledWith('auth-1', dto);
+  });
+
+  it('GET /me/instructor/calendar → getCalendarStatus(sub)', async () => {
+    await expect(controller.getCalendarStatus(user)).resolves.toEqual({
+      connected: true,
+    });
+    expect(service.getCalendarStatus).toHaveBeenCalledWith('auth-1');
   });
 
   it('GET /me/instructor/bio/ai-usage → getUsage(sub)', async () => {

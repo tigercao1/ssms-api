@@ -352,6 +352,28 @@ describe('SupabaseInstructorsRepository', () => {
     ).rejects.toBeInstanceOf(InternalServerErrorException);
   });
 
+  it('hasCalendar is true when the instructor has a calendar row', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: { instructor_id: 'inst-1' }, error: null };
+    await expect(repo.hasCalendar('inst-1')).resolves.toBe(true);
+    expect(fake.builders[0].table).toBe('instructor_calendars');
+    expect(fake.builders[0].filters).toEqual([['instructor_id', 'inst-1']]);
+  });
+
+  it('hasCalendar is false without a calendar row', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: null, error: null };
+    await expect(repo.hasCalendar('inst-1')).resolves.toBe(false);
+  });
+
+  it('hasCalendar throws on a DB error', async () => {
+    const { repo, fake } = makeRepo();
+    fake.next = { data: null, error: { message: 'boom' } };
+    await expect(repo.hasCalendar('inst-1')).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+  });
+
   describe('listAdminRecipients', () => {
     const user = (id: string, role: string | undefined, email?: string) => ({
       id,

@@ -59,6 +59,7 @@ export abstract class InstructorsRepository {
   ): Promise<void>;
   /** Every admin user with an email, via the Supabase admin API. */
   abstract listAdminRecipients(): Promise<AdminRecipient[]>;
+  abstract hasCalendar(instructorId: string): Promise<boolean>;
 }
 
 const INSTRUCTOR_COLUMNS =
@@ -267,6 +268,20 @@ export class SupabaseInstructorsRepository extends InstructorsRepository {
         `Failed to update photo ${slot}: ${error.message}`,
       );
     }
+  }
+
+  async hasCalendar(instructorId: string): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('instructor_calendars')
+      .select('instructor_id')
+      .eq('instructor_id', instructorId)
+      .maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to load instructor calendar: ${error.message}`,
+      );
+    }
+    return data !== null;
   }
 
   async listAdminRecipients(): Promise<AdminRecipient[]> {

@@ -18,15 +18,15 @@ import { AdminController } from './admin.controller';
 import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 import type {
-  AdminInstructorRecord,
-  AdminInstructorRow,
+  AdminInstructorListRecord,
+  AdminInstructorListRow,
   ListInstructorsFilter,
 } from './admin.types';
 
 const instructorId = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
-function makeRow(n: number): AdminInstructorRow {
+function makeRow(n: number): AdminInstructorListRow {
   return {
     id: instructorId(n),
     auth_user_id: `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
@@ -44,20 +44,22 @@ function makeRow(n: number): AdminInstructorRow {
     is_active: n % 5 !== 0,
     inserted_at: new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString(),
     updated_at: '2026-01-01T00:00:00.000Z',
+    instructor_calendars:
+      n % 4 === 0 ? { instructor_id: instructorId(n) } : null,
   };
 }
 
 class InMemoryInstructorList {
-  rows: AdminInstructorRow[] = [];
+  rows: AdminInstructorListRow[] = [];
   calls: { filter: ListInstructorsFilter; page?: PageRequest }[] = [];
 
   listInstructors(
     filter: ListInstructorsFilter,
     page?: PageRequest,
-  ): Promise<RowPage<AdminInstructorRow>> {
+  ): Promise<RowPage<AdminInstructorListRow>> {
     this.calls.push({ filter, page });
     const tokens = (filter.q ?? '').trim().toLowerCase().split(/\s+/);
-    const text = (r: AdminInstructorRow) =>
+    const text = (r: AdminInstructorListRow) =>
       [r.display_name_en, r.display_name_zh, r.email].join(' ').toLowerCase();
     const matches = this.rows
       .filter((r) => !filter.status || r.approval_status === filter.status)
@@ -101,7 +103,7 @@ async function build(count = 60) {
 }
 
 const ids = (res: request.Response) =>
-  (res.body as AdminInstructorRecord[]).map((r) => r.id);
+  (res.body as AdminInstructorListRecord[]).map((r) => r.id);
 const newestFirst = (...ns: number[]) => ns.map(instructorId);
 const range = (from: number, to: number) =>
   Array.from({ length: from - to + 1 }, (_, i) => from - i);
@@ -132,6 +134,20 @@ describe('GET /admin/instructors', () => {
     expect(ids(res)).toEqual(newestFirst(...range(120, 1)));
     expect(res.headers[TOTAL_COUNT_HEADER.toLowerCase()]).toBe('120');
     expect(ctx.repo.calls[0].page).toBeUndefined();
+  });
+
+  it('says whether each instructor has a calendar connected', async () => {
+    ctx = await build(8);
+    const res = await list('?page=1&limit=4').expect(200);
+    const rows = res.body as AdminInstructorListRecord[];
+    expect(rows.map((r) => [r.id, r.calendarConnected])).toEqual([
+      [instructorId(8), true],
+      [instructorId(7), false],
+      [instructorId(6), false],
+      [instructorId(5), false],
+    ]);
+    expect(rows[0]).not.toHaveProperty('instructor_calendars');
+    expect(rows[0]).not.toHaveProperty('instructorCalendars');
   });
 
   it('returns every filtered instructor with the filtered total when unpaged', async () => {

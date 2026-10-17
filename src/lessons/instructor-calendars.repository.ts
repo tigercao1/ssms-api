@@ -1,33 +1,24 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  check,
-  type DbResult,
-  hasCode,
-  PG_UNIQUE_VIOLATION,
-} from '../database/db-result';
+import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 
 export const INSTRUCTOR_CALENDARS_TABLE = 'instructor_calendars';
 const COLUMNS =
-  'instructor_id, google_calendar_id, calendar_summary, match_status, updated_at';
+  'instructor_id, google_calendar_id, calendar_summary, updated_at';
 const INSTRUCTOR_COLUMNS =
   'id, email, display_name_en, display_name_zh, approval_status, is_active';
-
-export type CalendarMatchStatus = 'suggested' | 'confirmed';
 
 export interface InstructorCalendarRow {
   instructor_id: string;
   google_calendar_id: string;
   calendar_summary: string | null;
-  match_status: CalendarMatchStatus;
   updated_at: string;
 }
 
 export interface InstructorCalendarInput {
   google_calendar_id: string;
   calendar_summary: string | null;
-  match_status: CalendarMatchStatus;
 }
 
 export interface CalendarInstructorRow {
@@ -49,11 +40,6 @@ export abstract class InstructorCalendarsRepository {
     input: InstructorCalendarInput,
     userId: string | null,
   ): Promise<InstructorCalendarRow>;
-  abstract insertIfAbsent(
-    instructorId: string,
-    input: InstructorCalendarInput,
-    userId: string | null,
-  ): Promise<boolean>;
   abstract remove(instructorId: string): Promise<void>;
 }
 
@@ -121,29 +107,6 @@ export class SupabaseInstructorCalendarsRepository extends InstructorCalendarsRe
       throw new Error('Failed to save instructor calendar: no row returned');
     }
     return data;
-  }
-
-  async insertIfAbsent(
-    instructorId: string,
-    input: InstructorCalendarInput,
-    userId: string | null,
-  ): Promise<boolean> {
-    const { data, error } = (await this.supabase
-      .from(INSTRUCTOR_CALENDARS_TABLE)
-      .upsert(
-        { instructor_id: instructorId, ...input, updated_by: userId },
-        { onConflict: 'instructor_id', ignoreDuplicates: true },
-      )
-      .select('instructor_id')) as DbResult<{ instructor_id: string }[]>;
-    try {
-      check(error, 'suggest instructor calendar');
-    } catch (err) {
-      if (hasCode(err, PG_UNIQUE_VIOLATION)) {
-        return false;
-      }
-      throw err;
-    }
-    return (data ?? []).length > 0;
   }
 
   async remove(instructorId: string): Promise<void> {

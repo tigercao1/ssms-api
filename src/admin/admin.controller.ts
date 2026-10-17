@@ -25,6 +25,7 @@ import { CreateSeasonDto, UpdateSeasonDto } from '../seasons/dto/season.dto';
 import { type AdminSeason, SeasonsService } from '../seasons/seasons.service';
 import { AdminService } from './admin.service';
 import {
+  AdminInstructorListRecord,
   AdminInstructorRecord,
   CurrentUserRoleRecord,
   DeletedReferenceRecord,
@@ -77,7 +78,7 @@ export class AdminController {
   async listInstructors(
     @Query() query: ListInstructorsQueryDto,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<AdminInstructorRecord[]> {
+  ): Promise<AdminInstructorListRecord[]> {
     const { instructors, total } = await this.admin.listInstructors(
       {
         status: query.status,

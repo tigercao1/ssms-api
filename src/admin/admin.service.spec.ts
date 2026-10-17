@@ -103,8 +103,14 @@ describe('AdminService', () => {
   describe('listInstructors (T6.3)', () => {
     it('maps rows to camelCase records and passes the filter through', async () => {
       repo.listInstructors.mockResolvedValue({
-        rows: [makeRow({ approval_status: 'approved' })],
-        total: 1,
+        rows: [
+          {
+            ...makeRow({ approval_status: 'approved' }),
+            instructor_calendars: { instructor_id: 'i1' },
+          },
+          { ...makeRow({ id: 'i2' }), instructor_calendars: null },
+        ],
+        total: 2,
       });
       const filter: ListInstructorsFilter = { status: 'approved' };
 
@@ -112,15 +118,18 @@ describe('AdminService', () => {
         await service.listInstructors(filter);
 
       expect(repo.listInstructors).toHaveBeenCalledWith(filter, undefined);
-      expect(total).toBe(1);
+      expect(total).toBe(2);
       expect(result).toEqual([
         expect.objectContaining({
           email: 'jane@example.com',
           approvalStatus: 'approved',
           isActive: true,
           authUserId: '22222222-2222-4222-8222-222222222222',
+          calendarConnected: true,
         }),
+        expect.objectContaining({ id: 'i2', calendarConnected: false }),
       ]);
+      expect(result[0]).not.toHaveProperty('instructor_calendars');
     });
 
     it.each([

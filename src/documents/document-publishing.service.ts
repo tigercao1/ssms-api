@@ -27,6 +27,8 @@ export const TEMPLATE_NOT_LIVE = 'Only a published document can be retired';
 export const PUBLISH_NEEDS_SOURCE = 'Upload the PDF before publishing';
 export const PUBLISH_NEEDS_FIELDS =
   'Place at least one field before publishing a document to sign';
+export const PUBLISH_TRANSLATION_NEEDS_FIELDS =
+  'Place at least one field on the other language version before publishing a document to sign';
 export const PUBLISH_ALL_NEEDS_INSTRUCTORS =
   'Only instructor documents can be published to all instructors';
 export const PUBLISH_INSTRUCTORS_NEED_SELECTED =
@@ -93,6 +95,12 @@ export class DocumentPublishingService {
     }
     if (before.kind === 'sign' && before.fields.length === 0) {
       throw new BadRequestException(PUBLISH_NEEDS_FIELDS);
+    }
+    if (
+      before.kind === 'sign' &&
+      before.translations.some((t) => t.source_key && t.fields.length === 0)
+    ) {
+      throw new BadRequestException(PUBLISH_TRANSLATION_NEEDS_FIELDS);
     }
     if (dto.assignTo === 'all' && before.audience !== 'instructor') {
       throw new BadRequestException(PUBLISH_ALL_NEEDS_INSTRUCTORS);

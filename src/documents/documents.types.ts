@@ -24,6 +24,9 @@ export type SubjectType = 'instructor' | 'customer';
 export const TEMPLATE_STATUSES = ['draft', 'live', 'retired'] as const;
 export type TemplateStatus = (typeof TEMPLATE_STATUSES)[number];
 
+export const DOCUMENT_LANGUAGES = ['en', 'zh'] as const;
+export type DocumentLanguage = (typeof DOCUMENT_LANGUAGES)[number];
+
 export const TEMPLATE_ASSIGN_TO = ['all', 'selected'] as const;
 export type TemplateAssignTo = (typeof TEMPLATE_ASSIGN_TO)[number];
 
@@ -106,6 +109,25 @@ export interface DocumentTemplateRow {
   published_at: string | null;
   published_by: string | null;
   sort_order: number;
+  source_language: DocumentLanguage | null;
+  source_key: string | null;
+  source_sha256: string | null;
+  page_count: number | null;
+  pages: PageGeometry[];
+  fields: TemplateFieldRow[];
+  updated_by: string | null;
+  inserted_at: string;
+  updated_at: string;
+  translations: DocumentTemplateTranslationRow[];
+}
+
+export type DocumentTemplateWrite = Partial<
+  Omit<DocumentTemplateRow, 'id' | 'inserted_at' | 'updated_at' | 'translations'>
+>;
+
+export interface DocumentTemplateTranslationRow {
+  template_id: string;
+  language: DocumentLanguage;
   source_key: string | null;
   source_sha256: string | null;
   page_count: number | null;
@@ -116,8 +138,11 @@ export interface DocumentTemplateRow {
   updated_at: string;
 }
 
-export type DocumentTemplateWrite = Partial<
-  Omit<DocumentTemplateRow, 'id' | 'inserted_at' | 'updated_at'>
+export type DocumentTemplateTranslationWrite = Partial<
+  Omit<
+    DocumentTemplateTranslationRow,
+    'template_id' | 'language' | 'inserted_at' | 'updated_at'
+  >
 >;
 
 /** Template columns embedded on an assignment read. */
@@ -133,7 +158,11 @@ export type AssignmentTemplateRow = Pick<
   | 'required'
   | 'status'
   | 'sort_order'
->;
+  | 'source_language'
+  | 'source_key'
+> & {
+  translations: Pick<DocumentTemplateTranslationRow, 'language' | 'source_key'>[];
+};
 
 export interface DocumentAssignmentRow {
   id: string;
@@ -154,6 +183,7 @@ export interface DocumentAssignmentRow {
   signer_user_agent: string | null;
   consent_at: string | null;
   template_sha256: string | null;
+  language: DocumentLanguage | null;
   signed_key: string | null;
   signed_sha256: string | null;
   field_values: Record<string, unknown>;
@@ -231,6 +261,8 @@ export interface TemplateSummary {
   approvedCompletedCount: number;
   approvedCount: number;
   sortOrder: number;
+  sourceLanguage: DocumentLanguage | null;
+  languages: DocumentLanguage[];
   hasSource: boolean;
   pageCount: number | null;
   fieldCount: number;
@@ -264,6 +296,17 @@ export interface Template extends TemplateSummary {
   fields: TemplateField[];
   sourceUrl: string | null;
   updatedBy: string | null;
+  translations: TemplateTranslation[];
+}
+
+export interface TemplateTranslation {
+  language: DocumentLanguage;
+  hasSource: boolean;
+  sourceSha256: string | null;
+  pageCount: number | null;
+  pages: PageGeometry[];
+  fields: TemplateField[];
+  sourceUrl: string | null;
 }
 
 /** Response of a source confirm: `fieldsCleared` says whether placed fields were dropped. */
@@ -297,6 +340,7 @@ export interface Assignment {
   signerEmail: string | null;
   consentAt: string | null;
   templateSha256: string | null;
+  language: DocumentLanguage | null;
   signedSha256: string | null;
   hasSignedCopy: boolean;
   insertedAt: string;
@@ -377,6 +421,7 @@ export interface DocumentChecklistItem {
   viewedAt: string | null;
   completedAt: string | null;
   dueAt: string | null;
+  languages: DocumentLanguage[];
 }
 
 export interface CertificationChecklistItem {
@@ -429,6 +474,8 @@ export interface SigningDocument {
   assignment: Assignment;
   template: SigningTemplate;
   sourceUrl: string | null;
+  language: DocumentLanguage | null;
+  availableLanguages: DocumentLanguage[];
   /** The consent wording to show; the same text is printed on the audit page. */
   consentText: { en: string; zh: string };
 }

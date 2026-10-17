@@ -65,6 +65,11 @@ export const AUDIT_ACTIONS = {
   documentTemplateUpdate: 'document_template.update',
   documentTemplateSourceReplace: 'document_template.source_replace',
   documentTemplateFieldsUpdate: 'document_template.fields_update',
+  documentTemplateTranslationSourceReplace:
+    'document_template.translation_source_replace',
+  documentTemplateTranslationFieldsUpdate:
+    'document_template.translation_fields_update',
+  documentTemplateTranslationRemove: 'document_template.translation_remove',
   documentTemplatePublish: 'document_template.publish',
   documentTemplateRetire: 'document_template.retire',
   documentTemplateAudienceChange: 'document_template.audience_change',

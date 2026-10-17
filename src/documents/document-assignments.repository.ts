@@ -19,10 +19,12 @@ export const DOCUMENT_ASSIGNMENTS_TABLE = 'document_assignments';
 export const DOCUMENT_ASSIGNMENT_COLUMNS =
   'id, template_id, subject_type, subject_id, season, class_id, status, assigned_at, ' +
   'viewed_at, completed_at, due_at, reminder_sent_at, signer_name, signer_email, ' +
-  'signer_ip, signer_user_agent, consent_at, template_sha256, signed_key, ' +
+  'signer_ip, signer_user_agent, consent_at, template_sha256, language, signed_key, ' +
   'signed_sha256, field_values, inserted_at, updated_at, ' +
   'template:document_templates(id, kind, audience, title_en, title_zh, ' +
-  'description_en, description_zh, required, status, sort_order)';
+  'description_en, description_zh, required, status, sort_order, ' +
+  'source_language, source_key, ' +
+  'translations:document_template_translations(language, source_key))';
 
 export const SUBJECT_ID_CHUNK = 100;
 const OPEN_STATUSES = ['assigned', 'viewed'];

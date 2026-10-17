@@ -4,6 +4,12 @@ describe('storageKeys', () => {
   it('builds the private bucket layout', () => {
     expect(storageKeys.templateSource('t')).toBe('templates/t/source.pdf');
     expect(storageKeys.templateUpload('t')).toBe('templates/t/upload.pdf');
+    expect(storageKeys.templateTranslationSource('t', 'en')).toBe(
+      'templates/t/translations/en/source.pdf',
+    );
+    expect(storageKeys.templateTranslationUpload('t', 'zh')).toBe(
+      'templates/t/translations/zh/upload.pdf',
+    );
     expect(storageKeys.instructorDocument('i', 'a')).toBe(
       'subjects/instructor/i/documents/a.pdf',
     );

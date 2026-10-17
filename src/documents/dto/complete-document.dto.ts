@@ -1,11 +1,13 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
 } from 'class-validator';
+import { DOCUMENT_LANGUAGES, type DocumentLanguage } from '../documents.types';
 
 export const SIGNER_NAME_MAX_LENGTH = 200;
 
@@ -15,7 +17,8 @@ const trim = ({ value }: { value: unknown }) =>
 /**
  * Body of `POST /me/documents/:assignmentId/complete`. `read` documents send
  * `{ acknowledged: true }`; `sign` documents send `consent`, `signerName`,
- * `values` and `signatures`. Which fields are required depends on the
+ * `values` and `signatures`. `language` picks the version that was signed
+ * (the main version when omitted). Which fields are required depends on the
  * template, so the service checks them.
  */
 export class CompleteDocumentDto {
@@ -40,4 +43,14 @@ export class CompleteDocumentDto {
   @IsOptional()
   @IsObject()
   signatures?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsIn(DOCUMENT_LANGUAGES)
+  language?: DocumentLanguage | null;
+}
+
+export class OpenDocumentQueryDto {
+  @IsOptional()
+  @IsIn(DOCUMENT_LANGUAGES)
+  language?: DocumentLanguage;
 }

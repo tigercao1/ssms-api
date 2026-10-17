@@ -99,6 +99,15 @@ export interface RegisterInput {
   actor: string | null;
 }
 
+export interface GrantSeasonPassInput {
+  instructorId: string;
+  seasonKey: string;
+  actor: string | null;
+  idempotencyKey: string;
+  paidOn: string | null;
+  paidNote: string | null;
+}
+
 export type RegisterOutcome =
   | { outcome: 'created' | 'existing'; id: string }
   | { outcome: 'no_season' }
@@ -135,6 +144,9 @@ export abstract class LessonInsuranceRepository {
   abstract instructorById(id: string): Promise<InsuranceInstructorRow | null>;
   abstract approvedInstructors(): Promise<InsuranceSummaryInstructorRow[]>;
   abstract register(input: RegisterInput): Promise<RegisterOutcome>;
+  abstract grantSeasonPass(
+    input: GrantSeasonPassInput,
+  ): Promise<RegisterOutcome>;
   abstract findRecord(id: string): Promise<AdminInsuranceRecordRow | null>;
   abstract recordsFor(
     instructorId: string,
@@ -215,6 +227,25 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
     check(error, 'register lesson insurance');
     if (!data) {
       throw new Error('Failed to register lesson insurance: no result');
+    }
+    return data;
+  }
+
+  async grantSeasonPass(input: GrantSeasonPassInput): Promise<RegisterOutcome> {
+    const { data, error } = (await this.supabase.rpc(
+      'lesson_insurance_admin_grant_pass',
+      {
+        p_instructor_id: input.instructorId,
+        p_season_key: input.seasonKey,
+        p_actor: input.actor,
+        p_idempotency_key: input.idempotencyKey,
+        p_paid_on: input.paidOn,
+        p_paid_note: input.paidNote,
+      },
+    )) as DbResult<RegisterOutcome>;
+    check(error, 'grant season pass');
+    if (!data) {
+      throw new Error('Failed to grant season pass: no result');
     }
     return data;
   }

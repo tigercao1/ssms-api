@@ -340,6 +340,71 @@ $$;
 
 do $$
 declare
+  b constant uuid := '22222222-2222-4222-8222-2222222222a2';
+  admin_id constant uuid := '11111111-1111-4111-8111-1111111111a1';
+  owed_before int := pg_temp.owed(b, '2027/28');
+  k uuid := gen_random_uuid();
+  r jsonb;
+  rec lesson_insurance_records;
+begin
+  if owed_before <> 0 then
+    raise exception 'the grant fixture should owe 0 in 2027/28, got %', owed_before;
+  end if;
+  perform pg_temp.lesson(b, '2027-12-03', 1, 1);
+  owed_before := pg_temp.owed(b, '2027/28');
+
+  begin
+    perform public.lesson_insurance_admin_grant_pass(b, '2027/28', admin_id, k, '2026-10-15', repeat('x', 501));
+    raise exception 'a paid grant with a 501-character note was accepted';
+  exception when check_violation then null;
+  end;
+  if exists (select 1 from lesson_insurance_records
+              where instructor_id = b and season_key = '2027/28' and kind = 'season_pass')
+     or exists (select 1 from lesson_insurance_records where idempotency_key = k) then
+    raise exception 'a failed paid grant left a season pass behind';
+  end if;
+  if pg_temp.owed(b, '2027/28') <> owed_before then
+    raise exception 'a failed paid grant changed owed: % -> %', owed_before, pg_temp.owed(b, '2027/28');
+  end if;
+
+  r := public.lesson_insurance_admin_grant_pass(b, '2027/28', admin_id, k, '2026-10-15', 'e-transfer 9');
+  rec := pg_temp.rec(r);
+  if r ->> 'outcome' <> 'created' or rec.kind <> 'season_pass' or rec.amount_cents <> 40000 - owed_before
+     or rec.payment_status <> 'paid' or rec.paid_on <> '2026-10-15' or rec.paid_note <> 'e-transfer 9'
+     or rec.paid_by <> admin_id or rec.created_by <> admin_id or rec.idempotency_key <> k then
+    raise exception 'a grant with paid_on should return one paid season pass: % %', r, rec;
+  end if;
+
+  r := public.lesson_insurance_admin_grant_pass(b, '2027/28', admin_id, gen_random_uuid(), '2026-10-15', null);
+  if r ->> 'outcome' <> 'already_has_pass' or (r ->> 'owed_cents')::int <> 40000 then
+    raise exception 'a second grant should be already_has_pass: %', r;
+  end if;
+
+  update lesson_insurance_records
+     set payment_status = 'voided', voided_at = now(), voided_reason = 'CI',
+         voided_from_status = payment_status
+   where instructor_id = b and season_key = '2027/28' and kind = 'season_pass';
+  r := public.lesson_insurance_admin_grant_pass(b, '2027/28', admin_id, gen_random_uuid(), null, null);
+  rec := pg_temp.rec(r);
+  if r ->> 'outcome' <> 'created' or rec.payment_status <> 'unpaid' or rec.amount_cents <> 40000 - owed_before
+     or rec.paid_on is not null or rec.paid_note is not null or rec.paid_by is not null then
+    raise exception 'a grant without paid_on should return one unpaid season pass: % %', r, rec;
+  end if;
+  if (select count(*) from lesson_insurance_records
+       where instructor_id = b and season_key = '2027/28' and kind = 'season_pass'
+         and payment_status <> 'voided') <> 1 then
+    raise exception 'an instructor has more than one live season pass after grants';
+  end if;
+
+  r := public.lesson_insurance_admin_grant_pass(b, '2099/00', admin_id, gen_random_uuid(), '2026-10-15', null);
+  if r ->> 'outcome' <> 'no_season' then
+    raise exception 'a grant for an unknown season should have no season: %', r;
+  end if;
+end
+$$;
+
+do $$
+declare
   t text;
   r text;
 begin
@@ -357,7 +422,13 @@ begin
     if has_function_privilege(r, 'public.lesson_insurance_register(uuid, text, text, date, int, uuid, text, jsonb, boolean, uuid, uuid)', 'execute') then
       raise exception '% can execute lesson_insurance_register', r;
     end if;
+    if has_function_privilege(r, 'public.lesson_insurance_admin_grant_pass(uuid, text, uuid, uuid, date, text)', 'execute') then
+      raise exception '% can execute lesson_insurance_admin_grant_pass', r;
+    end if;
   end loop;
+  if not has_function_privilege('service_role', 'public.lesson_insurance_admin_grant_pass(uuid, text, uuid, uuid, date, text)', 'execute') then
+    raise exception 'service_role cannot execute lesson_insurance_admin_grant_pass';
+  end if;
 end
 $$;
 
@@ -365,10 +436,12 @@ rollback;
 
 create extension if not exists dblink;
 
-insert into auth.users (id, email)
-values ('11111111-1111-4111-8111-1111111111a3', 'ci-ins-c@example.com');
-insert into instructors (id, auth_user_id, email, display_name_en)
-values ('22222222-2222-4222-8222-2222222222a3', '11111111-1111-4111-8111-1111111111a3', 'ci-ins-c@example.com', 'CI Insurance C');
+insert into auth.users (id, email) values
+  ('11111111-1111-4111-8111-1111111111a3', 'ci-ins-c@example.com'),
+  ('11111111-1111-4111-8111-1111111111a4', 'ci-ins-d@example.com');
+insert into instructors (id, auth_user_id, email, display_name_en) values
+  ('22222222-2222-4222-8222-2222222222a3', '11111111-1111-4111-8111-1111111111a3', 'ci-ins-c@example.com', 'CI Insurance C'),
+  ('22222222-2222-4222-8222-2222222222a4', '11111111-1111-4111-8111-1111111111a4', 'ci-ins-d@example.com', 'CI Insurance D');
 do $$
 begin
   perform public.lesson_insurance_register(
@@ -428,8 +501,52 @@ begin
 end
 $$;
 
-delete from lesson_insurance_records where instructor_id = '22222222-2222-4222-8222-2222222222a3';
-delete from instructors where id = '22222222-2222-4222-8222-2222222222a3';
-delete from auth.users where id = '11111111-1111-4111-8111-1111111111a3';
+do $$
+declare
+  c constant uuid := '22222222-2222-4222-8222-2222222222a4';
+  conn text := 'dbname=' || current_database()
+    || ' user=' || current_user
+    || ' port=' || current_setting('port')
+    || ' host=' || split_part(current_setting('unix_socket_directories'), ',', 1);
+  call text := format(
+    'select public.lesson_insurance_admin_grant_pass(%L, ''2026/27'', null, gen_random_uuid(), date ''2026-10-15'', null)::text',
+    c);
+  first jsonb;
+  second jsonb;
+begin
+  perform dblink_connect('grant_one', conn);
+  perform dblink_connect('grant_two', conn);
+  perform dblink_exec('grant_one', 'begin');
+  select r::jsonb into first from dblink('grant_one', call) as t(r text);
+  perform dblink_send_query('grant_two', call);
+  perform pg_sleep(0.5);
+  if dblink_is_busy('grant_two') <> 1 then
+    raise exception 'the second grant did not wait for the first';
+  end if;
+  perform dblink_exec('grant_one', 'commit');
+  select r::jsonb into second from dblink_get_result('grant_two') as t(r text);
+  perform dblink_disconnect('grant_one');
+  perform dblink_disconnect('grant_two');
+
+  if first ->> 'outcome' <> 'created' or second ->> 'outcome' <> 'already_has_pass' then
+    raise exception 'two concurrent grants should give created then already_has_pass: % %', first, second;
+  end if;
+  if (select count(*) from lesson_insurance_records
+       where instructor_id = c and season_key = '2026/27' and kind = 'season_pass'
+         and payment_status <> 'voided') <> 1
+     or (select payment_status from lesson_insurance_records where id = (first ->> 'id')::uuid) <> 'paid'
+     or (select sum(amount_cents) from lesson_insurance_records
+          where instructor_id = c and season_key = '2026/27') <> 40000 then
+    raise exception 'two concurrent grants did not leave exactly one live paid pass of 40000';
+  end if;
+end
+$$;
+
+delete from lesson_insurance_records
+ where instructor_id in ('22222222-2222-4222-8222-2222222222a3', '22222222-2222-4222-8222-2222222222a4');
+delete from instructors
+ where id in ('22222222-2222-4222-8222-2222222222a3', '22222222-2222-4222-8222-2222222222a4');
+delete from auth.users
+ where id in ('11111111-1111-4111-8111-1111111111a3', '11111111-1111-4111-8111-1111111111a4');
 
 \echo 'Lesson insurance checks passed.'

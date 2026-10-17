@@ -145,3 +145,40 @@ revoke all on function public.lesson_insurance_register(uuid, text, text, date, 
   from public, anon, authenticated;
 grant execute on function public.lesson_insurance_register(uuid, text, text, date, int, uuid, text, jsonb, boolean, uuid, uuid)
   to service_role;
+
+create or replace function public.lesson_insurance_admin_grant_pass(
+  p_instructor_id uuid,
+  p_season_key text,
+  p_actor uuid,
+  p_idempotency_key uuid,
+  p_paid_on date,
+  p_paid_note text
+) returns jsonb
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_result jsonb;
+begin
+  v_result := public.lesson_insurance_register(
+    p_instructor_id, 'season_pass', p_season_key, null, null, null, null, null,
+    false, p_idempotency_key, p_actor
+  );
+
+  if p_paid_on is not null and v_result ->> 'outcome' = 'created' then
+    update lesson_insurance_records
+       set payment_status = 'paid',
+           paid_on = p_paid_on,
+           paid_note = p_paid_note,
+           paid_by = p_actor
+     where id = (v_result ->> 'id')::uuid;
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function public.lesson_insurance_admin_grant_pass(uuid, text, uuid, uuid, date, text)
+  from public, anon, authenticated;
+grant execute on function public.lesson_insurance_admin_grant_pass(uuid, text, uuid, uuid, date, text)
+  to service_role;

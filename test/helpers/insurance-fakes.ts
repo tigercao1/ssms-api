@@ -17,6 +17,7 @@ import {
 import type { PageRequest, RowPage } from '../../src/database/pagination';
 import {
   type AdminInsuranceRecordRow,
+  type GrantSeasonPassInput,
   type InsuranceInstructorRow,
   type InsuranceRecordFilter,
   type InsuranceRecordPatch,
@@ -98,6 +99,8 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
   readonly counters = new Map<string, number>();
   readonly locations = new Map<string, string>([[HILL_ID, 'CI Hill']]);
   readonly registerCalls: RegisterInput[] = [];
+  readonly grantCalls: GrantSeasonPassInput[] = [];
+  grantFaultAfterInsert: Error | null = null;
   private tick = 0;
 
   constructor(
@@ -270,6 +273,55 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     this.rows.set(row.id, row);
     this.idempotency.set(idemKey, row.id);
     return Promise.resolve({ outcome: 'created', id: row.id });
+  }
+
+  async grantSeasonPass(input: GrantSeasonPassInput): Promise<RegisterOutcome> {
+    this.grantCalls.push(input);
+    const rows = new Map(
+      [...this.rows].map(([id, row]) => [id, structuredClone(row)]),
+    );
+    const idempotency = new Map(this.idempotency);
+    const counters = new Map(this.counters);
+    const tick = this.tick;
+    try {
+      const outcome = await this.register({
+        instructorId: input.instructorId,
+        kind: 'season_pass',
+        seasonKey: input.seasonKey,
+        lessonDate: null,
+        durationHours: null,
+        locationId: null,
+        locationOther: null,
+        students: null,
+        idempotencyKey: input.idempotencyKey,
+        actor: input.actor,
+      });
+      if (outcome.outcome === 'created') {
+        if (this.grantFaultAfterInsert) {
+          throw this.grantFaultAfterInsert;
+        }
+        if (input.paidOn) {
+          Object.assign(this.rows.get(outcome.id)!, {
+            payment_status: 'paid',
+            paid_on: input.paidOn,
+            paid_note: input.paidNote,
+            paid_by: input.actor,
+          });
+        }
+      }
+      return outcome;
+    } catch (error) {
+      this.restore(this.rows, rows);
+      this.restore(this.idempotency, idempotency);
+      this.restore(this.counters, counters);
+      this.tick = tick;
+      throw error;
+    }
+  }
+
+  private restore<K, V>(target: Map<K, V>, snapshot: Map<K, V>): void {
+    target.clear();
+    snapshot.forEach((value, key) => target.set(key, value));
   }
 
   findRecord(id: string): Promise<AdminInsuranceRecordRow | null> {

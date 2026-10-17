@@ -385,6 +385,7 @@ describe('/admin/insurance', () => {
             amountCents: 39000,
             note: 'paid up front',
             paidOn: null,
+            paymentStatus: 'unpaid',
           },
         },
       ]);
@@ -432,15 +433,67 @@ describe('/admin/insurance', () => {
         paidNote: 'e-transfer 9',
         paidBy: INSURANCE_ADMIN_ID,
       });
-      expect(ctx.audit.entries.map((e) => e.action)).toEqual([
-        'lesson_insurance.grant_season_pass',
-        'lesson_insurance.mark_paid',
-      ]);
+      expect(ctx.repo.grantCalls).toHaveLength(1);
+      expect(ctx.repo.grantCalls[0]).toMatchObject({
+        instructorId: BO_INSTRUCTOR,
+        seasonKey: '2027/28',
+        actor: INSURANCE_ADMIN_ID,
+        paidOn: '2026-10-14',
+        paidNote: 'e-transfer 9',
+      });
+      expect(ctx.audit.entries).toHaveLength(1);
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'lesson_insurance.grant_season_pass',
+        metadata: {
+          note: 'e-transfer 9',
+          paidOn: '2026-10-14',
+          paymentStatus: 'paid',
+        },
+      });
       expect(
         [...ctx.repo.rows.values()].filter((r) => r.kind === 'season_pass'),
       ).toHaveLength(1);
       expect(await summaryRow(BO_INSTRUCTOR, '2027/28')).toMatchObject({
         coverage: 'season_pass',
+        seasonPassRecordId: (res.body as AdminInsuranceRecord).id,
+        seasonPassPaymentStatus: 'paid',
+      });
+    });
+
+    it('leaves no pass when the paid grant fails, and a retry creates exactly one paid pass', async () => {
+      await seed(BO_INSTRUCTOR, '2026-12-01', 1, 1);
+      const before = await summaryRow(BO_INSTRUCTOR);
+      ctx.repo.grantFaultAfterInsert = new Error('connection reset');
+      await grant(BO_INSTRUCTOR, {
+        paidOn: '2026-10-14',
+        note: 'e-transfer 9',
+      }).expect(500);
+      const passes = () =>
+        [...ctx.repo.rows.values()].filter(
+          (r) => r.instructor_id === BO_INSTRUCTOR && r.kind === 'season_pass',
+        );
+      expect(passes()).toHaveLength(0);
+      expect(ctx.audit.entries).toEqual([]);
+      expect(await summaryRow(BO_INSTRUCTOR)).toEqual(before);
+
+      ctx.repo.grantFaultAfterInsert = null;
+      const res = await grant(BO_INSTRUCTOR, {
+        paidOn: '2026-10-14',
+        note: 'e-transfer 9',
+      }).expect(201);
+      expect(res.body).toMatchObject({
+        amountCents: 39000,
+        paymentStatus: 'paid',
+        paidOn: '2026-10-14',
+        paidNote: 'e-transfer 9',
+        paidBy: INSURANCE_ADMIN_ID,
+        recordNo: 'INS-20261015-0002',
+      });
+      expect(passes()).toHaveLength(1);
+      expect(ctx.audit.entries.map((e) => e.action)).toEqual([
+        'lesson_insurance.grant_season_pass',
+      ]);
+      expect(await summaryRow(BO_INSTRUCTOR)).toMatchObject({
         seasonPassRecordId: (res.body as AdminInsuranceRecord).id,
         seasonPassPaymentStatus: 'paid',
       });

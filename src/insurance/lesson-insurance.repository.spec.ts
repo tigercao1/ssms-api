@@ -114,6 +114,43 @@ describe('SupabaseLessonInsuranceRepository', () => {
     });
   });
 
+  it('grants a season pass through one plpgsql call and keeps its error code', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      'rpc:lesson_insurance_admin_grant_pass': [
+        ok({ outcome: 'created', id: ID }),
+        ok(null),
+        fail,
+      ],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    const input = {
+      instructorId: ID,
+      seasonKey: '2026/27',
+      actor: 'auth-1',
+      idempotencyKey: KEY,
+      paidOn: '2026-10-14',
+      paidNote: 'e-transfer',
+    };
+    await expect(repo.grantSeasonPass(input)).resolves.toEqual({
+      outcome: 'created',
+      id: ID,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].ops[0][1]).toEqual({
+      p_instructor_id: ID,
+      p_season_key: '2026/27',
+      p_actor: 'auth-1',
+      p_idempotency_key: KEY,
+      p_paid_on: '2026-10-14',
+      p_paid_note: 'e-transfer',
+    });
+    await expect(repo.grantSeasonPass(input)).rejects.toThrow('no result');
+    await expect(repo.grantSeasonPass(input)).rejects.toMatchObject({
+      constructor: DatabaseError,
+      code: '23503',
+    });
+  });
+
   it('finds a record with its instructor and location', async () => {
     const { client, calls } = recordingPayrollSupabase({
       lesson_insurance_records: ok({ id: ID }),

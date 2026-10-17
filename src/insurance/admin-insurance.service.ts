@@ -182,17 +182,15 @@ export class AdminInsuranceService {
     if (!season) {
       throw new BadRequestException(NO_CURRENT_SEASON);
     }
-    const outcome = await this.repo.register({
+    const note = dto.note ? dto.note : null;
+    const paidOn = dto.paidOn ?? null;
+    const outcome = await this.repo.grantSeasonPass({
       instructorId,
-      kind: 'season_pass',
       seasonKey: season.key,
-      lessonDate: null,
-      durationHours: null,
-      locationId: null,
-      locationOther: null,
-      students: null,
-      idempotencyKey: randomUUID(),
       actor: actor.userId ?? null,
+      idempotencyKey: randomUUID(),
+      paidOn,
+      paidNote: paidOn ? note : null,
     });
     if (
       outcome.outcome === 'already_covered' ||
@@ -212,7 +210,6 @@ export class AdminInsuranceService {
       throw new Error(`Unexpected season pass outcome ${outcome.outcome}`);
     }
     const created = await this.findOrThrow(outcome.id);
-    const note = dto.note ? dto.note : null;
     await this.audit.record({
       action: AUDIT_ACTIONS.lessonInsuranceGrantSeasonPass,
       actor: { ...actor, role: actor.role ?? 'admin' },
@@ -224,12 +221,11 @@ export class AdminInsuranceService {
         seasonKey: created.season_key,
         amountCents: created.amount_cents,
         note,
-        paidOn: dto.paidOn ?? null,
+        paidOn,
+        paymentStatus: created.payment_status,
       },
     });
-    return dto.paidOn
-      ? this.markPaid(created.id, { paidOn: dto.paidOn, note }, actor)
-      : toAdminRecord(created);
+    return toAdminRecord(created);
   }
 
   async markPaid(

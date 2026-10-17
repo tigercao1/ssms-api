@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import { hasCode, PG_FOREIGN_KEY_VIOLATION } from '../database/db-result';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -62,8 +63,13 @@ export const TRANSLATION_SAME_AS_SOURCE =
   'The other language version must be in a different language from the main PDF';
 export const TRANSLATION_NOT_FOUND =
   'This document has no version in that language';
+export const TEMPLATE_HAS_COMPLETIONS =
+  'Someone has completed this document, so it cannot be deleted. Retire it instead.';
 export const SOURCE_LANGUAGE_CONFLICT =
   'Remove the other language version before changing the language of the main PDF to it or clearing it';
+
+const PG_NO_DATA_FOUND = 'P0002';
+const PG_OBJECT_NOT_IN_STATE = '55000';
 
 const UPDATE_FIELDS: [keyof UpdateTemplateDto, keyof DocumentTemplateWrite][] =
   [
@@ -435,6 +441,40 @@ export class DocumentTemplatesService {
       },
     });
     return this.present(await this.load(id));
+  }
+
+  async remove(id: string, actor: AuditActor): Promise<void> {
+    const before = await this.load(id);
+    let removedAssignments: number;
+    try {
+      removedAssignments = await this.repo.deleteUnlessCompleted(id);
+    } catch (err) {
+      if (hasCode(err, PG_NO_DATA_FOUND)) {
+        throw new NotFoundException(TEMPLATE_NOT_FOUND);
+      }
+      if (
+        hasCode(err, PG_OBJECT_NOT_IN_STATE) ||
+        hasCode(err, PG_FOREIGN_KEY_VIOLATION)
+      ) {
+        throw new ConflictException(TEMPLATE_HAS_COMPLETIONS);
+      }
+      throw err;
+    }
+    await Promise.all(
+      storageKeys.templateObjects(id).map((key) => this.discardUpload(key)),
+    );
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplateDelete,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        titleEn: before.title_en,
+        titleZh: before.title_zh,
+        status: before.status,
+        removedAssignments,
+      },
+    });
   }
 
   private async counts(rows: DocumentTemplateRow[]): Promise<TemplateCounts[]> {

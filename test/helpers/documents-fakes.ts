@@ -229,6 +229,7 @@ export function translationRow(
 
 export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesRepository {
   readonly rows = new Map<string, DocumentTemplateRow>();
+  assignmentRows = new Map<string, Omit<DocumentAssignmentRow, 'template'>>();
 
   seed(overrides: Partial<DocumentTemplateRow> = {}): DocumentTemplateRow {
     const row = templateRow(overrides);
@@ -335,6 +336,31 @@ export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesReposi
     });
     return Promise.resolve(true);
   }
+
+  deleteUnlessCompleted(id: string): Promise<number> {
+    if (!this.rows.has(id)) {
+      return Promise.reject(
+        new DatabaseError('delete document template', 'P0002', 'not found'),
+      );
+    }
+    const assignments = [...this.assignmentRows.values()].filter(
+      (r) => r.template_id === id,
+    );
+    if (assignments.some((r) => r.status === 'completed' || r.completed_at)) {
+      return Promise.reject(
+        new DatabaseError(
+          'delete document template',
+          '55000',
+          'document template has completed assignments',
+        ),
+      );
+    }
+    for (const r of assignments) {
+      this.assignmentRows.delete(r.id);
+    }
+    this.rows.delete(id);
+    return Promise.resolve(assignments.length);
+  }
 }
 
 /**
@@ -351,6 +377,7 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
     private readonly subjects?: InMemoryDocumentSubjectsRepository,
   ) {
     super();
+    templates.assignmentRows = this.rows;
   }
 
   seed(

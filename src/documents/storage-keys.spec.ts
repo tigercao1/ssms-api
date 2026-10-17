@@ -22,6 +22,14 @@ describe('storageKeys', () => {
     expect(storageKeys.instructorCertificationIntent('i', 'u')).toBe(
       'subjects/instructor/i/certifications/u.intent.json',
     );
+    expect(storageKeys.templateObjects('t')).toEqual([
+      'templates/t/source.pdf',
+      'templates/t/upload.pdf',
+      'templates/t/translations/en/source.pdf',
+      'templates/t/translations/en/upload.pdf',
+      'templates/t/translations/zh/source.pdf',
+      'templates/t/translations/zh/upload.pdf',
+    ]);
     expect(storageKeys.customerDocument('c', 'a')).toBe(
       'subjects/customer/c/documents/a.pdf',
     );

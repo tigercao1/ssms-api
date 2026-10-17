@@ -89,6 +89,16 @@ export class AdminDocumentTemplatesController {
     return this.templates.update(id, dto, toActor(user, userAgent));
   }
 
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<void> {
+    return this.templates.remove(id, toActor(user, userAgent));
+  }
+
   @Post(':id/source/upload-url')
   @HttpCode(HttpStatus.OK)
   sourceUploadUrl(

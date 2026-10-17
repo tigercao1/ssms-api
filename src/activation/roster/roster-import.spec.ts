@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { EmailDeliveryError } from '../../mailer/mailer.types';
 import type { InviteRecipient } from '../activation.types';
+import { SEND_INTERVAL_MS, inviteIdempotencyKey } from '../invite-delivery';
 import type { InviteDispatcher } from '../invite-dispatcher';
 import type { InvitesRepository } from '../invites.repository';
 import { rosterCsv } from './roster-fixtures.test-util';
@@ -10,10 +11,8 @@ import {
   DEFAULT_SEASON,
   NO_REFERENCE_ROW,
   RosterCommandError,
-  SEND_INTERVAL_MS,
   assertOutsideRepo,
   assertProdConfirmed,
-  inviteIdempotencyKey,
   parseRosterArgs,
   runRosterCli,
   type DeliveryReport,

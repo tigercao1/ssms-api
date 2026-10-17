@@ -60,6 +60,7 @@ export class CertificationExpiryService {
   async run(
     today = torontoToday(),
     now = new Date(),
+    canSend?: () => Promise<boolean>,
   ): Promise<CertificationExpiryResult> {
     const result: CertificationExpiryResult = {
       expiring: 0,
@@ -71,6 +72,9 @@ export class CertificationExpiryService {
         ? now.toISOString()
         : torontoStartOfDay(today);
     for (const due of await this.dueReminders(today)) {
+      if (canSend && !(await canSend())) {
+        break;
+      }
       const claimed = await this.uploads.swapExpiryReminderSentAt(
         due.upload.id,
         due.upload.expiry_reminder_sent_at,

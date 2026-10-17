@@ -1,9 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { EmailDeliveryError } from '../../mailer/mailer.types';
-import type { InviteRecipient } from '../activation.types';
 import { normalizeEmail } from '../activation.service';
-import type { InviteDispatcher, InviteTemplate } from '../invite-dispatcher';
+import type { InviteDispatcher } from '../invite-dispatcher';
+import {
+  DELIVERED_LABEL,
+  deliverInvites,
+  remindDueInvites,
+  type InviteDeliveryDeps,
+  type InviteDeliveryResult,
+} from '../invite-delivery';
 import type { DeliveryKind, InvitesRepository } from '../invites.repository';
 import {
   parseRosterCsv,
@@ -29,7 +34,6 @@ import type {
 } from './roster-ports';
 
 export const DEFAULT_SEASON = '2026/27';
-export const SEND_INTERVAL_MS = 500;
 
 export type RosterMode =
   | 'dry-run'
@@ -789,138 +793,43 @@ export async function runApply(
   return report;
 }
 
-const DELIVERED_LABEL: Record<DeliveryKind, string> = {
-  send: 'sent',
-  remind: 'reminded',
-};
-
-/** Resend `Idempotency-Key` for one claimed dispatch. */
-export function inviteIdempotencyKey(
-  inviteId: string,
-  kind: DeliveryKind,
-  claimedAt: Date,
-): string {
-  return `invite-${inviteId}-${kind === 'send' ? 'sent' : 'remind'}-${claimedAt.toISOString()}`;
-}
-
-function deliveryError(err: unknown): string {
-  return err instanceof EmailDeliveryError
-    ? `${err.outcome}: ${err.message}`
-    : errorMessage(err);
-}
-
-type DeliveryOutcome = 'sent' | 'failed' | 'skipped' | 'needs_review';
-
-async function deliverOne(
+function deliveryDeps(
   deps: RosterDeps,
   invites: InvitesRepository,
-  dispatcher: InviteDispatcher,
-  invite: InviteRecipient,
-  kind: DeliveryKind,
-  template: InviteTemplate,
-  failed: DeliveryReport['failed'],
-): Promise<DeliveryOutcome> {
-  const claimedAt = deps.now();
-  try {
-    if (!(await invites.claim(invite.id, kind, claimedAt))) {
-      deps.log(`  skipped invite ${invite.id}: claimed by another run`);
-      return 'skipped';
-    }
-  } catch (err) {
-    const error = deliveryError(err);
-    failed.push({ email: invite.email, error });
-    deps.log(`  FAILED ${template} to ${invite.email}: ${error}`);
-    return 'failed';
-  }
-  try {
-    await dispatcher.dispatch(
-      invite,
-      template,
-      'sync',
-      claimedAt,
-      inviteIdempotencyKey(invite.id, kind, claimedAt),
-    );
-  } catch (err) {
-    const error = deliveryError(err);
-    failed.push({ email: invite.email, error });
-    deps.log(`  FAILED ${template} to ${invite.email}: ${error}`);
-    try {
-      await invites.releaseClaim(invite.id, kind, claimedAt);
-      return 'failed';
-    } catch (releaseErr) {
-      deps.log(
-        `  could not release the claim on invite ${invite.id}: ${errorMessage(releaseErr)}`,
-      );
-      return 'needs_review';
-    }
-  }
-  try {
-    if (kind === 'send') {
-      await invites.markSent(invite.id, claimedAt);
-    } else {
-      await invites.markReminded(invite.id, claimedAt);
-    }
-  } catch (err) {
-    deps.log(
-      `  sent ${template} to ${invite.email} but could not mark invite ${invite.id} ${DELIVERED_LABEL[kind]}: ${errorMessage(err)}`,
-    );
-    return 'needs_review';
-  }
-  deps.log(`  sent ${template} to ${invite.email}`);
-  return 'sent';
+): InviteDeliveryDeps {
+  return {
+    invites,
+    dispatcher: deps.dispatcher(),
+    sleep: deps.sleep,
+    log: deps.log,
+    now: deps.now,
+  };
 }
 
-async function deliver(
+async function report(
   deps: RosterDeps,
   options: RosterOptions,
-  invites: InvitesRepository,
-  candidates: InviteRecipient[],
   kind: DeliveryKind,
-  template: InviteTemplate,
+  result: InviteDeliveryResult,
 ): Promise<DeliveryReport> {
-  const needsReview = await invites.listUnfinishedClaims(options.season, kind);
-  const dispatcher = deps.dispatcher();
-  const failed: DeliveryReport['failed'] = [];
-  let sent = 0;
-  let skipped = 0;
-  for (const [i, invite] of candidates.entries()) {
-    if (i > 0) {
-      await deps.sleep(SEND_INTERVAL_MS);
-    }
-    const outcome = await deliverOne(
-      deps,
-      invites,
-      dispatcher,
-      invite,
-      kind,
-      template,
-      failed,
-    );
-    if (outcome === 'sent') {
-      sent++;
-    } else if (outcome === 'skipped') {
-      skipped++;
-    } else if (outcome === 'needs_review') {
-      needsReview.push(invite.id);
-    }
-  }
+  const { candidates, sent, skipped, failed, needsReview } = result;
   const report: DeliveryReport = {
     mode: options.mode as 'send' | 'remind',
     env: deps.env.SSMS_ENV ?? 'unknown',
     season: options.season,
     generatedAt: deps.now().toISOString(),
     counts: {
-      candidates: candidates.length,
+      candidates,
       sent,
       failed: failed.length,
       skipped,
       needsReview: needsReview.length,
     },
-    failed,
+    failed: failed.map(({ email, error }) => ({ email, error })),
     needsReview,
   };
   deps.log(
-    `Mode: ${report.mode} · candidates ${candidates.length} · sent ${sent} · failed ${failed.length} · skipped ${skipped} · needs review ${needsReview.length}`,
+    `Mode: ${report.mode} · candidates ${candidates} · sent ${sent} · failed ${failed.length} · skipped ${skipped} · needs review ${needsReview.length}`,
   );
   if (needsReview.length > 0) {
     deps.log(
@@ -942,10 +851,16 @@ export async function runSend(
   }
   const invites = deps.invites();
   const candidates = await invites.listUnsent(options.season, options.only);
-  return deliver(deps, options, invites, candidates, 'send', 'invite.season');
+  const result = await deliverInvites(
+    deliveryDeps(deps, invites),
+    options.season,
+    candidates,
+    'send',
+  );
+  return report(deps, options, 'send', result);
 }
 
-/** Emails `invite.reminder` to unclaimed invites sent ≥ 7 days ago, unredeemed, unreminded and unexpired. */
+/** Emails `invite.reminder` to unclaimed invites sent ≥ 7 days ago, unredeemed, unactivated, unreminded and unexpired. */
 export async function runRemind(
   deps: RosterDeps,
   options: RosterOptions,
@@ -953,19 +868,11 @@ export async function runRemind(
   if (options.report) {
     assertOutsideRepo(deps.repoRoot, options.report);
   }
-  const invites = deps.invites();
-  const candidates = await invites.listDueForReminder(
+  const result = await remindDueInvites(
+    deliveryDeps(deps, deps.invites()),
     options.season,
-    deps.now(),
   );
-  return deliver(
-    deps,
-    options,
-    invites,
-    candidates,
-    'remind',
-    'invite.reminder',
-  );
+  return report(deps, options, 'remind', result);
 }
 
 /**

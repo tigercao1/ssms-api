@@ -121,6 +121,7 @@ describe('SupabaseInvitesRepository', () => {
       ['eq', ['season', '2026/27']],
       ['lte', ['sent_at', '2026-10-04T04:00:00.000Z']],
       ['is', ['redeemed_at', null]],
+      ['is', ['activated_at', null]],
       ['is', ['reminded_at', null]],
       ['is', ['remind_claimed_at', null]],
       ['gt', ['expires_at', '2026-10-11T04:00:00.000Z']],

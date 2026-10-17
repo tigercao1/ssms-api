@@ -38,6 +38,10 @@ export class MailerConfig {
   }
 }
 
+export function isLocalUrl(url: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url);
+}
+
 /** Reads a trimmed env value, treating blank as unset. */
 export function readOptional(
   config: ConfigService,

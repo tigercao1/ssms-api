@@ -11,7 +11,7 @@ import {
   type DailyRemindersResult,
 } from './document-reminders.service';
 
-/** `POST /internal/documents/reminders`: the daily reminder job, called by CI cron. */
+/** `POST /internal/documents/reminders`: the daily reminder job, run by hand as a fallback to the in-app schedule. */
 @Controller('internal/documents')
 export class InternalDocumentsController {
   constructor(private readonly reminders: DocumentRemindersService) {}

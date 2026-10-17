@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseEnv } from 'node:util';
-import { DEFAULT_PORTAL_URL } from '../../mailer/mailer.config';
+import { DEFAULT_PORTAL_URL, isLocalUrl } from '../../mailer/mailer.config';
 
 export type EnvMap = Record<string, string | undefined>;
 
@@ -54,7 +54,7 @@ export function loadSsmsEnv(
   }
   if (target === 'prod') {
     env.PORTAL_URL = env.PORTAL_URL?.trim() || DEFAULT_PORTAL_URL;
-    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(env.PORTAL_URL)) {
+    if (isLocalUrl(env.PORTAL_URL)) {
       throw new Error(
         `PORTAL_URL is ${env.PORTAL_URL}, a local address; prod emails must link to the real portal.`,
       );

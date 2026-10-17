@@ -183,7 +183,7 @@ describe('document language versions HTTP', () => {
     const key = `templates/main-${Math.random()}/source.pdf`;
     ctx.storage.seed(key, ctx.main.bytes);
     return ctx.templates.seed({
-      title_en: 'Coach services agreement',
+      title_en: 'Instructor services agreement',
       title_zh: '教练服务协议',
       source_key: key,
       source_sha256: ctx.main.sha256,

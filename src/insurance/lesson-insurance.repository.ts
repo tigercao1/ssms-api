@@ -20,6 +20,8 @@ export const ADMIN_INSURANCE_RECORD_COLUMNS = [
   'instructor:instructors(display_name_en, display_name_zh, email)',
 ].join(', ');
 export const INSURANCE_INSTRUCTOR_COLUMNS = 'id, approval_status';
+export const INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS =
+  'id, display_name_en, display_name_zh, email';
 
 export type InsuranceKind = 'lesson' | 'season_pass';
 export type InsuranceCoverage =
@@ -77,6 +79,13 @@ export interface InsuranceInstructorRow {
   approval_status: InstructorApprovalStatus;
 }
 
+export interface InsuranceSummaryInstructorRow {
+  id: string;
+  display_name_en: string;
+  display_name_zh: string | null;
+  email: string;
+}
+
 export interface RegisterInput {
   instructorId: string;
   kind: InsuranceKind;
@@ -124,6 +133,7 @@ export abstract class LessonInsuranceRepository {
     authUserId: string,
   ): Promise<InsuranceInstructorRow | null>;
   abstract instructorById(id: string): Promise<InsuranceInstructorRow | null>;
+  abstract approvedInstructors(): Promise<InsuranceSummaryInstructorRow[]>;
   abstract register(input: RegisterInput): Promise<RegisterOutcome>;
   abstract findRecord(id: string): Promise<AdminInsuranceRecordRow | null>;
   abstract recordsFor(
@@ -170,6 +180,19 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
       .maybeSingle()) as DbResult<InsuranceInstructorRow>;
     check(error, 'load instructor');
     return data;
+  }
+
+  approvedInstructors(): Promise<InsuranceSummaryInstructorRow[]> {
+    return this.pages<InsuranceSummaryInstructorRow>(
+      (from, to) =>
+        this.supabase
+          .from('instructors')
+          .select(INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS)
+          .eq('approval_status', 'approved')
+          .order('id', { ascending: true })
+          .range(from, to),
+      'list approved instructors',
+    );
   }
 
   async register(input: RegisterInput): Promise<RegisterOutcome> {
@@ -285,17 +308,31 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
     return query;
   }
 
-  private async all<T>(
+  private all<T>(
     columns: string,
     filter: InsuranceRecordFilter,
     action: string,
   ): Promise<T[]> {
+    return this.pages<T>(
+      (from, to) =>
+        this.matching(columns, filter)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      action,
+    );
+  }
+
+  private async pages<T>(
+    fetchPage: (from: number, to: number) => PromiseLike<unknown>,
+    action: string,
+  ): Promise<T[]> {
     const rows: T[] = [];
     for (let offset = 0; ; offset += INSURANCE_PAGE_SIZE) {
-      const { data, error } = (await this.matching(columns, filter)
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(offset, offset + INSURANCE_PAGE_SIZE - 1)) as DbResult<T[]>;
+      const { data, error } = (await fetchPage(
+        offset,
+        offset + INSURANCE_PAGE_SIZE - 1,
+      )) as DbResult<T[]>;
       check(error, action);
       const page = data ?? [];
       rows.push(...page);

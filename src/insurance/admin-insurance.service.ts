@@ -99,32 +99,42 @@ export class AdminInsuranceService {
     if (!season) {
       return [];
     }
-    const byInstructor = new Map<string, AdminInsuranceRecordRow[]>();
-    for (const row of await this.repo.seasonRecords(season.key)) {
-      byInstructor.set(row.instructor_id, [
-        ...(byInstructor.get(row.instructor_id) ?? []),
-        row,
-      ]);
+    const [records, approved] = await Promise.all([
+      this.repo.seasonRecords(season.key),
+      this.repo.approvedInstructors(),
+    ]);
+    const byInstructor = new Map<
+      string,
+      {
+        instructor: AdminInsuranceRecordRow['instructor'];
+        rows: AdminInsuranceRecordRow[];
+      }
+    >(approved.map(({ id, ...instructor }) => [id, { instructor, rows: [] }]));
+    for (const row of records) {
+      const entry = byInstructor.get(row.instructor_id) ?? {
+        instructor: row.instructor,
+        rows: [],
+      };
+      entry.rows.push(row);
+      byInstructor.set(row.instructor_id, entry);
     }
     return [...byInstructor.entries()]
-      .map(([instructorId, rows]) => ({
-        instructorId,
-        pass: rows.find(
+      .map(([instructorId, { instructor, rows }]) => {
+        const pass = rows.find(
           (row) =>
             row.kind === 'season_pass' && row.payment_status !== 'voided',
-        ),
-        rows,
-      }))
-      .map(({ instructorId, pass, rows }) => ({
-        instructorId,
-        name: rows[0].instructor?.display_name_en ?? null,
-        nameZh: rows[0].instructor?.display_name_zh ?? null,
-        email: rows[0].instructor?.email ?? null,
-        ...totalsOf(rows),
-        seasonPassRecordId: pass?.id ?? null,
-        seasonPassPaymentStatus: passPaymentStatus(pass),
-        records: rows.length,
-      }))
+        );
+        return {
+          instructorId,
+          name: instructor?.display_name_en ?? null,
+          nameZh: instructor?.display_name_zh ?? null,
+          email: instructor?.email ?? null,
+          ...totalsOf(rows),
+          seasonPassRecordId: pass?.id ?? null,
+          seasonPassPaymentStatus: passPaymentStatus(pass),
+          records: rows.length,
+        };
+      })
       .sort(
         (a, b) =>
           (a.name ?? '').localeCompare(b.name ?? '') ||

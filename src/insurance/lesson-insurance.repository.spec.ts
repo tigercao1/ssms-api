@@ -6,6 +6,7 @@ import {
   INSURANCE_INSTRUCTOR_COLUMNS,
   INSURANCE_PAGE_SIZE,
   INSURANCE_RECORD_COLUMNS,
+  INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS,
   SupabaseLessonInsuranceRepository,
 } from './lesson-insurance.repository';
 
@@ -41,6 +42,31 @@ describe('SupabaseLessonInsuranceRepository', () => {
       ['eq', 'id', ID],
       ['maybeSingle'],
     ]);
+  });
+
+  it('reads every page of approved instructors', async () => {
+    const full = Array.from({ length: INSURANCE_PAGE_SIZE }, (_, i) => ({ i }));
+    const { client, calls } = recordingPayrollSupabase({
+      instructors: [ok(full), ok(null), fail],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(repo.approvedInstructors()).resolves.toHaveLength(
+      INSURANCE_PAGE_SIZE,
+    );
+    expect(calls[0].ops).toEqual([
+      ['select', INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS],
+      ['eq', 'approval_status', 'approved'],
+      ['order', 'id', { ascending: true }],
+      ['range', 0, INSURANCE_PAGE_SIZE - 1],
+    ]);
+    expect(calls[1].ops.at(-1)).toEqual([
+      'range',
+      INSURANCE_PAGE_SIZE,
+      2 * INSURANCE_PAGE_SIZE - 1,
+    ]);
+    await expect(repo.approvedInstructors()).rejects.toThrow(
+      'list approved instructors',
+    );
   });
 
   it('registers through the plpgsql function and keeps its error code', async () => {

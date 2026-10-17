@@ -29,6 +29,7 @@ import {
   ALREADY_VOIDED,
   AdminInsuranceService,
   INSTRUCTOR_NOT_APPROVED,
+  type InstructorInsuranceSummary,
   INSTRUCTOR_NOT_FOUND,
   NO_CURRENT_SEASON,
   MARK_PAID_NEEDS_UNPAID,
@@ -120,6 +121,16 @@ describe('/admin/insurance', () => {
       .post(`/admin/insurance/instructors/${instructorId}/season-pass`)
       .set('Authorization', ADMIN_AUTH)
       .send(body);
+  const summaryRow = async (instructorId: string, season?: string) =>
+    (
+      (
+        await http()
+          .get('/admin/insurance/summary')
+          .query(season ? { season } : {})
+          .set('Authorization', ADMIN_AUTH)
+          .expect(200)
+      ).body as InstructorInsuranceSummary[]
+    ).find((row) => row.instructorId === instructorId);
   const mine = async () =>
     (
       await http()
@@ -153,7 +164,7 @@ describe('/admin/insurance', () => {
   });
 
   describe('GET summary', () => {
-    it('totals each instructor with records in the season, sorted by name', async () => {
+    it('totals every approved instructor in the season, sorted by name', async () => {
       await seed(BO_INSTRUCTOR, '2026-12-01', 2, 4);
       await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 1);
       for (const day of ['02', '03', '04', '05', '06']) {
@@ -194,6 +205,19 @@ describe('/admin/insurance', () => {
             seasonPassPaymentStatus: null,
             records: 1,
           },
+          {
+            instructorId: CAROL_INSTRUCTOR,
+            name: 'Carol King',
+            nameZh: null,
+            email: 'carol.king@example.com',
+            owedCents: 0,
+            paidCents: 0,
+            unpaidCents: 0,
+            coverage: 'none',
+            seasonPassRecordId: null,
+            seasonPassPaymentStatus: null,
+            records: 0,
+          },
         ]);
       const later = await http()
         .get('/admin/insurance/summary')
@@ -204,7 +228,38 @@ describe('/admin/insurance', () => {
         expect.objectContaining({
           instructorId: ADA_INSTRUCTOR,
           owedCents: 1000,
+          records: 1,
         }),
+        expect.objectContaining({
+          instructorId: BO_INSTRUCTOR,
+          owedCents: 0,
+          records: 0,
+        }),
+        expect.objectContaining({
+          instructorId: CAROL_INSTRUCTOR,
+          owedCents: 0,
+          records: 0,
+        }),
+      ]);
+    });
+
+    it('leaves out a pending instructor without records and keeps a rejected one with records', async () => {
+      await seed(BO_INSTRUCTOR, '2026-12-01', 1, 1);
+      ctx.repo.instructors.get(BO_INSTRUCTOR)!.approval_status = 'rejected';
+      ctx.repo.instructors.get(CAROL_INSTRUCTOR)!.approval_status = 'pending';
+      const res = await http()
+        .get('/admin/insurance/summary')
+        .set('Authorization', ADMIN_AUTH)
+        .expect(200);
+      expect(
+        (res.body as InstructorInsuranceSummary[]).map((row) => [
+          row.instructorId,
+          row.name,
+          row.records,
+        ]),
+      ).toEqual([
+        [ADA_INSTRUCTOR, 'Ada Lovelace', 0],
+        [BO_INSTRUCTOR, 'Bo Zhang', 1],
       ]);
     });
 
@@ -355,18 +410,11 @@ describe('/admin/insurance', () => {
         coverage: 'season_pass',
         payment_status: 'not_required',
       });
-      const summary = await http()
-        .get('/admin/insurance/summary')
-        .set('Authorization', ADMIN_AUTH)
-        .expect(200);
-      expect(summary.body).toEqual([
-        expect.objectContaining({
-          instructorId: ADA_INSTRUCTOR,
-          coverage: 'season_pass',
-          seasonPassRecordId: record.id,
-          seasonPassPaymentStatus: 'unpaid',
-        }),
-      ]);
+      expect(await summaryRow(ADA_INSTRUCTOR)).toMatchObject({
+        coverage: 'season_pass',
+        seasonPassRecordId: record.id,
+        seasonPassPaymentStatus: 'unpaid',
+      });
     });
 
     it('marks the pass paid in the same request when paidOn is given', async () => {
@@ -391,18 +439,11 @@ describe('/admin/insurance', () => {
       expect(
         [...ctx.repo.rows.values()].filter((r) => r.kind === 'season_pass'),
       ).toHaveLength(1);
-      const summary = await http()
-        .get('/admin/insurance/summary')
-        .query({ season: '2027/28' })
-        .set('Authorization', ADMIN_AUTH)
-        .expect(200);
-      expect(summary.body).toEqual([
-        expect.objectContaining({
-          instructorId: BO_INSTRUCTOR,
-          seasonPassRecordId: (res.body as AdminInsuranceRecord).id,
-          seasonPassPaymentStatus: 'paid',
-        }),
-      ]);
+      expect(await summaryRow(BO_INSTRUCTOR, '2027/28')).toMatchObject({
+        coverage: 'season_pass',
+        seasonPassRecordId: (res.body as AdminInsuranceRecord).id,
+        seasonPassPaymentStatus: 'paid',
+      });
     });
 
     it('voiding the pass makes the next lesson charged again', async () => {
@@ -411,17 +452,12 @@ describe('/admin/insurance', () => {
       await post(`${passId}/void`, { reason: 'granted by mistake' }).expect(
         200,
       );
-      const summary = await http()
-        .get('/admin/insurance/summary')
-        .set('Authorization', ADMIN_AUTH)
-        .expect(200);
-      expect(summary.body).toEqual([
-        expect.objectContaining({
-          seasonPassRecordId: null,
-          seasonPassPaymentStatus: null,
-          coverage: 'none',
-        }),
-      ]);
+      expect(await summaryRow(ADA_INSTRUCTOR)).toMatchObject({
+        seasonPassRecordId: null,
+        seasonPassPaymentStatus: null,
+        coverage: 'none',
+        records: 1,
+      });
       const next = await seed(ADA_INSTRUCTOR, '2026-12-01', 1, 2);
       expect(ctx.repo.rows.get(next)).toMatchObject({
         amount_cents: 2000,

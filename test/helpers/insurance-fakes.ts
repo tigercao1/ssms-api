@@ -21,6 +21,7 @@ import {
   type InsuranceRecordFilter,
   type InsuranceRecordPatch,
   type InsuranceRecordRow,
+  type InsuranceSummaryInstructorRow,
   LessonInsuranceRepository,
   type PaymentStatus,
   type RegisterInput,
@@ -138,6 +139,19 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     const found = this.instructors.get(id);
     return Promise.resolve(
       found ? { id: found.id, approval_status: found.approval_status } : null,
+    );
+  }
+
+  approvedInstructors(): Promise<InsuranceSummaryInstructorRow[]> {
+    return Promise.resolve(
+      [...this.instructors.values()]
+        .filter((i) => i.approval_status === 'approved')
+        .map(({ id, display_name_en, display_name_zh, email }) => ({
+          id,
+          display_name_en,
+          display_name_zh,
+          email,
+        })),
     );
   }
 

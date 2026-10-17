@@ -399,6 +399,7 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
             translations: t.translations.map((tr) => ({
               language: tr.language,
               source_key: tr.source_key,
+              fields: tr.fields,
             })),
           }
         : null,

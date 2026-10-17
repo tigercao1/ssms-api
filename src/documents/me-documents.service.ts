@@ -24,7 +24,7 @@ import type {
   DocumentTemplateRow,
   InstructorCertificationRow,
 } from './documents.types';
-import { templateLanguages } from './template-versions';
+import { signerLanguages } from './template-versions';
 
 export const INSTRUCTOR_PROFILE_NOT_FOUND = 'Instructor profile not found';
 export const PENDING_APPROVAL =
@@ -75,7 +75,7 @@ function toDocumentItem(row: DocumentAssignmentRow): DocumentChecklistItem {
     viewedAt: row.viewed_at,
     completedAt: row.completed_at,
     dueAt: row.due_at,
-    languages: row.template ? templateLanguages(row.template) : [],
+    languages: row.template ? signerLanguages(row.template) : [],
   };
 }
 
@@ -96,7 +96,7 @@ function toPreviewItem(template: DocumentTemplateRow): DocumentChecklistItem {
     viewedAt: null,
     completedAt: null,
     dueAt: null,
-    languages: templateLanguages(template),
+    languages: signerLanguages(template),
   };
 }
 

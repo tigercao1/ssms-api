@@ -35,6 +35,7 @@ import {
 import {
   DocumentSigningService,
   LANGUAGE_UNAVAILABLE,
+  VERSION_HAS_NO_FIELDS,
 } from './document-signing.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
@@ -793,6 +794,59 @@ describe('document language versions HTTP', () => {
       await complete(b.id, signWith(['sig_zh'], 'en')).expect(400);
       expect(ctx.assignments.rows.get(a.id)?.status).toBe('assigned');
       expect(ctx.assignments.rows.get(b.id)?.status).toBe('assigned');
+    });
+
+    it('does not offer an uploaded sign version until it has fields', async () => {
+      const t = seedBilingual({ status: 'live' });
+      ctx.templates.rows.set(t.id, {
+        ...ctx.templates.rows.get(t.id)!,
+        translations: ctx.templates.rows
+          .get(t.id)!
+          .translations.map((tr) => ({ ...tr, fields: [] })),
+      });
+      const a = assign(t.id);
+      const opened = await open(a.id, 'en').expect(200);
+      expect(opened.body).toMatchObject({
+        language: 'zh',
+        availableLanguages: ['zh'],
+        template: { fields: [{ id: 'sig_zh' }] },
+      });
+      const res = await complete(a.id, {
+        consent: true,
+        signerName: 'Alice Wang',
+        signatures: {},
+        language: 'en',
+      }).expect(400);
+      expect((res.body as { message: string }).message).toBe(
+        LANGUAGE_UNAVAILABLE,
+      );
+      expect(ctx.assignments.rows.get(a.id)?.status).toBe('viewed');
+      const checklist = await http()
+        .get('/me/documents')
+        .set('Authorization', INSTRUCTOR_AUTH)
+        .expect(200);
+      const items = (
+        checklist.body as {
+          items: { templateId?: string; languages?: string[] }[];
+        }
+      ).items;
+      expect(items.find((i) => i.templateId === t.id)?.languages).toEqual([
+        'zh',
+      ]);
+    });
+
+    it('400s signing a version with no fields', async () => {
+      const t = seedMain({ fields: [] });
+      const a = assign(t.id);
+      const res = await complete(a.id, {
+        consent: true,
+        signerName: 'Alice Wang',
+        signatures: {},
+      }).expect(400);
+      expect((res.body as { message: string }).message).toBe(
+        VERSION_HAS_NO_FIELDS,
+      );
+      expect(ctx.assignments.rows.get(a.id)?.signed_key).toBeNull();
     });
 
     it('records the read version language and hash', async () => {

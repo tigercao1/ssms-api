@@ -42,5 +42,22 @@ begin
 end;
 $$;
 
+insert into document_templates (id, kind, audience, title_en, status)
+values ('33333333-3333-4333-8333-333333333292', 'read', 'instructor', 'CI stats archived', 'retired');
+insert into document_assignments (template_id, subject_type, subject_id, season, status, completed_at) values
+  ('33333333-3333-4333-8333-333333333292', 'instructor', '22222222-2222-4222-8222-222222222291', '2026/27', 'archived', now());
+
+do $$
+declare
+  r record;
+begin
+  select * into strict r
+  from public.document_template_stats(array['33333333-3333-4333-8333-333333333292'::uuid]);
+  if not r.has_completed or r.assigned_count <> 0 or r.completed_count <> 0 then
+    raise exception 'archived completion must still count as completed: %', r;
+  end if;
+end;
+$$;
+
 rollback;
 \echo 'Document template stats checks passed.'

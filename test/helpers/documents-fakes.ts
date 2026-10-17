@@ -229,6 +229,7 @@ export function translationRow(
 
 export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesRepository {
   readonly rows = new Map<string, DocumentTemplateRow>();
+  assignmentRows = new Map<string, Omit<DocumentAssignmentRow, 'template'>>();
 
   seed(overrides: Partial<DocumentTemplateRow> = {}): DocumentTemplateRow {
     const row = templateRow(overrides);
@@ -335,12 +336,41 @@ export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesReposi
     });
     return Promise.resolve(true);
   }
+
+  deleteUnlessCompleted(id: string): Promise<number> {
+    if (!this.rows.has(id)) {
+      return Promise.reject(
+        new DatabaseError('delete document template', 'P0002', 'not found'),
+      );
+    }
+    const assignments = [...this.assignmentRows.values()].filter(
+      (r) => r.template_id === id,
+    );
+    if (assignments.some((r) => r.status === 'completed' || r.completed_at)) {
+      return Promise.reject(
+        new DatabaseError(
+          'delete document template',
+          '55000',
+          'document template has completed assignments',
+        ),
+      );
+    }
+    for (const r of assignments) {
+      this.assignmentRows.delete(r.id);
+    }
+    this.rows.delete(id);
+    return Promise.resolve(assignments.length);
+  }
 }
 
 /**
  * In-memory assignments enforcing the open-assignment unique index
  * (template, subject, season) where status is not archived.
  */
+function everCompleted(row: DocumentAssignmentRow): boolean {
+  return row.status === 'completed' || row.completed_at !== null;
+}
+
 export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRepository {
   readonly rows = new Map<string, Omit<DocumentAssignmentRow, 'template'>>();
   readonly reminderClaims = new Map<string, string>();
@@ -351,6 +381,7 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
     private readonly subjects?: InMemoryDocumentSubjectsRepository,
   ) {
     super();
+    templates.assignmentRows = this.rows;
   }
 
   seed(
@@ -519,7 +550,7 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
   hasCompleted(templateId: string): Promise<boolean> {
     return Promise.resolve(
       [...this.rows.values()].some(
-        (r) => r.template_id === templateId && r.status === 'completed',
+        (r) => r.template_id === templateId && everCompleted(r),
       ),
     );
   }
@@ -554,7 +585,9 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
         approvedAssignedCount: approved.length,
         approvedCompletedCount: approved.filter((r) => r.status === 'completed')
           .length,
-        hasCompleted: open.some((r) => r.status === 'completed'),
+        hasCompleted: [...this.rows.values()].some(
+          (r) => r.template_id === id && everCompleted(r),
+        ),
       });
     }
     return Promise.resolve(stats);

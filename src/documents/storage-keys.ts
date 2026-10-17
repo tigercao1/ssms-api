@@ -1,4 +1,4 @@
-import type { DocumentLanguage } from './documents.types';
+import { DOCUMENT_LANGUAGES, type DocumentLanguage } from './documents.types';
 
 /** Object keys in the private bucket. Every key is built here. */
 export const storageKeys = {
@@ -10,6 +10,14 @@ export const storageKeys = {
     `templates/${templateId}/translations/${language}/source.pdf`,
   templateTranslationUpload: (templateId: string, language: DocumentLanguage) =>
     `templates/${templateId}/translations/${language}/upload.pdf`,
+  templateObjects: (templateId: string) => [
+    storageKeys.templateSource(templateId),
+    storageKeys.templateUpload(templateId),
+    ...DOCUMENT_LANGUAGES.flatMap((language) => [
+      storageKeys.templateTranslationSource(templateId, language),
+      storageKeys.templateTranslationUpload(templateId, language),
+    ]),
+  ],
   /** Signed, flattened copy of an instructor's assignment. */
   instructorDocument: (instructorId: string, assignmentId: string) =>
     `subjects/instructor/${instructorId}/documents/${assignmentId}.pdf`,

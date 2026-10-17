@@ -56,6 +56,7 @@ export abstract class DocumentTemplatesRepository {
     templateId: string,
     language: DocumentLanguage,
   ): Promise<boolean>;
+  abstract deleteUnlessCompleted(id: string): Promise<number>;
 }
 
 @Injectable()
@@ -179,5 +180,14 @@ export class SupabaseDocumentTemplatesRepository extends DocumentTemplatesReposi
       .select('template_id')) as DbResult<{ template_id: string }[]>;
     check(error, 'delete document template translation');
     return (data ?? []).length > 0;
+  }
+
+  async deleteUnlessCompleted(id: string): Promise<number> {
+    const { data, error } = (await this.supabase.rpc(
+      'delete_document_template',
+      { p_template_id: id },
+    )) as DbResult<number>;
+    check(error, 'delete document template');
+    return data ?? 0;
   }
 }

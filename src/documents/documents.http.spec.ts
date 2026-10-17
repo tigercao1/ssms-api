@@ -25,6 +25,7 @@ import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { pdfFixture, pdfOfSize } from '../../test/helpers/pdf-fixtures';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { DatabaseError, PG_FOREIGN_KEY_VIOLATION } from '../database/db-result';
 import { MailerService } from '../mailer/mailer.service';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
@@ -139,6 +140,10 @@ describe('documents HTTP', () => {
       [
         'PATCH template',
         (r) => r.patch(`/admin/documents/templates/${UNKNOWN_ID}`).send({}),
+      ],
+      [
+        'DELETE template',
+        (r) => r.delete(`/admin/documents/templates/${UNKNOWN_ID}`),
       ],
       [
         'POST source upload-url',
@@ -832,6 +837,207 @@ describe('documents HTTP', () => {
           /outside page 1/,
         );
         await put(UNKNOWN_ID, []).expect(404);
+      });
+    });
+
+    describe('delete', () => {
+      const remove = (id: string) =>
+        http()
+          .delete(`/admin/documents/templates/${id}`)
+          .set('Authorization', admin);
+
+      const seedFiles = (id: string) => {
+        for (const key of storageKeys.templateObjects(id)) {
+          ctx.storage.seed(key, Buffer.from('%PDF'));
+        }
+      };
+
+      it.each(['draft', 'live', 'retired'] as const)(
+        'deletes a %s template, its open assignments and its files, and audits it',
+        async (status) => {
+          const t = ctx.templates.seed({
+            status,
+            title_en: 'Test waiver',
+            title_zh: '测试',
+            ...(status === 'draft'
+              ? {}
+              : { assign_to: 'all', season: '2026-27' }),
+          });
+          const other = ctx.templates.seed();
+          const instructor = ctx.subjects.seedInstructor();
+          ctx.assignments.seed({
+            template_id: t.id,
+            subject_id: instructor.id,
+          });
+          ctx.assignments.seed({
+            template_id: t.id,
+            subject_id: ctx.subjects.seedInstructor().id,
+            status: 'viewed',
+          });
+          ctx.assignments.seed({
+            template_id: t.id,
+            subject_id: instructor.id,
+            status: 'archived',
+            season: '2025-26',
+          });
+          const kept = ctx.assignments.seed({
+            template_id: other.id,
+            subject_id: instructor.id,
+          });
+          seedFiles(t.id);
+          seedFiles(other.id);
+
+          const res = await remove(t.id).expect(204);
+
+          expect(res.body).toEqual({});
+          expect(ctx.templates.rows.has(t.id)).toBe(false);
+          expect([...ctx.assignments.rows.keys()]).toEqual([kept.id]);
+          expect(
+            [...ctx.storage.objects.keys()].filter((k) => k.includes(t.id)),
+          ).toEqual([]);
+          expect(ctx.storage.objects.size).toBe(
+            storageKeys.templateObjects(other.id).length,
+          );
+          expect(ctx.audit.entries).toEqual([
+            expect.objectContaining({
+              action: 'document_template.delete',
+              targetType: 'document_template',
+              targetId: t.id,
+              metadata: {
+                titleEn: 'Test waiver',
+                titleZh: '测试',
+                status,
+                removedAssignments: 3,
+              },
+            }),
+          ]);
+          const me = await http()
+            .get(`/admin/instructors/${instructor.id}/documents`)
+            .set('Authorization', admin)
+            .expect(200);
+          expect(
+            (me.body as { assignments: { id: string }[] }).assignments,
+          ).toEqual([expect.objectContaining({ id: kept.id })]);
+        },
+      );
+
+      it('refuses with 409 once someone has completed it, even if later archived', async () => {
+        const completed = ctx.templates.seed({ status: 'retired' });
+        const archived = ctx.templates.seed({ status: 'retired' });
+        const instructor = ctx.subjects.seedInstructor();
+        const open = ctx.assignments.seed({
+          template_id: completed.id,
+          subject_id: ctx.subjects.seedInstructor().id,
+        });
+        ctx.assignments.seed({
+          template_id: completed.id,
+          subject_id: instructor.id,
+          status: 'completed',
+          completed_at: '2026-10-01T00:00:00Z',
+        });
+        ctx.assignments.seed({
+          template_id: archived.id,
+          subject_id: instructor.id,
+          status: 'archived',
+          completed_at: '2026-10-01T00:00:00Z',
+        });
+        seedFiles(completed.id);
+
+        for (const t of [completed, archived]) {
+          const res = await remove(t.id).expect(409);
+          expect((res.body as { message: string }).message).toBe(
+            'Someone has completed this document, so it cannot be deleted. Retire it instead.',
+          );
+          expect(ctx.templates.rows.has(t.id)).toBe(true);
+        }
+        expect(ctx.assignments.rows.has(open.id)).toBe(true);
+        expect(ctx.storage.deleted).toEqual([]);
+        expect(ctx.audit.entries).toEqual([]);
+      });
+
+      it('shows a document as completed in the list once anyone completed it, even if later archived', async () => {
+        const t = ctx.templates.seed({ status: 'retired' });
+        ctx.assignments.seed({
+          template_id: t.id,
+          subject_id: ctx.subjects.seedInstructor().id,
+          status: 'archived',
+          completed_at: '2026-10-01T00:00:00Z',
+        });
+        const list = await http()
+          .get('/admin/documents/templates')
+          .set('Authorization', admin)
+          .expect(200);
+        expect(
+          (
+            list.body as { id: string; hasCompletedAssignments: boolean }[]
+          ).find((row) => row.id === t.id),
+        ).toMatchObject({ hasCompletedAssignments: true });
+        await http()
+          .post(`/admin/documents/templates/${t.id}/source/upload-url`)
+          .set('Authorization', admin)
+          .send({ contentLength: 1000 })
+          .expect(409);
+      });
+
+      it('refuses with 409 when a completion lands during the delete', async () => {
+        const t = ctx.templates.seed();
+        seedFiles(t.id);
+        jest
+          .spyOn(ctx.templates, 'deleteUnlessCompleted')
+          .mockRejectedValue(
+            new DatabaseError(
+              'delete document template',
+              PG_FOREIGN_KEY_VIOLATION,
+              'still referenced from table "document_assignments"',
+            ),
+          );
+        await remove(t.id).expect(409);
+        expect(ctx.storage.deleted).toEqual([]);
+        expect(ctx.audit.entries).toEqual([]);
+      });
+
+      it('returns 404 for an unknown or concurrently deleted template', async () => {
+        await remove(UNKNOWN_ID).expect(404);
+        const t = ctx.templates.seed();
+        jest
+          .spyOn(ctx.templates, 'deleteUnlessCompleted')
+          .mockRejectedValue(
+            new DatabaseError('delete document template', 'P0002', 'gone'),
+          );
+        await remove(t.id).expect(404);
+        await http()
+          .delete('/admin/documents/templates/not-a-uuid')
+          .set('Authorization', admin)
+          .expect(400);
+        expect(ctx.audit.entries).toEqual([]);
+      });
+
+      it('keeps the files when the database delete fails', async () => {
+        const t = ctx.templates.seed();
+        seedFiles(t.id);
+        jest
+          .spyOn(ctx.templates, 'deleteUnlessCompleted')
+          .mockRejectedValue(new Error('connection reset'));
+        await remove(t.id).expect(500);
+        expect(ctx.storage.deleted).toEqual([]);
+        expect(ctx.audit.entries).toEqual([]);
+      });
+
+      it('still deletes when removing its files fails', async () => {
+        const t = ctx.templates.seed();
+        const warn = jest
+          .spyOn(Logger.prototype, 'warn')
+          .mockImplementation(() => undefined);
+        jest
+          .spyOn(ctx.storage, 'delete')
+          .mockRejectedValue(new Error('bucket unavailable'));
+        await remove(t.id).expect(204);
+        expect(ctx.templates.rows.has(t.id)).toBe(false);
+        expect(ctx.audit.entries).toHaveLength(1);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('bucket unavailable'),
+        );
+        warn.mockRestore();
       });
     });
   });

@@ -203,7 +203,7 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
       .from(DOCUMENT_ASSIGNMENTS_TABLE)
       .select('id')
       .eq('template_id', templateId)
-      .eq('status', 'completed')
+      .or('status.eq.completed,completed_at.not.is.null')
       .limit(1)) as DbResult<{ id: string }[]>;
     check(error, 'check completed document assignments');
     return (data ?? []).length > 0;

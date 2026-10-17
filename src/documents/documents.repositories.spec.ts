@@ -219,9 +219,29 @@ describe('SupabaseDocumentAssignmentsRepository', () => {
     expect(queries[0].ops).toEqual([
       ['select', 'id'],
       ['eq', 'template_id', ID],
-      ['eq', 'status', 'completed'],
+      ['or', 'status.eq.completed,completed_at.not.is.null'],
       ['limit', 1],
     ]);
+  });
+});
+
+describe('SupabaseDocumentTemplatesRepository.deleteUnlessCompleted', () => {
+  it('deletes through one rpc and keeps the database error code', async () => {
+    const { client, queries } = recordingSupabase({
+      'rpc:delete_document_template': [
+        ok(2),
+        { data: null, error: { message: 'completed', code: '55000' } },
+      ],
+    });
+    const repo = new SupabaseDocumentTemplatesRepository(client);
+    await expect(repo.deleteUnlessCompleted(ID)).resolves.toBe(2);
+    expect(queries[0]).toEqual({
+      table: 'rpc:delete_document_template',
+      ops: [['rpc', { p_template_id: ID }]],
+    });
+    await expect(repo.deleteUnlessCompleted(ID)).rejects.toMatchObject({
+      code: '55000',
+    });
   });
 });
 

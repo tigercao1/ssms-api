@@ -159,6 +159,14 @@ describe('EmailRenderer', () => {
     });
   });
 
+  it('gives the logo a fixed height so mail apps size the message before it loads', () => {
+    const { html } = renderer.renderSample('invite.season', 'zh-CN');
+    const img = /<img [^>]*>/.exec(html)?.[0] ?? '';
+    expect(img).toContain('width="200"');
+    expect(img).toContain('height="77"');
+    expect(img).toContain('height:77px');
+  });
+
   it('approved: greets by name and links a red Sign in button to the login page', () => {
     const { subject, html, text } = renderer.render('approved', 'en', {
       displayName: 'Jane',

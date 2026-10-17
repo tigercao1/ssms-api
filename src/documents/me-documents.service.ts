@@ -8,6 +8,7 @@ import {
   certificationKey,
   certificationState,
   currentUploads,
+  isCertificationSatisfied,
   torontoToday,
 } from './certification-validity';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
@@ -17,6 +18,7 @@ import type {
   CertificationChecklistItem,
   CertificationUploadRow,
   Checklist,
+  ChecklistItem,
   ChecklistLockReason,
   DocumentAssignmentRow,
   DocumentChecklistItem,
@@ -49,6 +51,14 @@ function lockFor(
   return instructor.approval_status === 'rejected'
     ? { message: REJECTED, reason: REJECTED_REASON }
     : { message: PENDING_APPROVAL, reason: PENDING_APPROVAL_REASON };
+}
+
+export function isOnboardingComplete(items: readonly ChecklistItem[]): boolean {
+  return items.every((item) =>
+    item.type === 'certification'
+      ? isCertificationSatisfied(item.state)
+      : !item.required || item.status === 'completed',
+  );
 }
 
 function bySortOrder(a: DocumentAssignmentRow, b: DocumentAssignmentRow) {
@@ -183,6 +193,8 @@ export class MeDocumentsService {
    * one item per `live` template published to `all` for the season, without
    * an assignment, and the certification items without their upload id.
    * A rejected or deactivated instructor gets that `lockReason` and no items.
+   * `complete` is {@link isOnboardingComplete} of the items, and `false` while
+   * locked.
    */
   async checklist(
     authUserId: string,
@@ -198,6 +210,7 @@ export class MeDocumentsService {
         season: await this.currentSeason([]),
         locked: true,
         lockReason: lock.reason,
+        complete: false,
         items: [],
       };
     }
@@ -222,12 +235,42 @@ export class MeDocumentsService {
         season,
         locked: true,
         lockReason: PENDING_APPROVAL_REASON,
+        complete: false,
         items: [...published.map(toPreviewItem), ...certificationItems],
       };
     }
+    const { season, documents } = await this.currentDocuments(instructor.id);
+    const items = [...documents, ...certificationItems];
+    return {
+      season,
+      locked: false,
+      lockReason: null,
+      complete: isOnboardingComplete(items),
+      items,
+    };
+  }
+
+  async onboardingComplete(
+    instructorId: string,
+    today = torontoToday(),
+  ): Promise<boolean> {
+    const [{ documents }, certifications, uploads] = await Promise.all([
+      this.currentDocuments(instructorId),
+      this.subjects.listCertifications(instructorId),
+      this.subjects.listCertificationUploads(instructorId),
+    ]);
+    return isOnboardingComplete([
+      ...documents,
+      ...toCertificationItems(certifications, uploads, today, false),
+    ]);
+  }
+
+  private async currentDocuments(
+    instructorId: string,
+  ): Promise<{ season: string | null; documents: DocumentChecklistItem[] }> {
     const assignments = await this.assignments.listForSubject(
       'instructor',
-      instructor.id,
+      instructorId,
     );
     const open = assignments.filter((row) => row.status !== 'archived');
     const season = await this.currentSeason(open);
@@ -235,12 +278,7 @@ export class MeDocumentsService {
       .filter((row) => season === null || row.season === season || !row.season)
       .sort(bySortOrder)
       .map(toDocumentItem);
-    return {
-      season,
-      locked: false,
-      lockReason: null,
-      items: [...documents, ...certificationItems],
-    };
+    return { season, documents };
   }
 
   private async currentSeason(

@@ -12,6 +12,7 @@ import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
 import type {
   ConfirmedTemplate,
+  DocumentLanguage,
   DocumentTemplateRow,
   DocumentTemplateWrite,
   Template,
@@ -36,11 +37,13 @@ import { storageKeys } from './storage-keys';
 import { TemplateFieldError, validateTemplateFields } from './template-fields';
 import {
   MAX_TEMPLATE_BYTES,
+  type NormalisedTemplatePdf,
   normaliseTemplatePdf,
   PDF_CONTENT_TYPE,
   samePageLayout,
   TemplatePdfError,
 } from './template-pdf';
+import { findTranslation } from './template-versions';
 
 export const TEMPLATE_NOT_FOUND = 'Document template not found';
 export const NOTHING_TO_UPDATE = 'Nothing to update';
@@ -53,6 +56,14 @@ export const TEMPLATE_HAS_NO_SOURCE =
   'Upload the template PDF before placing fields';
 export const TEMPLATE_LOCKED =
   'Someone has completed this document, so its PDF and fields can no longer change. Retire it and publish a new one instead.';
+export const TRANSLATION_NEEDS_SOURCE_LANGUAGE =
+  'Set the language of the main PDF before adding another language version';
+export const TRANSLATION_SAME_AS_SOURCE =
+  'The other language version must be in a different language from the main PDF';
+export const TRANSLATION_NOT_FOUND =
+  'This document has no version in that language';
+export const SOURCE_LANGUAGE_CONFLICT =
+  'Remove the other language version before changing the language of the main PDF to it or clearing it';
 
 const UPDATE_FIELDS: [keyof UpdateTemplateDto, keyof DocumentTemplateWrite][] =
   [
@@ -62,6 +73,7 @@ const UPDATE_FIELDS: [keyof UpdateTemplateDto, keyof DocumentTemplateWrite][] =
     ['descriptionZh', 'description_zh'],
     ['required', 'required'],
     ['sortOrder', 'sort_order'],
+    ['sourceLanguage', 'source_language'],
   ];
 const NULLABLE_TEXT = new Set<keyof UpdateTemplateDto>([
   'titleZh',
@@ -77,6 +89,20 @@ function toWrite(dto: UpdateTemplateDto): DocumentTemplateWrite {
     }
   }
   return write;
+}
+
+function validateFields(
+  fields: TemplateField[],
+  pages: DocumentTemplateRow['pages'],
+): void {
+  try {
+    validateTemplateFields(fields, pages);
+  } catch (err) {
+    if (err instanceof TemplateFieldError) {
+      throw new BadRequestException(err.message);
+    }
+    throw err;
+  }
 }
 
 function isPdfContentType(contentType: string | null): boolean {
@@ -153,6 +179,16 @@ export class DocumentTemplatesService {
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
     const before = await this.load(id);
+    if (
+      patch.source_language !== undefined &&
+      before.translations.some(
+        (t) =>
+          patch.source_language === null ||
+          t.language === patch.source_language,
+      )
+    ) {
+      throw new BadRequestException(SOURCE_LANGUAGE_CONFLICT);
+    }
     const row = await this.repo.update(id, {
       ...patch,
       updated_by: actor.userId ?? null,
@@ -194,30 +230,7 @@ export class DocumentTemplatesService {
   ): Promise<ConfirmedTemplate> {
     const before = await this.loadEditable(id);
     const uploadKey = storageKeys.templateUpload(id);
-    const head = await this.storage.head(uploadKey);
-    if (!head) {
-      throw new BadRequestException(SOURCE_UPLOAD_MISSING);
-    }
-    if (head.contentLength > MAX_TEMPLATE_BYTES) {
-      await this.discardUpload(uploadKey);
-      throw new BadRequestException(SOURCE_TOO_LARGE);
-    }
-    if (!isPdfContentType(head.contentType)) {
-      await this.discardUpload(uploadKey);
-      throw new BadRequestException(SOURCE_NOT_PDF);
-    }
-    const normalised = await this.pdfQueue.run(async () => {
-      const bytes = await this.readUpload(uploadKey);
-      try {
-        return await normaliseTemplatePdf(bytes);
-      } catch (err) {
-        if (err instanceof TemplatePdfError) {
-          await this.discardUpload(uploadKey);
-          throw new BadRequestException(err.message);
-        }
-        throw err;
-      }
-    });
+    const normalised = await this.normaliseUpload(uploadKey);
     const sourceKey = storageKeys.templateSource(id);
     await this.storage.put(sourceKey, normalised.bytes, PDF_CONTENT_TYPE);
     const fieldsCleared =
@@ -265,14 +278,7 @@ export class DocumentTemplatesService {
     if (!before.page_count) {
       throw new BadRequestException(TEMPLATE_HAS_NO_SOURCE);
     }
-    try {
-      validateTemplateFields(fields, before.pages);
-    } catch (err) {
-      if (err instanceof TemplateFieldError) {
-        throw new BadRequestException(err.message);
-      }
-      throw err;
-    }
+    validateFields(fields, before.pages);
     const row = await this.repo.update(id, {
       fields: fields.map(toTemplateFieldRow),
       updated_by: actor.userId ?? null,
@@ -295,13 +301,140 @@ export class DocumentTemplatesService {
 
   /** Presents a row with a presigned `sourceUrl` and its assignment counts. */
   async present(row: DocumentTemplateRow): Promise<Template> {
-    const [sourceUrl, [counts]] = await Promise.all([
+    const [sourceUrl, [counts], translationUrls] = await Promise.all([
       row.source_key
         ? this.storage.presignGet(row.source_key).then((p) => p.url)
         : null,
       this.counts([row]),
+      Promise.all(
+        row.translations.flatMap((t) =>
+          t.source_key
+            ? [
+                this.storage
+                  .presignGet(t.source_key)
+                  .then((p) => [t.language, p.url] as const),
+              ]
+            : [],
+        ),
+      ),
     ]);
-    return toTemplate(row, sourceUrl, counts);
+    return toTemplate(row, sourceUrl, counts, new Map(translationUrls));
+  }
+
+  async translationUploadUrl(
+    id: string,
+    language: DocumentLanguage,
+    contentLength: number,
+  ): Promise<UploadUrl> {
+    await this.loadTranslatable(id, language);
+    const { url, expiresAt } = await this.storage.presignPut(
+      storageKeys.templateTranslationUpload(id, language),
+      { contentType: PDF_CONTENT_TYPE, contentLength },
+    );
+    return { uploadUrl: url, expiresAt };
+  }
+
+  async confirmTranslationSource(
+    id: string,
+    language: DocumentLanguage,
+    actor: AuditActor,
+  ): Promise<ConfirmedTemplate> {
+    const template = await this.loadTranslatable(id, language);
+    const before = findTranslation(template, language);
+    const uploadKey = storageKeys.templateTranslationUpload(id, language);
+    const normalised = await this.normaliseUpload(uploadKey);
+    const sourceKey = storageKeys.templateTranslationSource(id, language);
+    await this.storage.put(sourceKey, normalised.bytes, PDF_CONTENT_TYPE);
+    const beforeFieldCount = before?.fields.length ?? 0;
+    const fieldsCleared =
+      before !== null &&
+      beforeFieldCount > 0 &&
+      !samePageLayout(before.pages, normalised.pages);
+    await this.repo.upsertTranslation(id, language, {
+      source_key: sourceKey,
+      source_sha256: normalised.sha256,
+      page_count: normalised.pageCount,
+      pages: normalised.pages,
+      ...(fieldsCleared || !before ? { fields: [] } : {}),
+      updated_by: actor.userId ?? null,
+    });
+    await this.discardUpload(uploadKey);
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplateTranslationSourceReplace,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        language,
+        beforeSha256: before?.source_sha256 ?? null,
+        afterSha256: normalised.sha256,
+        pageCount: normalised.pageCount,
+        sizeBytes: normalised.bytes.byteLength,
+        fieldsCleared,
+        clearedFieldCount: fieldsCleared ? beforeFieldCount : 0,
+      },
+    });
+    return { ...(await this.present(await this.load(id))), fieldsCleared };
+  }
+
+  async putTranslationFields(
+    id: string,
+    language: DocumentLanguage,
+    fields: TemplateField[],
+    actor: AuditActor,
+  ): Promise<Template> {
+    const template = await this.loadTranslatable(id, language);
+    const before = findTranslation(template, language);
+    if (!before?.page_count) {
+      throw new BadRequestException(TEMPLATE_HAS_NO_SOURCE);
+    }
+    validateFields(fields, before.pages);
+    await this.repo.upsertTranslation(id, language, {
+      fields: fields.map(toTemplateFieldRow),
+      updated_by: actor.userId ?? null,
+    });
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplateTranslationFieldsUpdate,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        language,
+        beforeCount: before.fields.length,
+        afterCount: fields.length,
+      },
+    });
+    return this.present(await this.load(id));
+  }
+
+  async removeTranslation(
+    id: string,
+    language: DocumentLanguage,
+    actor: AuditActor,
+  ): Promise<Template> {
+    const template = await this.loadTranslatable(id, language);
+    const before = findTranslation(template, language);
+    if (!before || !(await this.repo.deleteTranslation(id, language))) {
+      throw new NotFoundException(TRANSLATION_NOT_FOUND);
+    }
+    await this.discardUpload(
+      storageKeys.templateTranslationSource(id, language),
+    );
+    await this.discardUpload(
+      storageKeys.templateTranslationUpload(id, language),
+    );
+    await this.audit.record({
+      action: AUDIT_ACTIONS.documentTemplateTranslationRemove,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'document_template',
+      targetId: id,
+      metadata: {
+        language,
+        sourceSha256: before.source_sha256,
+        fieldCount: before.fields.length,
+      },
+    });
+    return this.present(await this.load(id));
   }
 
   private async counts(rows: DocumentTemplateRow[]): Promise<TemplateCounts[]> {
@@ -334,6 +467,52 @@ export class DocumentTemplatesService {
       throw new ConflictException(TEMPLATE_LOCKED);
     }
     return row;
+  }
+
+  private async loadTranslatable(
+    id: string,
+    language: DocumentLanguage,
+  ): Promise<DocumentTemplateRow> {
+    const row = await this.load(id);
+    if (!row.source_language) {
+      throw new BadRequestException(TRANSLATION_NEEDS_SOURCE_LANGUAGE);
+    }
+    if (row.source_language === language) {
+      throw new BadRequestException(TRANSLATION_SAME_AS_SOURCE);
+    }
+    if (await this.assignments.hasCompleted(id)) {
+      throw new ConflictException(TEMPLATE_LOCKED);
+    }
+    return row;
+  }
+
+  private async normaliseUpload(
+    uploadKey: string,
+  ): Promise<NormalisedTemplatePdf> {
+    const head = await this.storage.head(uploadKey);
+    if (!head) {
+      throw new BadRequestException(SOURCE_UPLOAD_MISSING);
+    }
+    if (head.contentLength > MAX_TEMPLATE_BYTES) {
+      await this.discardUpload(uploadKey);
+      throw new BadRequestException(SOURCE_TOO_LARGE);
+    }
+    if (!isPdfContentType(head.contentType)) {
+      await this.discardUpload(uploadKey);
+      throw new BadRequestException(SOURCE_NOT_PDF);
+    }
+    return this.pdfQueue.run(async () => {
+      const bytes = await this.readUpload(uploadKey);
+      try {
+        return await normaliseTemplatePdf(bytes);
+      } catch (err) {
+        if (err instanceof TemplatePdfError) {
+          await this.discardUpload(uploadKey);
+          throw new BadRequestException(err.message);
+        }
+        throw err;
+      }
+    });
   }
 
   private async readUpload(key: string): Promise<Uint8Array> {

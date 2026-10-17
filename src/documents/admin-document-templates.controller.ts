@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
@@ -22,15 +23,18 @@ import { DocumentPublishingService } from './document-publishing.service';
 import { DocumentTemplatesService } from './document-templates.service';
 import type {
   ConfirmedTemplate,
+  DocumentLanguage,
   PublishPreview,
   PublishResult,
   Template,
+  TemplateField,
   TemplateSummary,
   UploadUrl,
 } from './documents.types';
 import {
   ChangeAudienceDto,
   CreateTemplateDto,
+  parseDocumentLanguage,
   PublishPreviewQueryDto,
   PublishTemplateDto,
   PutTemplateFieldsDto,
@@ -38,7 +42,15 @@ import {
   UpdateTemplateDto,
 } from './dto/template.dto';
 
-/** `/admin/documents/templates`: template metadata, source PDF, placed fields and publishing. */
+function toTemplateFields(dto: PutTemplateFieldsDto): TemplateField[] {
+  return dto.fields.map((f) => ({
+    ...f,
+    labelZh: f.labelZh ?? null,
+    prefill: f.prefill ?? null,
+  }));
+}
+
+/** `/admin/documents/templates`: template metadata, source PDF, placed fields, language versions and publishing. */
 @Controller('admin/documents/templates')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')
@@ -105,11 +117,62 @@ export class AdminDocumentTemplatesController {
   ): Promise<Template> {
     return this.templates.putFields(
       id,
-      dto.fields.map((f) => ({
-        ...f,
-        labelZh: f.labelZh ?? null,
-        prefill: f.prefill ?? null,
-      })),
+      toTemplateFields(dto),
+      toActor(user, userAgent),
+    );
+  }
+
+  @Post(':id/translations/:language/source/upload-url')
+  @HttpCode(HttpStatus.OK)
+  translationUploadUrl(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('language', parseDocumentLanguage()) language: DocumentLanguage,
+    @Body() dto: SourceUploadUrlDto,
+  ): Promise<UploadUrl> {
+    return this.templates.translationUploadUrl(id, language, dto.contentLength);
+  }
+
+  @Post(':id/translations/:language/source/confirm')
+  @HttpCode(HttpStatus.OK)
+  confirmTranslationSource(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('language', parseDocumentLanguage()) language: DocumentLanguage,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<ConfirmedTemplate> {
+    return this.templates.confirmTranslationSource(
+      id,
+      language,
+      toActor(user, userAgent),
+    );
+  }
+
+  @Put(':id/translations/:language/fields')
+  putTranslationFields(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('language', parseDocumentLanguage()) language: DocumentLanguage,
+    @Body() dto: PutTemplateFieldsDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<Template> {
+    return this.templates.putTranslationFields(
+      id,
+      language,
+      toTemplateFields(dto),
+      toActor(user, userAgent),
+    );
+  }
+
+  @Delete(':id/translations/:language')
+  removeTranslation(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('language', parseDocumentLanguage()) language: DocumentLanguage,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<Template> {
+    return this.templates.removeTranslation(
+      id,
+      language,
       toActor(user, userAgent),
     );
   }

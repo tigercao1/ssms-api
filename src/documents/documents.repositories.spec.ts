@@ -219,7 +219,7 @@ describe('SupabaseDocumentAssignmentsRepository', () => {
     expect(queries[0].ops).toEqual([
       ['select', 'id'],
       ['eq', 'template_id', ID],
-      ['eq', 'status', 'completed'],
+      ['or', 'status.eq.completed,completed_at.not.is.null'],
       ['limit', 1],
     ]);
   });

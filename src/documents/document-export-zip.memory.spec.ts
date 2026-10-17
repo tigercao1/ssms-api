@@ -152,21 +152,29 @@ describe('signed-copies export memory', () => {
     const baseline = process.memoryUsage();
     const peak = { ...baseline };
     const live = { ...baseline };
-    let tick = 0;
-    const sample = () => {
+    const sampleRaw = () => {
       const now = process.memoryUsage();
       peak.rss = Math.max(peak.rss, now.rss);
       peak.heapUsed = Math.max(peak.heapUsed, now.heapUsed);
       peak.arrayBuffers = Math.max(peak.arrayBuffers, now.arrayBuffers);
-      tick += 1;
-      if (tick % 5 === 0) {
-        gc();
-        const after = process.memoryUsage();
-        live.heapUsed = Math.max(live.heapUsed, after.heapUsed);
-        live.arrayBuffers = Math.max(live.arrayBuffers, after.arrayBuffers);
-      }
     };
-    const timer = setInterval(sample, 5);
+    const sampleLive = async () => {
+      gc();
+      await new Promise((resolve) => setImmediate(resolve));
+      const now = process.memoryUsage();
+      live.heapUsed = Math.max(live.heapUsed, now.heapUsed);
+      live.arrayBuffers = Math.max(live.arrayBuffers, now.arrayBuffers);
+    };
+    let sampling = true;
+    const sampler = (async () => {
+      for (let tick = 1; sampling; tick += 1) {
+        sampleRaw();
+        if (tick % 5 === 0) {
+          await sampleLive();
+        }
+        await sleep(5);
+      }
+    })();
     const started = Date.now();
     let result: Awaited<ReturnType<typeof writeSignedCopiesZip>>;
     try {
@@ -177,8 +185,9 @@ describe('signed-copies export memory', () => {
         rows,
       });
     } finally {
-      clearInterval(timer);
-      sample();
+      sampling = false;
+      await sampler;
+      sampleRaw();
       closeSync(fd);
     }
     const mib = (bytes: number) => (bytes / MiB).toFixed(1);

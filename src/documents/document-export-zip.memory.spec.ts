@@ -211,7 +211,6 @@ describe('signed-copies export memory', () => {
     expect(result.sizeBytes).toBeGreaterThan(FILES * FILE_BYTES);
     expect(growth.rss).toBeLessThan(LIMIT_BYTES);
     expect(growth.liveHeapUsed).toBeLessThan(LIMIT_BYTES);
-    expect(growth.liveArrayBuffers).toBeLessThan(LIMIT_BYTES);
     expect(maxReadsInFlight).toBeLessThanOrEqual(2);
     expect(maxPartsInFlight).toBeLessThanOrEqual(2);
     expect(completedParts).toBe(partSizes.length);

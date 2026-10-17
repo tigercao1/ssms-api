@@ -103,6 +103,9 @@ class InMemoryInstructors extends InstructorsRepository {
   listAdminRecipients() {
     return Promise.resolve([]);
   }
+  hasCalendar() {
+    return Promise.resolve(false);
+  }
 }
 
 class CountingQuota extends BioAiQuotaRepository {

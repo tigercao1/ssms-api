@@ -16,6 +16,7 @@ import {
 import { InstructorsRepository } from './instructors.repository';
 import {
   AdditionalPhotoSlot,
+  InstructorCalendarStatus,
   InstructorProfile,
   InstructorProfilePatch,
   InstructorRow,
@@ -162,6 +163,16 @@ export class InstructorsService {
       throw new NotFoundException('Instructor profile not found');
     }
     return this.applyUpdate(instructor.id, dto, false, true);
+  }
+
+  async getCalendarStatus(
+    authUserId: string,
+  ): Promise<InstructorCalendarStatus> {
+    const instructor = await this.repo.findByAuthUserId(authUserId);
+    if (!instructor) {
+      return { connected: false };
+    }
+    return { connected: await this.repo.hasCalendar(instructor.id) };
   }
 
   /**

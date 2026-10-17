@@ -108,6 +108,10 @@ export interface InstructorProfile {
   }>;
 }
 
+export interface InstructorCalendarStatus {
+  connected: boolean;
+}
+
 /**
  * Snake_case JSONB patch handed to the `update_instructor_profile` RPC. Only
  * keys explicitly present are applied (omit = leave untouched; empty array =

@@ -13,7 +13,10 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { BioDraftDto } from './dto/bio-draft.dto';
 import { UpdateOwnInstructorProfileDto } from './dto/update-own-instructor-profile.dto';
-import { InstructorProfile } from './instructors.types';
+import {
+  InstructorCalendarStatus,
+  InstructorProfile,
+} from './instructors.types';
 import { InstructorsService } from './instructors.service';
 import {
   BioAiUsage,
@@ -60,6 +63,13 @@ export class InstructorsController {
     @Body() dto: UpdateOwnInstructorProfileDto,
   ): Promise<InstructorProfile> {
     return this.instructors.updateOwnProfile(user.sub, dto);
+  }
+
+  @Get('calendar')
+  getCalendarStatus(
+    @CurrentUser() user: SupabaseJwtPayload,
+  ): Promise<InstructorCalendarStatus> {
+    return this.instructors.getCalendarStatus(user.sub);
   }
 
   /** Remaining bio refine / translate requests in the rolling 24 h window. */

@@ -69,6 +69,7 @@ class FakeRepo extends InstructorsRepository {
   photoVersionBumps: string[] = [];
   admins: AdminRecipient[] = [];
   adminsError: Error | null = null;
+  calendarInstructorIds = new Set<string>();
 
   findByAuthUserId(authUserId: string): Promise<InstructorRow | null> {
     return Promise.resolve(
@@ -150,6 +151,9 @@ class FakeRepo extends InstructorsRepository {
     return this.adminsError
       ? Promise.reject(this.adminsError)
       : Promise.resolve(this.admins);
+  }
+  hasCalendar(instructorId: string): Promise<boolean> {
+    return Promise.resolve(this.calendarInstructorIds.has(instructorId));
   }
   setAdditionalPhoto(
     id: string,
@@ -334,6 +338,30 @@ describe('InstructorsService', () => {
       await flush();
       expect(profile.approvalStatus).toBe('pending');
       expect(mailer.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getCalendarStatus', () => {
+    it('is connected when the instructor has a calendar', async () => {
+      repo.rows.push(makeRow());
+      repo.calendarInstructorIds.add('inst-1');
+      await expect(service.getCalendarStatus('auth-1')).resolves.toEqual({
+        connected: true,
+      });
+    });
+
+    it('is not connected without a calendar', async () => {
+      repo.rows.push(makeRow());
+      await expect(service.getCalendarStatus('auth-1')).resolves.toEqual({
+        connected: false,
+      });
+    });
+
+    it('is not connected and creates no row when the caller has no instructor', async () => {
+      await expect(service.getCalendarStatus('auth-9')).resolves.toEqual({
+        connected: false,
+      });
+      expect(repo.insertCalls).toBe(0);
     });
   });
 

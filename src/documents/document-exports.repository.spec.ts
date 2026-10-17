@@ -32,6 +32,8 @@ describe('SupabaseDocumentExportsRepository', () => {
       season: null,
       assignment_ids: null,
       requested_by: ID,
+      owner_id: 'm-1',
+      heartbeat_at: 'now',
     };
     await expect(repo.insert(input)).resolves.toEqual(row);
     await expect(repo.findById(ID)).resolves.toEqual(row);
@@ -44,8 +46,8 @@ describe('SupabaseDocumentExportsRepository', () => {
     await expect(
       repo.updateIfStatus(ID, ['queued'], { status: 'running' }),
     ).resolves.toBeNull();
-    await expect(repo.failUnfinished('restart', 'now')).resolves.toBe(2);
-    await expect(repo.failUnfinished('restart', 'now')).resolves.toBe(0);
+    await expect(repo.failStale('cutoff', 'restart', 'now')).resolves.toBe(2);
+    await expect(repo.failStale('cutoff', 'restart', 'now')).resolves.toBe(0);
     await expect(repo.listExpired('now')).resolves.toEqual([row]);
     await expect(repo.listExpired('now')).resolves.toEqual([]);
 
@@ -70,12 +72,40 @@ describe('SupabaseDocumentExportsRepository', () => {
     expect(queries[7].ops).toEqual([
       ['update', { status: 'failed', error: 'restart', finished_at: 'now' }],
       ['in', 'status', ['queued', 'running']],
+      ['lt', 'heartbeat_at', 'cutoff'],
       ['select', 'id'],
     ]);
     expect(queries[9].ops).toEqual([
       ['select', DOCUMENT_EXPORT_COLUMNS],
       ['eq', 'status', 'ready'],
       ['lte', 'expires_at', 'now'],
+    ]);
+  });
+
+  it('claims and finishes only exports the given owner holds, and heartbeats its unfinished ones', async () => {
+    const row = { id: ID };
+    const { client, queries } = recordingSupabase({
+      document_exports: [ok(row), ok([row]), ok(null)],
+    });
+    const repo = new SupabaseDocumentExportsRepository(client);
+    await expect(
+      repo.updateIfStatus(ID, ['running'], { status: 'ready' }, 'm-1'),
+    ).resolves.toEqual(row);
+    await expect(repo.heartbeat('m-1', 'now')).resolves.toBe(1);
+    await expect(repo.heartbeat('m-1', 'now')).resolves.toBe(0);
+    expect(queries[0].ops).toEqual([
+      ['update', { status: 'ready' }],
+      ['eq', 'id', ID],
+      ['in', 'status', ['running']],
+      ['eq', 'owner_id', 'm-1'],
+      ['select', DOCUMENT_EXPORT_COLUMNS],
+      ['maybeSingle'],
+    ]);
+    expect(queries[1].ops).toEqual([
+      ['update', { heartbeat_at: 'now' }],
+      ['eq', 'owner_id', 'm-1'],
+      ['in', 'status', ['queued', 'running']],
+      ['select', 'id'],
     ]);
   });
 
@@ -126,6 +156,8 @@ describe('SupabaseDocumentExportsRepository', () => {
           season: null,
           assignment_ids: null,
           requested_by: ID,
+          owner_id: 'm-1',
+          heartbeat_at: 'now',
         }),
     ],
     ['findById', (r: SupabaseDocumentExportsRepository) => r.findById(ID)],
@@ -139,8 +171,12 @@ describe('SupabaseDocumentExportsRepository', () => {
         r.updateIfStatus(ID, ['ready'], { status: 'expired' }),
     ],
     [
-      'failUnfinished',
-      (r: SupabaseDocumentExportsRepository) => r.failUnfinished('x', 'now'),
+      'failStale',
+      (r: SupabaseDocumentExportsRepository) => r.failStale('c', 'x', 'now'),
+    ],
+    [
+      'heartbeat',
+      (r: SupabaseDocumentExportsRepository) => r.heartbeat('m-1', 'now'),
     ],
     [
       'listExpired',

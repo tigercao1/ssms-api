@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -26,6 +27,12 @@ export const TEMPLATE_ASSIGNMENTS_DEFAULT_LIMIT = 50;
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+const toBoolean = ({ value }: { value: unknown }) => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+};
+
 /** `GET /admin/documents/templates/:id/assignments` query. */
 export class TemplateAssignmentsQueryDto {
   @IsOptional()
@@ -44,6 +51,12 @@ export class TemplateAssignmentsQueryDto {
   @IsString()
   @MaxLength(200)
   q?: string;
+
+  /** `true`: only rows with a signed copy, so `X-Total-Count` counts exportable copies. */
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasSignedCopy?: boolean;
 
   @IsOptional()
   @Type(() => Number)

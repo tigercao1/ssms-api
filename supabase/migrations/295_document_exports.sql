@@ -22,6 +22,10 @@ create table document_exports (
   zip_key         text,
   error           text,
   requested_by    uuid not null,
+  owner_id        text not null
+                    constraint document_exports_owner_id_length
+                    check (char_length(owner_id) between 1 and 200),
+  heartbeat_at    timestamptz not null default now(),
   started_at      timestamptz,
   finished_at     timestamptz,
   expires_at      timestamptz,
@@ -34,6 +38,10 @@ create index document_exports_template_inserted_idx
 
 create index document_exports_status_idx
   on document_exports (status);
+
+create index document_exports_owner_unfinished_idx
+  on document_exports (owner_id)
+  where status in ('queued', 'running');
 
 create trigger document_exports_set_updated_at
   before update on document_exports

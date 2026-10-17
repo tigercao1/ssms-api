@@ -6,12 +6,14 @@ import {
   Logger,
   NotFoundException,
   type OnApplicationBootstrap,
+  type OnModuleDestroy,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { likePattern, searchTokens } from '../database/db-result';
 import { pageOffset } from '../database/pagination';
 import { exportDownloadName, exportFolderName } from './document-export-files';
+import { DocumentExportOwner } from './document-export-owner';
 import { DocumentExportQueue } from './document-export-queue';
 import { writeSignedCopiesZip } from './document-export-zip';
 import {
@@ -40,6 +42,9 @@ import { PrivateStorageClient } from './private-storage.client';
 import { storageKeys } from './storage-keys';
 
 export const EXPORT_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const EXPORT_HEARTBEAT_INTERVAL_MS = 15 * 1000;
+export const EXPORT_RECOVERY_INTERVAL_MS = 60 * 1000;
+export const EXPORT_STALE_AFTER_MS = 2 * 60 * 1000;
 export const RECENT_EXPORTS_LIMIT = 10;
 
 export const EXPORT_NOT_FOUND = 'Document export not found';
@@ -52,16 +57,22 @@ export const EXPORT_INVALID_ASSIGNMENTS =
 export const EXPORT_NOT_READY = 'Export is not ready';
 export const EXPORT_EXPIRED = 'Export has expired';
 export const EXPORT_FAILED = 'Export failed; please try again';
-export const EXPORT_INTERRUPTED = 'Export was interrupted by a server restart';
+export const EXPORT_INTERRUPTED =
+  'Export was interrupted because its server stopped';
 
 /**
  * The signed-copies index of a template and its bulk ZIP exports. Exports are
  * recorded as `queued`, built one at a time by {@link DocumentExportQueue},
- * and downloaded through a short-lived presigned URL.
+ * and downloaded through a short-lived presigned URL. Each export belongs to
+ * the process that queued it, which keeps its `heartbeat_at` fresh; any
+ * process fails exports whose heartbeat has gone stale.
  */
 @Injectable()
-export class DocumentExportsService implements OnApplicationBootstrap {
+export class DocumentExportsService
+  implements OnApplicationBootstrap, OnModuleDestroy
+{
   private readonly logger = new Logger(DocumentExportsService.name);
+  private timers: NodeJS.Timeout[] = [];
 
   constructor(
     private readonly exports: DocumentExportsRepository,
@@ -69,28 +80,62 @@ export class DocumentExportsService implements OnApplicationBootstrap {
     private readonly storage: PrivateStorageClient,
     private readonly queue: DocumentExportQueue,
     private readonly audit: AuditService,
+    private readonly owner: DocumentExportOwner,
   ) {}
 
-  /** Marks exports a previous process left `queued` or `running` as `failed`. */
+  /** Recovers abandoned exports, then heartbeats every 15 s and recovers every minute. */
   async onApplicationBootstrap(): Promise<void> {
+    await this.recoverStale();
+    this.timers = [
+      setInterval(() => void this.heartbeat(), EXPORT_HEARTBEAT_INTERVAL_MS),
+      setInterval(() => void this.recoverStale(), EXPORT_RECOVERY_INTERVAL_MS),
+    ];
+    for (const timer of this.timers) {
+      timer.unref();
+    }
+  }
+
+  onModuleDestroy(): void {
+    for (const timer of this.timers) {
+      clearInterval(timer);
+    }
+    this.timers = [];
+  }
+
+  /** Refreshes `heartbeat_at` on this process's `queued` and `running` exports. */
+  async heartbeat(now: Date = new Date()): Promise<void> {
     try {
-      const failed = await this.exports.failUnfinished(
+      await this.exports.heartbeat(this.owner.id, now.toISOString());
+    } catch (err) {
+      this.logger.error(`Export heartbeat failed: ${errorMessage(err)}`);
+    }
+  }
+
+  /**
+   * Fails `queued` and `running` exports whose heartbeat is over 2 minutes
+   * old, whichever process owned them; live owners' exports are left alone.
+   */
+  async recoverStale(now: Date = new Date()): Promise<void> {
+    try {
+      const failed = await this.exports.failStale(
+        new Date(now.getTime() - EXPORT_STALE_AFTER_MS).toISOString(),
         EXPORT_INTERRUPTED,
-        new Date().toISOString(),
+        now.toISOString(),
       );
       if (failed > 0) {
-        this.logger.warn(`Marked ${failed} interrupted export(s) failed.`);
+        this.logger.warn(`Marked ${failed} abandoned export(s) failed.`);
       }
     } catch (err) {
       this.logger.error(
-        `Recovering interrupted exports failed: ${errorMessage(err)}`,
+        `Recovering abandoned exports failed: ${errorMessage(err)}`,
       );
     }
   }
 
   /**
    * `GET /admin/documents/templates/:id/assignments`: completed first (newest
-   * signing first), then open ones by instructor last name. 404 unknown template.
+   * signing first), then open ones by instructor last name; `hasSignedCopy`
+   * keeps only rows with a signed copy. 404 unknown template.
    */
   async listAssignments(
     templateId: string,
@@ -104,7 +149,7 @@ export class DocumentExportsService implements OnApplicationBootstrap {
       status: query.status ?? 'all',
       patterns: searchTokens(query.q).map((token) => likePattern(token)),
       ids: null,
-      signedOnly: false,
+      signedOnly: query.hasSignedCopy === true,
       limit,
       offset: pageOffset(query.page ?? 1, limit),
     };
@@ -147,6 +192,8 @@ export class DocumentExportsService implements OnApplicationBootstrap {
       season,
       assignment_ids: ids,
       requested_by: actor.userId as string,
+      owner_id: this.owner.id,
+      heartbeat_at: new Date().toISOString(),
     });
     await this.audit.record({
       action: AUDIT_ACTIONS.documentExportCreate,
@@ -230,10 +277,12 @@ export class DocumentExportsService implements OnApplicationBootstrap {
    */
   async run(exportId: string): Promise<void> {
     const startedAt = new Date().toISOString();
-    const row = await this.exports.updateIfStatus(exportId, ['queued'], {
-      status: 'running',
-      started_at: startedAt,
-    });
+    const row = await this.exports.updateIfStatus(
+      exportId,
+      ['queued'],
+      { status: 'running', started_at: startedAt, heartbeat_at: startedAt },
+      this.owner.id,
+    );
     if (!row) {
       return;
     }
@@ -248,17 +297,22 @@ export class DocumentExportsService implements OnApplicationBootstrap {
         rows,
       });
       const finishedAt = new Date();
-      const ready = await this.exports.updateIfStatus(row.id, ['running'], {
-        status: 'ready',
-        file_count: result.fileCount,
-        skipped_count: result.skippedCount,
-        size_bytes: result.sizeBytes,
-        zip_key: key,
-        finished_at: finishedAt.toISOString(),
-        expires_at: new Date(
-          finishedAt.getTime() + EXPORT_RETENTION_MS,
-        ).toISOString(),
-      });
+      const ready = await this.exports.updateIfStatus(
+        row.id,
+        ['running'],
+        {
+          status: 'ready',
+          file_count: result.fileCount,
+          skipped_count: result.skippedCount,
+          size_bytes: result.sizeBytes,
+          zip_key: key,
+          finished_at: finishedAt.toISOString(),
+          expires_at: new Date(
+            finishedAt.getTime() + EXPORT_RETENTION_MS,
+          ).toISOString(),
+        },
+        this.owner.id,
+      );
       if (!ready) {
         await this.storage.delete(key);
       }
@@ -268,11 +322,16 @@ export class DocumentExportsService implements OnApplicationBootstrap {
       );
     } catch (err) {
       this.logger.error(`Export ${row.id} failed: ${errorMessage(err)}`);
-      await this.exports.updateIfStatus(row.id, ['running'], {
-        status: 'failed',
-        error: EXPORT_FAILED,
-        finished_at: new Date().toISOString(),
-      });
+      await this.exports.updateIfStatus(
+        row.id,
+        ['running'],
+        {
+          status: 'failed',
+          error: EXPORT_FAILED,
+          finished_at: new Date().toISOString(),
+        },
+        this.owner.id,
+      );
     }
   }
 

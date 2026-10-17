@@ -21,6 +21,7 @@ import {
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentCompletedEmailHandler } from './document-completed-email.handler';
 import { DocumentCompletedHandler } from './document-completed.handler';
+import { DocumentExportOwner } from './document-export-owner';
 import { DocumentExportQueue } from './document-export-queue';
 import { DocumentExportRetentionService } from './document-export-retention.service';
 import {
@@ -86,6 +87,7 @@ import {
     },
     PdfWorkQueue,
     DocumentExportQueue,
+    DocumentExportOwner,
     DocumentExportsService,
     DocumentExportRetentionService,
     DocumentTemplatesService,

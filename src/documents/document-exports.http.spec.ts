@@ -20,6 +20,7 @@ import {
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { AdminDocumentExportsController } from './admin-document-exports.controller';
+import { DocumentExportOwner } from './document-export-owner';
 import { DocumentExportQueue } from './document-export-queue';
 import { MAX_EXPORT_FILE_BYTES } from './document-export-zip';
 import { DocumentExportsRepository } from './document-exports.repository';
@@ -49,6 +50,9 @@ const ids = (res: Response) => rows(res).map((r) => r.id);
 const exportOf = (res: Response) => res.body as DocumentExport;
 const message = (res: Response) => (res.body as { message: string }).message;
 
+const OWNER_A = 'machine-a-1111aaaa';
+const OWNER_B = 'machine-b-2222bbbb';
+const MINUTE = 60 * 1000;
 const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
 const SHA = 'ab'.repeat(32);
 
@@ -79,6 +83,7 @@ async function build(
         { provide: DocumentTemplatesRepository, useValue: templates },
         { provide: PrivateStorageClient, useValue: storage },
         { provide: AuditService, useValue: audit },
+        { provide: DocumentExportOwner, useValue: { id: OWNER_A } },
       ],
     }),
   );
@@ -346,6 +351,23 @@ describe('document exports HTTP', () => {
       expect(past.headers['x-total-count']).toBe('55');
     });
 
+    it('with hasSignedCopy=true lists and counts only rows with a signed copy', async () => {
+      const signed = completed('Ann', 'Wong', '2026-10-02T15:00:00Z');
+      completed('No', 'Copy', '2026-10-03T15:00:00Z', { signed_key: null });
+      open('Cy', 'Open');
+
+      const res = await list({
+        status: 'completed',
+        hasSignedCopy: 'true',
+        limit: 1,
+      }).expect(200);
+      expect(res.headers['x-total-count']).toBe('1');
+      expect(ids(res)).toEqual([signed.id]);
+
+      const all = await list({ status: 'completed', hasSignedCopy: 'false' });
+      expect(all.headers['x-total-count']).toBe('2');
+    });
+
     it('reports a zero total for a template with no assignments', async () => {
       const res = await list({ page: 1 }).expect(200);
       expect(res.body).toEqual([]);
@@ -358,6 +380,7 @@ describe('document exports HTTP', () => {
       [{ page: 0 }],
       [{ status: 'archived' }],
       [{ season: '' }],
+      [{ hasSignedCopy: 'yes' }],
     ])('rejects %j with 400', async (query) => {
       await list(query).expect(400);
     });
@@ -489,6 +512,17 @@ describe('document exports HTTP', () => {
       }
       const res = await create({}).expect(400);
       expect(message(res)).toBe(EXPORT_TOO_MANY);
+    });
+
+    it('does not count completed rows without a signed copy towards the 1,000 cap', async () => {
+      for (let i = 0; i < 1000; i += 1) {
+        completed(`F${i}`, `L${i}`, '2026-10-02T15:00:00Z', {}, null);
+      }
+      completed('No', 'Copy', '2026-10-02T15:00:00Z', { signed_key: null });
+      await create({}).expect(202);
+      expect(ctx.audit.entries[0].metadata).toMatchObject({
+        matchedCount: 1000,
+      });
     });
 
     it('400s ids that are not completed copies of this template', async () => {
@@ -722,7 +756,11 @@ describe('document exports HTTP', () => {
         .spyOn(ctx.storage, 'uploadStream')
         .mockImplementationOnce(async (key, body, type) => {
           const size = await upload(key, body, type);
-          await ctx.exportsRepo.failUnfinished(EXPORT_INTERRUPTED, 'now');
+          await ctx.exportsRepo.failStale(
+            new Date(Date.now() + MINUTE).toISOString(),
+            EXPORT_INTERRUPTED,
+            new Date().toISOString(),
+          );
           return size;
         });
 
@@ -935,40 +973,175 @@ describe('document exports HTTP', () => {
     });
   });
 
-  describe('startup recovery', () => {
-    it('marks exports left queued or running as failed when the app starts', async () => {
+  describe('recovery of abandoned exports', () => {
+    const minutesAgo = (n: number) =>
+      new Date(Date.now() - n * MINUTE).toISOString();
+
+    function otherProcess(): DocumentExportsService {
+      return new DocumentExportsService(
+        ctx.exportsRepo,
+        ctx.templates,
+        ctx.storage,
+        new DocumentExportQueue(),
+        ctx.audit as unknown as AuditService,
+        { id: OWNER_B },
+      );
+    }
+
+    it('fails queued and running exports with a stale heartbeat on boot, and leaves fresh ones alone', async () => {
       const ids: Record<string, string> = {};
       ctx = await build((exportsRepo) => {
-        const templateId = UNKNOWN_ID;
-        for (const status of [
-          'queued',
-          'running',
-          'ready',
-          'failed',
-        ] as const) {
-          ids[status] = exportsRepo.seed({
-            template_id: templateId,
+        const seed = (
+          name: string,
+          status: 'queued' | 'running' | 'ready',
+          at: string,
+        ) => {
+          ids[name] = exportsRepo.seed({
+            template_id: UNKNOWN_ID,
+            owner_id: 'machine-dead-0000dead',
             status,
+            heartbeat_at: at,
           }).id;
-        }
+        };
+        seed('staleQueued', 'queued', minutesAgo(3));
+        seed('staleRunning', 'running', minutesAgo(2.5));
+        seed('freshRunning', 'running', minutesAgo(1));
+        seed('ready', 'ready', minutesAgo(60));
       });
 
-      expect(ctx.exportsRepo.rows.get(ids.queued)).toMatchObject({
+      expect(ctx.exportsRepo.rows.get(ids.staleQueued)).toMatchObject({
         status: 'failed',
         error: EXPORT_INTERRUPTED,
         finished_at: expect.any(String) as unknown,
       });
-      expect(ctx.exportsRepo.rows.get(ids.running)?.status).toBe('failed');
+      expect(ctx.exportsRepo.rows.get(ids.staleRunning)?.status).toBe('failed');
+      expect(ctx.exportsRepo.rows.get(ids.freshRunning)?.status).toBe(
+        'running',
+      );
       expect(ctx.exportsRepo.rows.get(ids.ready)?.status).toBe('ready');
     });
 
-    it('still starts when recovery fails', async () => {
+    it('a second process booting does not fail the first one’s running and queued exports', async () => {
+      ctx = await build();
+      completed('Ann', 'Wong', '2026-10-02T15:00:00Z');
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const getStream = ctx.storage.getStream.bind(ctx.storage) as (
+        key: string,
+        max: number,
+      ) => Promise<Readable | null>;
+      jest
+        .spyOn(ctx.storage, 'getStream')
+        .mockImplementation(async (key, max) => {
+          await gate;
+          return getStream(key, max);
+        });
+      const create = () =>
+        http()
+          .post(`/admin/documents/templates/${ctx.template.id}/exports`)
+          .set('Authorization', admin)
+          .send({})
+          .expect(202);
+      const running = exportOf(await create()).id;
+      const queued = exportOf(await create()).id;
+      await new Promise((r) => setImmediate(r));
+      expect(ctx.exportsRepo.rows.get(running)).toMatchObject({
+        status: 'running',
+        owner_id: OWNER_A,
+      });
+      expect(ctx.exportsRepo.rows.get(queued)).toMatchObject({
+        status: 'queued',
+        owner_id: OWNER_A,
+      });
+
+      const b = otherProcess();
+      await b.onApplicationBootstrap();
+      b.onModuleDestroy();
+      const a = ctx.app.get(DocumentExportsService);
+      await a.heartbeat(new Date(Date.now() + 1.5 * MINUTE));
+      await b.recoverStale(new Date(Date.now() + 3 * MINUTE));
+
+      expect(ctx.exportsRepo.rows.get(running)?.status).toBe('running');
+      expect(ctx.exportsRepo.rows.get(queued)?.status).toBe('queued');
+      release();
+      await ctx.queue.idle();
+      expect(ctx.exportsRepo.rows.get(running)?.status).toBe('ready');
+      expect(ctx.exportsRepo.rows.get(queued)?.status).toBe('ready');
+      expect(ctx.storage.deleted).toEqual([]);
+    });
+
+    it('another process fails a dead owner’s exports once its heartbeat is over 2 minutes old', async () => {
+      ctx = await build();
+      const row = ctx.exportsRepo.seed({
+        template_id: ctx.template.id,
+        owner_id: OWNER_A,
+        status: 'running',
+        heartbeat_at: new Date().toISOString(),
+      });
+      const b = otherProcess();
+
+      await b.recoverStale(new Date(Date.now() + 1.9 * MINUTE));
+      expect(ctx.exportsRepo.rows.get(row.id)?.status).toBe('running');
+      await b.recoverStale(new Date(Date.now() + 2.1 * MINUTE));
+      expect(ctx.exportsRepo.rows.get(row.id)).toMatchObject({
+        status: 'failed',
+        error: EXPORT_INTERRUPTED,
+      });
+    });
+
+    it('heartbeats only this process’s queued and running exports', async () => {
+      ctx = await build();
+      const old = minutesAgo(1);
+      const seed = (owner: string, status: 'queued' | 'running' | 'ready') =>
+        ctx.exportsRepo.seed({
+          template_id: ctx.template.id,
+          owner_id: owner,
+          status,
+          heartbeat_at: old,
+        }).id;
+      const mineQueued = seed(OWNER_A, 'queued');
+      const mineRunning = seed(OWNER_A, 'running');
+      const mineReady = seed(OWNER_A, 'ready');
+      const theirs = seed(OWNER_B, 'running');
+      const at = new Date();
+
+      await ctx.app.get(DocumentExportsService).heartbeat(at);
+
+      const beat = (id: string) => ctx.exportsRepo.rows.get(id)?.heartbeat_at;
+      expect(beat(mineQueued)).toBe(at.toISOString());
+      expect(beat(mineRunning)).toBe(at.toISOString());
+      expect(beat(mineReady)).toBe(old);
+      expect(beat(theirs)).toBe(old);
+    });
+
+    it('does not let another process finish or claim an export it does not own', async () => {
+      ctx = await build();
+      completed('Ann', 'Wong', '2026-10-02T15:00:00Z');
+      const row = ctx.exportsRepo.seed({
+        template_id: ctx.template.id,
+        owner_id: OWNER_B,
+        status: 'queued',
+      });
+      await ctx.app.get(DocumentExportsService).run(row.id);
+      expect(ctx.exportsRepo.rows.get(row.id)?.status).toBe('queued');
+    });
+
+    it('logs and carries on when recovery or a heartbeat fails', async () => {
       ctx = await build((exportsRepo) => {
         jest
-          .spyOn(exportsRepo, 'failUnfinished')
+          .spyOn(exportsRepo, 'failStale')
           .mockRejectedValueOnce(new Error('db down'));
+        jest
+          .spyOn(exportsRepo, 'heartbeat')
+          .mockRejectedValueOnce(new Error('heartbeat down'));
       });
       expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('db down'));
+      await ctx.app.get(DocumentExportsService).heartbeat();
+      expect(errorLog).toHaveBeenCalledWith(
+        expect.stringContaining('heartbeat down'),
+      );
     });
   });
 });

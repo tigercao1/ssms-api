@@ -54,6 +54,8 @@ export function documentExportRow(
     zip_key: null,
     error: null,
     requested_by: randomUUID(),
+    owner_id: 'test-owner',
+    heartbeat_at: new Date().toISOString(),
     started_at: null,
     finished_at: null,
     expires_at: null,
@@ -111,9 +113,14 @@ export class InMemoryDocumentExportsRepository extends DocumentExportsRepository
     id: string,
     statuses: DocumentExportStatus[],
     patch: DocumentExportWrite,
+    ownerId?: string,
   ): Promise<DocumentExportRow | null> {
     const row = this.rows.get(id);
-    if (!row || !statuses.includes(row.status)) {
+    if (
+      !row ||
+      !statuses.includes(row.status) ||
+      (ownerId !== undefined && row.owner_id !== ownerId)
+    ) {
       return Promise.resolve(null);
     }
     const next = { ...row, ...patch, updated_at: nextTimestamp() };
@@ -121,10 +128,27 @@ export class InMemoryDocumentExportsRepository extends DocumentExportsRepository
     return Promise.resolve(next);
   }
 
-  failUnfinished(error: string, at: string): Promise<number> {
+  heartbeat(ownerId: string, at: string): Promise<number> {
     let count = 0;
     for (const row of this.rows.values()) {
-      if (row.status === 'queued' || row.status === 'running') {
+      if (
+        row.owner_id === ownerId &&
+        (row.status === 'queued' || row.status === 'running')
+      ) {
+        this.rows.set(row.id, { ...row, heartbeat_at: at });
+        count += 1;
+      }
+    }
+    return Promise.resolve(count);
+  }
+
+  failStale(cutoff: string, error: string, at: string): Promise<number> {
+    let count = 0;
+    for (const row of this.rows.values()) {
+      if (
+        (row.status === 'queued' || row.status === 'running') &&
+        Date.parse(row.heartbeat_at) < Date.parse(cutoff)
+      ) {
         this.rows.set(row.id, {
           ...row,
           status: 'failed',

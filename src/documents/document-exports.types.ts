@@ -30,6 +30,8 @@ export interface DocumentExportRow {
   zip_key: string | null;
   error: string | null;
   requested_by: string;
+  owner_id: string;
+  heartbeat_at: string;
   started_at: string | null;
   finished_at: string | null;
   expires_at: string | null;
@@ -46,6 +48,8 @@ export interface NewDocumentExportRow {
   season: string | null;
   assignment_ids: string[] | null;
   requested_by: string;
+  owner_id: string;
+  heartbeat_at: string;
 }
 
 /** One row of `document_template_assignments(...)`. */

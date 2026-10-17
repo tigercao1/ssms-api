@@ -14,8 +14,11 @@ import type {
 export const DOCUMENT_EXPORTS_TABLE = 'document_exports';
 export const DOCUMENT_EXPORT_COLUMNS =
   'id, template_id, season, assignment_ids, status, file_count, skipped_count, ' +
-  'size_bytes, zip_key, error, requested_by, started_at, finished_at, ' +
+  'size_bytes, zip_key, error, requested_by, owner_id, heartbeat_at, ' +
+  'started_at, finished_at, ' +
   'expires_at, inserted_at, updated_at';
+
+const UNFINISHED: DocumentExportStatus[] = ['queued', 'running'];
 
 /** Data access for `document_exports` and the per-template assignment listing. */
 export abstract class DocumentExportsRepository {
@@ -26,14 +29,27 @@ export abstract class DocumentExportsRepository {
     templateId: string,
     limit: number,
   ): Promise<DocumentExportRow[]>;
-  /** Updates the row only while its status is one of `statuses`; null otherwise. */
+  /**
+   * Updates the row only while its status is one of `statuses` (and, given
+   * `ownerId`, while that process owns it); null otherwise.
+   */
   abstract updateIfStatus(
     id: string,
     statuses: DocumentExportStatus[],
     patch: DocumentExportWrite,
+    ownerId?: string,
   ): Promise<DocumentExportRow | null>;
-  /** Marks every `queued` or `running` export `failed`; returns how many. */
-  abstract failUnfinished(error: string, at: string): Promise<number>;
+  /** Stamps `heartbeat_at` on the owner's `queued` and `running` exports; returns how many. */
+  abstract heartbeat(ownerId: string, at: string): Promise<number>;
+  /**
+   * Marks `failed` every `queued` or `running` export whose heartbeat is
+   * older than `cutoff`, i.e. whose owning process is gone; returns how many.
+   */
+  abstract failStale(
+    cutoff: string,
+    error: string,
+    at: string,
+  ): Promise<number>;
   /** `ready` exports whose `expires_at` is at or before `now`. */
   abstract listExpired(now: string): Promise<DocumentExportRow[]>;
   /** Non-archived instructor assignments of a template, filtered, sorted and paged. */
@@ -88,25 +104,42 @@ export class SupabaseDocumentExportsRepository extends DocumentExportsRepository
     id: string,
     statuses: DocumentExportStatus[],
     patch: DocumentExportWrite,
+    ownerId?: string,
   ): Promise<DocumentExportRow | null> {
-    const { data, error } = (await this.supabase
+    let query = this.supabase
       .from(DOCUMENT_EXPORTS_TABLE)
       .update(patch)
       .eq('id', id)
-      .in('status', statuses)
+      .in('status', statuses);
+    if (ownerId !== undefined) {
+      query = query.eq('owner_id', ownerId);
+    }
+    const { data, error } = (await query
       .select(DOCUMENT_EXPORT_COLUMNS)
       .maybeSingle()) as DbResult<DocumentExportRow>;
     check(error, 'update document export');
     return data ?? null;
   }
 
-  async failUnfinished(error: string, at: string): Promise<number> {
+  async heartbeat(ownerId: string, at: string): Promise<number> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_EXPORTS_TABLE)
+      .update({ heartbeat_at: at })
+      .eq('owner_id', ownerId)
+      .in('status', UNFINISHED)
+      .select('id')) as DbResult<{ id: string }[]>;
+    check(error, 'refresh document export heartbeats');
+    return (data ?? []).length;
+  }
+
+  async failStale(cutoff: string, error: string, at: string): Promise<number> {
     const { data, error: dbError } = (await this.supabase
       .from(DOCUMENT_EXPORTS_TABLE)
       .update({ status: 'failed', error, finished_at: at })
-      .in('status', ['queued', 'running'])
+      .in('status', UNFINISHED)
+      .lt('heartbeat_at', cutoff)
       .select('id')) as DbResult<{ id: string }[]>;
-    check(dbError, 'fail unfinished document exports');
+    check(dbError, 'fail abandoned document exports');
     return (data ?? []).length;
   }
 

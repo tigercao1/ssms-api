@@ -94,27 +94,39 @@ begin
 end;
 $$;
 
-insert into document_exports (id, template_id, requested_by) values
+insert into document_exports (id, template_id, requested_by, owner_id) values
   ('55555555-5555-4555-8555-555555555291', '33333333-3333-4333-8333-333333333295',
-   '11111111-1111-4111-8111-111111111295');
+   '11111111-1111-4111-8111-111111111295', 'machine-a-1');
 
 do $$
 begin
   begin
-    insert into document_exports (template_id, requested_by, status) values
-      ('33333333-3333-4333-8333-333333333295', '11111111-1111-4111-8111-111111111295', 'done');
+    insert into document_exports (template_id, requested_by, owner_id, status) values
+      ('33333333-3333-4333-8333-333333333295', '11111111-1111-4111-8111-111111111295',
+       'machine-a-1', 'done');
     raise exception 'status check missing';
   exception when check_violation then null;
   end;
   begin
-    insert into document_exports (template_id, requested_by, assignment_ids) values
-      ('33333333-3333-4333-8333-333333333295', '11111111-1111-4111-8111-111111111295', '{}');
+    insert into document_exports (template_id, requested_by, owner_id, assignment_ids) values
+      ('33333333-3333-4333-8333-333333333295', '11111111-1111-4111-8111-111111111295',
+       'machine-a-1', '{}');
     raise exception 'empty selection allowed';
   exception when check_violation then null;
+  end;
+  begin
+    insert into document_exports (template_id, requested_by) values
+      ('33333333-3333-4333-8333-333333333295', '11111111-1111-4111-8111-111111111295');
+    raise exception 'owner_id not required';
+  exception when not_null_violation then null;
   end;
   if (select status from document_exports
       where id = '55555555-5555-4555-8555-555555555291') <> 'queued' then
     raise exception 'default status is not queued';
+  end if;
+  if (select heartbeat_at from document_exports
+      where id = '55555555-5555-4555-8555-555555555291') is null then
+    raise exception 'heartbeat_at has no default';
   end if;
   if has_table_privilege('authenticated', 'document_exports', 'select')
      or has_table_privilege('anon', 'document_exports', 'select') then

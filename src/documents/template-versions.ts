@@ -12,7 +12,10 @@ export type TemplateVersion = Pick<
 interface LanguageSources {
   source_language: DocumentLanguage | null;
   source_key: string | null;
-  translations: Pick<DocumentTemplateTranslationRow, 'language' | 'source_key'>[];
+  translations: Pick<
+    DocumentTemplateTranslationRow,
+    'language' | 'source_key'
+  >[];
 }
 
 export function templateLanguages(row: LanguageSources): DocumentLanguage[] {

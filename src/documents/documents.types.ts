@@ -122,7 +122,10 @@ export interface DocumentTemplateRow {
 }
 
 export type DocumentTemplateWrite = Partial<
-  Omit<DocumentTemplateRow, 'id' | 'inserted_at' | 'updated_at' | 'translations'>
+  Omit<
+    DocumentTemplateRow,
+    'id' | 'inserted_at' | 'updated_at' | 'translations'
+  >
 >;
 
 export interface DocumentTemplateTranslationRow {
@@ -161,7 +164,10 @@ export type AssignmentTemplateRow = Pick<
   | 'source_language'
   | 'source_key'
 > & {
-  translations: Pick<DocumentTemplateTranslationRow, 'language' | 'source_key'>[];
+  translations: Pick<
+    DocumentTemplateTranslationRow,
+    'language' | 'source_key'
+  >[];
 };
 
 export interface DocumentAssignmentRow {

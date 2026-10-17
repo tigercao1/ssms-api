@@ -166,7 +166,7 @@ export type AssignmentTemplateRow = Pick<
 > & {
   translations: Pick<
     DocumentTemplateTranslationRow,
-    'language' | 'source_key'
+    'language' | 'source_key' | 'fields'
   >[];
 };
 

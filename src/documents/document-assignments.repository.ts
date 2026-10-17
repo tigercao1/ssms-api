@@ -24,7 +24,7 @@ export const DOCUMENT_ASSIGNMENT_COLUMNS =
   'template:document_templates(id, kind, audience, title_en, title_zh, ' +
   'description_en, description_zh, required, status, sort_order, ' +
   'source_language, source_key, ' +
-  'translations:document_template_translations(language, source_key))';
+  'translations:document_template_translations(language, source_key, fields))';
 
 export const SUBJECT_ID_CHUNK = 100;
 const OPEN_STATUSES = ['assigned', 'viewed'];

@@ -1,4 +1,5 @@
 import type {
+  DocumentKind,
   DocumentLanguage,
   DocumentTemplateRow,
   DocumentTemplateTranslationRow,
@@ -29,6 +30,38 @@ export function templateLanguages(row: LanguageSources): DocumentLanguage[] {
     }
   }
   return languages;
+}
+
+interface SignerSources extends LanguageSources {
+  kind: DocumentKind;
+  translations: Pick<
+    DocumentTemplateTranslationRow,
+    'language' | 'source_key' | 'fields'
+  >[];
+}
+
+function readyForSigners(
+  kind: DocumentKind,
+  fields: readonly unknown[],
+): boolean {
+  return kind === 'read' || fields.length > 0;
+}
+
+export function signerLanguages(row: SignerSources): DocumentLanguage[] {
+  return templateLanguages({
+    ...row,
+    translations: row.translations.filter((t) =>
+      readyForSigners(row.kind, t.fields),
+    ),
+  });
+}
+
+export function signerVersion(
+  row: DocumentTemplateRow,
+  language: DocumentLanguage,
+): TemplateVersion | null {
+  const version = uploadedVersion(row, language);
+  return version && readyForSigners(row.kind, version.fields) ? version : null;
 }
 
 export function mainVersion(row: DocumentTemplateRow): TemplateVersion {

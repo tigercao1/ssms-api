@@ -50,12 +50,14 @@ import {
 } from './template-pdf';
 import {
   mainVersion,
-  templateLanguages,
+  signerLanguages,
+  signerVersion,
   type TemplateVersion,
-  uploadedVersion,
 } from './template-versions';
 
 export const ALREADY_COMPLETED = 'This document has already been completed';
+export const VERSION_HAS_NO_FIELDS =
+  'This version of the document has no fields to sign yet';
 export const ACKNOWLEDGEMENT_REQUIRED =
   'Tick "I have read and understood" to complete this document';
 export const CONSENT_REQUIRED =
@@ -119,8 +121,7 @@ export class DocumentSigningService {
     let row = await this.ownedOpenable(instructor, assignmentId);
     const template = await this.loadTemplate(row.template_id);
     const version =
-      (language && uploadedVersion(template, language)) ||
-      mainVersion(template);
+      (language && signerVersion(template, language)) || mainVersion(template);
     if (row.status === 'assigned') {
       row =
         (await this.assignments.updateIfStatus(row.id, ['assigned'], {
@@ -138,7 +139,7 @@ export class DocumentSigningService {
       template: toSigningTemplate(template, version),
       sourceUrl,
       language: version.language,
-      availableLanguages: templateLanguages(template),
+      availableLanguages: signerLanguages(template),
       consentText: { en: SIGNING_CONSENT.en, zh: SIGNING_CONSENT.zh },
     };
   }
@@ -181,6 +182,9 @@ export class DocumentSigningService {
     }
     if (dto.consent !== true) {
       throw new BadRequestException(CONSENT_REQUIRED);
+    }
+    if (version.fields.length === 0) {
+      throw new BadRequestException(VERSION_HAS_NO_FIELDS);
     }
     const input = this.parseInput(version, dto, instructor, now);
     const signed = await this.signAndStore(
@@ -235,7 +239,7 @@ export class DocumentSigningService {
     if (!language) {
       return mainVersion(template);
     }
-    const version = uploadedVersion(template, language);
+    const version = signerVersion(template, language);
     if (!version) {
       throw new BadRequestException(LANGUAGE_UNAVAILABLE);
     }

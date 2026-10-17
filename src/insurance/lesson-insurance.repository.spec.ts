@@ -6,6 +6,7 @@ import {
   INSURANCE_INSTRUCTOR_COLUMNS,
   INSURANCE_PAGE_SIZE,
   INSURANCE_RECORD_COLUMNS,
+  INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS,
   SupabaseLessonInsuranceRepository,
 } from './lesson-insurance.repository';
 
@@ -29,6 +30,45 @@ describe('SupabaseLessonInsuranceRepository', () => {
     ]);
   });
 
+  it('loads the instructor by id', async () => {
+    const row = { id: ID, approval_status: 'pending' };
+    const { client, calls } = recordingPayrollSupabase({
+      instructors: ok(row),
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(repo.instructorById(ID)).resolves.toEqual(row);
+    expect(calls[0].ops).toEqual([
+      ['select', INSURANCE_INSTRUCTOR_COLUMNS],
+      ['eq', 'id', ID],
+      ['maybeSingle'],
+    ]);
+  });
+
+  it('reads every page of approved instructors', async () => {
+    const full = Array.from({ length: INSURANCE_PAGE_SIZE }, (_, i) => ({ i }));
+    const { client, calls } = recordingPayrollSupabase({
+      instructors: [ok(full), ok(null), fail],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(repo.approvedInstructors()).resolves.toHaveLength(
+      INSURANCE_PAGE_SIZE,
+    );
+    expect(calls[0].ops).toEqual([
+      ['select', INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS],
+      ['eq', 'approval_status', 'approved'],
+      ['order', 'id', { ascending: true }],
+      ['range', 0, INSURANCE_PAGE_SIZE - 1],
+    ]);
+    expect(calls[1].ops.at(-1)).toEqual([
+      'range',
+      INSURANCE_PAGE_SIZE,
+      2 * INSURANCE_PAGE_SIZE - 1,
+    ]);
+    await expect(repo.approvedInstructors()).rejects.toThrow(
+      'list approved instructors',
+    );
+  });
+
   it('registers through the plpgsql function and keeps its error code', async () => {
     const { client, calls } = recordingPayrollSupabase({
       'rpc:lesson_insurance_register': [
@@ -47,7 +87,6 @@ describe('SupabaseLessonInsuranceRepository', () => {
       locationId: null,
       locationOther: 'Blue',
       students: [{ name: 'Ada', waiverConfirmed: true }],
-      topUp: true,
       idempotencyKey: KEY,
       actor: 'auth-1',
     };
@@ -64,12 +103,49 @@ describe('SupabaseLessonInsuranceRepository', () => {
       p_location_id: null,
       p_location_other: 'Blue',
       p_students: [{ name: 'Ada', waiverConfirmed: true }],
-      p_top_up: true,
+      p_top_up: false,
       p_idempotency_key: KEY,
       p_actor: 'auth-1',
     });
     await expect(repo.register(input)).rejects.toThrow('no result');
     await expect(repo.register(input)).rejects.toMatchObject({
+      constructor: DatabaseError,
+      code: '23503',
+    });
+  });
+
+  it('grants a season pass through one plpgsql call and keeps its error code', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      'rpc:lesson_insurance_admin_grant_pass': [
+        ok({ outcome: 'created', id: ID }),
+        ok(null),
+        fail,
+      ],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    const input = {
+      instructorId: ID,
+      seasonKey: '2026/27',
+      actor: 'auth-1',
+      idempotencyKey: KEY,
+      paidOn: '2026-10-14',
+      paidNote: 'e-transfer',
+    };
+    await expect(repo.grantSeasonPass(input)).resolves.toEqual({
+      outcome: 'created',
+      id: ID,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].ops[0][1]).toEqual({
+      p_instructor_id: ID,
+      p_season_key: '2026/27',
+      p_actor: 'auth-1',
+      p_idempotency_key: KEY,
+      p_paid_on: '2026-10-14',
+      p_paid_note: 'e-transfer',
+    });
+    await expect(repo.grantSeasonPass(input)).rejects.toThrow('no result');
+    await expect(repo.grantSeasonPass(input)).rejects.toMatchObject({
       constructor: DatabaseError,
       code: '23503',
     });

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,7 +8,7 @@ import { hasCode, PG_FOREIGN_KEY_VIOLATION } from '../database/db-result';
 import { INSTRUCTOR_PROFILE_NOT_FOUND } from '../documents/me-documents.service';
 import type { SeasonRow } from '../seasons/seasons.repository';
 import { SeasonsService } from '../seasons/seasons.service';
-import type { BuySeasonPassDto, RegisterLessonDto } from './dto/insurance.dto';
+import type { RegisterLessonDto } from './dto/insurance.dto';
 import {
   byLessonDateDesc,
   CAP_CENTS,
@@ -28,11 +27,8 @@ export type InsuranceLockReason = 'pending_approval' | 'rejected';
 
 export const WAIVER_UNCONFIRMED = '请确认每位学生的 waiver 已签署';
 export const NO_SEASON_FOR_DATE = 'No season covers this date';
-export const NO_CURRENT_SEASON = 'No current season is set up';
 export const UNKNOWN_LOCATION = 'Unknown ski area';
 export const LOCATION_CONFLICT = 'Choose a ski area or enter another, not both';
-export const CAP_REACHED = 'This lesson reaches the $400 season cap';
-export const ALREADY_COVERED = 'This season is already covered';
 export const INSURANCE_PENDING =
   'Your profile is being reviewed; lesson insurance opens once an admin approves you';
 export const INSURANCE_REJECTED =
@@ -137,33 +133,6 @@ export class MeInsuranceService {
         name: s.name,
         waiverConfirmed: true,
       })),
-      topUp: dto.topUp === true,
-      idempotencyKey: dto.idempotencyKey,
-      actor: authUserId,
-    });
-  }
-
-  async buySeasonPass(
-    authUserId: string,
-    dto: BuySeasonPassDto,
-  ): Promise<RegisterResult> {
-    const instructor = await this.approvedInstructorFor(authUserId);
-    const season = dto.season
-      ? await this.seasons.assertKnown(dto.season)
-      : await this.seasons.current();
-    if (!season) {
-      throw new BadRequestException(NO_CURRENT_SEASON);
-    }
-    return this.register({
-      instructorId: instructor.id,
-      kind: 'season_pass',
-      seasonKey: season.key,
-      lessonDate: null,
-      durationHours: null,
-      locationId: null,
-      locationOther: null,
-      students: null,
-      topUp: false,
       idempotencyKey: dto.idempotencyKey,
       actor: authUserId,
     });
@@ -179,41 +148,24 @@ export class MeInsuranceService {
       }
       throw err;
     }
-    switch (outcome.outcome) {
-      case 'no_season':
-        throw new BadRequestException({
-          statusCode: 400,
-          code: 'no_season',
-          message:
-            input.kind === 'lesson' ? NO_SEASON_FOR_DATE : NO_CURRENT_SEASON,
-        });
-      case 'cap_reached':
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'cap_reached',
-          message: CAP_REACHED,
-          listCents: outcome.list_cents,
-          owedCents: outcome.owed_cents,
-          topUpCents: outcome.top_up_cents,
-        });
-      case 'already_covered':
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'already_covered',
-          message: ALREADY_COVERED,
-          owedCents: outcome.owed_cents,
-        });
-      default: {
-        const row = await this.repo.findRecord(outcome.id);
-        if (!row || row.instructor_id !== input.instructorId) {
-          throw new Error(`Insurance record ${outcome.id} not found`);
-        }
-        return {
-          created: outcome.outcome === 'created',
-          record: toRecord(row),
-        };
-      }
+    if (outcome.outcome === 'no_season') {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'no_season',
+        message: NO_SEASON_FOR_DATE,
+      });
     }
+    if (outcome.outcome !== 'created' && outcome.outcome !== 'existing') {
+      throw new Error(`Unexpected insurance outcome ${outcome.outcome}`);
+    }
+    const row = await this.repo.findRecord(outcome.id);
+    if (!row || row.instructor_id !== input.instructorId) {
+      throw new Error(`Insurance record ${outcome.id} not found`);
+    }
+    return {
+      created: outcome.outcome === 'created',
+      record: toRecord(row),
+    };
   }
 
   private async instructorFor(

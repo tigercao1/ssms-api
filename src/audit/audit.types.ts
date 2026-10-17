@@ -81,6 +81,7 @@ export const AUDIT_ACTIONS = {
   lessonInsuranceMarkPaid: 'lesson_insurance.mark_paid',
   lessonInsuranceMarkUnpaid: 'lesson_insurance.mark_unpaid',
   lessonInsuranceVoid: 'lesson_insurance.void',
+  lessonInsuranceGrantSeasonPass: 'lesson_insurance.grant_season_pass',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

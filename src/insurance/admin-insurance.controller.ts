@@ -23,6 +23,7 @@ import {
 } from './admin-insurance.service';
 import {
   AdminInsuranceRecordsQueryDto,
+  GrantSeasonPassDto,
   InsuranceSeasonQueryDto,
   MarkPaidDto,
   VoidRecordDto,
@@ -49,6 +50,20 @@ export class AdminInsuranceController {
     @Query() query: AdminInsuranceRecordsQueryDto,
   ): Promise<AdminInsuranceRecordPage> {
     return this.insurance.records(query);
+  }
+
+  @Post('instructors/:instructorId/season-pass')
+  grantSeasonPass(
+    @Param('instructorId', uuid()) instructorId: string,
+    @Body() dto: GrantSeasonPassDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminInsuranceRecord> {
+    return this.insurance.grantSeasonPass(
+      instructorId,
+      dto,
+      toActor(user, userAgent),
+    );
   }
 
   @Post('records/:id/mark-paid')

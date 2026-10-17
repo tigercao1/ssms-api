@@ -20,6 +20,8 @@ export const ADMIN_INSURANCE_RECORD_COLUMNS = [
   'instructor:instructors(display_name_en, display_name_zh, email)',
 ].join(', ');
 export const INSURANCE_INSTRUCTOR_COLUMNS = 'id, approval_status';
+export const INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS =
+  'id, display_name_en, display_name_zh, email';
 
 export type InsuranceKind = 'lesson' | 'season_pass';
 export type InsuranceCoverage =
@@ -77,6 +79,13 @@ export interface InsuranceInstructorRow {
   approval_status: InstructorApprovalStatus;
 }
 
+export interface InsuranceSummaryInstructorRow {
+  id: string;
+  display_name_en: string;
+  display_name_zh: string | null;
+  email: string;
+}
+
 export interface RegisterInput {
   instructorId: string;
   kind: InsuranceKind;
@@ -86,22 +95,27 @@ export interface RegisterInput {
   locationId: string | null;
   locationOther: string | null;
   students: InsuranceStudent[] | null;
-  topUp: boolean;
   idempotencyKey: string;
   actor: string | null;
+}
+
+export interface GrantSeasonPassInput {
+  instructorId: string;
+  seasonKey: string;
+  actor: string | null;
+  idempotencyKey: string;
+  paidOn: string | null;
+  paidNote: string | null;
 }
 
 export type RegisterOutcome =
   | { outcome: 'created' | 'existing'; id: string }
   | { outcome: 'no_season' }
   | {
-      outcome: 'cap_reached';
+      outcome: 'already_covered' | 'already_has_pass';
       season_key: string;
-      list_cents: number;
       owed_cents: number;
-      top_up_cents: number;
-    }
-  | { outcome: 'already_covered'; season_key: string; owed_cents: number };
+    };
 
 export interface InsuranceRecordFilter {
   seasonKey: string;
@@ -127,7 +141,12 @@ export abstract class LessonInsuranceRepository {
   abstract instructorByAuthUser(
     authUserId: string,
   ): Promise<InsuranceInstructorRow | null>;
+  abstract instructorById(id: string): Promise<InsuranceInstructorRow | null>;
+  abstract approvedInstructors(): Promise<InsuranceSummaryInstructorRow[]>;
   abstract register(input: RegisterInput): Promise<RegisterOutcome>;
+  abstract grantSeasonPass(
+    input: GrantSeasonPassInput,
+  ): Promise<RegisterOutcome>;
   abstract findRecord(id: string): Promise<AdminInsuranceRecordRow | null>;
   abstract recordsFor(
     instructorId: string,
@@ -165,6 +184,29 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
     return data;
   }
 
+  async instructorById(id: string): Promise<InsuranceInstructorRow | null> {
+    const { data, error } = (await this.supabase
+      .from('instructors')
+      .select(INSURANCE_INSTRUCTOR_COLUMNS)
+      .eq('id', id)
+      .maybeSingle()) as DbResult<InsuranceInstructorRow>;
+    check(error, 'load instructor');
+    return data;
+  }
+
+  approvedInstructors(): Promise<InsuranceSummaryInstructorRow[]> {
+    return this.pages<InsuranceSummaryInstructorRow>(
+      (from, to) =>
+        this.supabase
+          .from('instructors')
+          .select(INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS)
+          .eq('approval_status', 'approved')
+          .order('id', { ascending: true })
+          .range(from, to),
+      'list approved instructors',
+    );
+  }
+
   async register(input: RegisterInput): Promise<RegisterOutcome> {
     const { data, error } = (await this.supabase.rpc(
       'lesson_insurance_register',
@@ -177,7 +219,7 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
         p_location_id: input.locationId,
         p_location_other: input.locationOther,
         p_students: input.students,
-        p_top_up: input.topUp,
+        p_top_up: false,
         p_idempotency_key: input.idempotencyKey,
         p_actor: input.actor,
       },
@@ -185,6 +227,25 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
     check(error, 'register lesson insurance');
     if (!data) {
       throw new Error('Failed to register lesson insurance: no result');
+    }
+    return data;
+  }
+
+  async grantSeasonPass(input: GrantSeasonPassInput): Promise<RegisterOutcome> {
+    const { data, error } = (await this.supabase.rpc(
+      'lesson_insurance_admin_grant_pass',
+      {
+        p_instructor_id: input.instructorId,
+        p_season_key: input.seasonKey,
+        p_actor: input.actor,
+        p_idempotency_key: input.idempotencyKey,
+        p_paid_on: input.paidOn,
+        p_paid_note: input.paidNote,
+      },
+    )) as DbResult<RegisterOutcome>;
+    check(error, 'grant season pass');
+    if (!data) {
+      throw new Error('Failed to grant season pass: no result');
     }
     return data;
   }
@@ -278,17 +339,31 @@ export class SupabaseLessonInsuranceRepository extends LessonInsuranceRepository
     return query;
   }
 
-  private async all<T>(
+  private all<T>(
     columns: string,
     filter: InsuranceRecordFilter,
     action: string,
   ): Promise<T[]> {
+    return this.pages<T>(
+      (from, to) =>
+        this.matching(columns, filter)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      action,
+    );
+  }
+
+  private async pages<T>(
+    fetchPage: (from: number, to: number) => PromiseLike<unknown>,
+    action: string,
+  ): Promise<T[]> {
     const rows: T[] = [];
     for (let offset = 0; ; offset += INSURANCE_PAGE_SIZE) {
-      const { data, error } = (await this.matching(columns, filter)
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(offset, offset + INSURANCE_PAGE_SIZE - 1)) as DbResult<T[]>;
+      const { data, error } = (await fetchPage(
+        offset,
+        offset + INSURANCE_PAGE_SIZE - 1,
+      )) as DbResult<T[]>;
       check(error, action);
       const page = data ?? [];
       rows.push(...page);

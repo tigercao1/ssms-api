@@ -6,6 +6,7 @@ import {
   ADA_AUTH,
   ADA_INSTRUCTOR,
   ADA_USER,
+  ADMIN_AUTH,
   BO_AUTH,
   BO_INSTRUCTOR,
   BO_USER,
@@ -99,11 +100,13 @@ describe('/me/insurance', () => {
         ...extra,
       }).expect(201)
     ).body as InsuranceRecord;
-  const pass = (body: object = {}, auth = ADA_AUTH) =>
-    http()
-      .post('/me/insurance/season-pass')
-      .set('Authorization', auth)
-      .send({ idempotencyKey: randomUUID(), ...body });
+  const grantPass = async () =>
+    (
+      await http()
+        .post(`/admin/insurance/instructors/${ADA_INSTRUCTOR}/season-pass`)
+        .set('Authorization', ADMIN_AUTH)
+        .expect(201)
+    ).body as InsuranceRecord;
 
   afterEach(async () => {
     await ctx.app.close();
@@ -143,6 +146,9 @@ describe('/me/insurance', () => {
         http().post(`/me/insurance/records/${record.id}/cancel`),
         http().delete(`/me/insurance/records/${record.id}`),
         http().patch(`/me/insurance/records/${record.id}`),
+        http()
+          .post('/me/insurance/season-pass')
+          .send({ idempotencyKey: randomUUID() }),
       ]) {
         await call.set('Authorization', ADA_AUTH).expect(404);
       }
@@ -203,11 +209,6 @@ describe('/me/insurance', () => {
         owedCents: 0,
         records: [],
       });
-      await pass().expect(400, {
-        statusCode: 400,
-        message: 'No current season is set up',
-        error: 'Bad Request',
-      });
     });
 
     it('sorts by lesson date desc, a season pass by its creation date, then newest first', async () => {
@@ -215,7 +216,7 @@ describe('/me/insurance', () => {
       const jan = await lesson('2027-01-10', 1, 1);
       const nov = await lesson('2026-11-15', 1, 1);
       const decLater = await lesson('2026-12-01', 2, 1);
-      const seasonPass = (await pass().expect(201)).body as InsuranceRecord;
+      const seasonPass = await grantPass();
       const { records } = await overview();
       expect(records.map((r) => r.id)).toEqual([
         jan.id,
@@ -289,13 +290,12 @@ describe('/me/insurance', () => {
       });
     });
 
-    it('cannot register a lesson or buy a season pass', async () => {
+    it('cannot register a lesson', async () => {
       await register({
         lessonDate: '2026-12-01',
         durationHours: 1,
         students: students(1),
       }).expect(403, { message, reason });
-      await pass().expect(403, { message, reason });
       expect(ctx.repo.registerCalls).toHaveLength(0);
     });
   });
@@ -443,53 +443,49 @@ describe('/me/insurance', () => {
       expect((await overview()).owedCents).toBe(2000);
     });
 
-    it('409s cap_reached at 380 owed + 20 list, then tops up 20 and covers later lessons for free', async () => {
+    it('charges only the remainder when a lesson crosses the cap, with no 409, then registers later lessons for free', async () => {
       for (const day of ['01', '02', '03', '04']) {
         await lesson(`2026-12-${day}`, 2, 4);
       }
       await lesson('2026-12-05', 2, 3);
       expect((await overview()).owedCents).toBe(38000);
-      const body = {
-        lessonDate: '2026-12-06',
-        durationHours: 1,
-        students: students(2),
-      };
-      await register(body).expect(409, {
-        statusCode: 409,
-        code: 'cap_reached',
-        message: 'This lesson reaches the $400 season cap',
-        listCents: 2000,
-        owedCents: 38000,
-        topUpCents: 2000,
-      });
-      expect((await overview()).records).toHaveLength(5);
-      const topUp = (await register({ ...body, topUp: true }).expect(201))
-        .body as InsuranceRecord;
-      expect(topUp).toMatchObject({
-        listCents: 2000,
+      const crossing = (
+        await register({
+          lessonDate: '2026-12-06',
+          durationHours: 2,
+          students: students(2),
+          topUp: false,
+        }).expect(201)
+      ).body as InsuranceRecord;
+      expect(crossing).toMatchObject({
+        listCents: 4000,
         amountCents: 2000,
         coverage: 'cap_top_up',
         paymentStatus: 'unpaid',
       });
-      const free = await lesson('2026-12-07', 2, 6);
-      expect(free).toMatchObject({
-        listCents: 8000,
-        amountCents: 0,
-        coverage: 'capped',
-        paymentStatus: 'not_required',
-      });
-      const mine = await overview();
-      expect(mine).toMatchObject({
+      for (const day of ['07', '08']) {
+        const free = await lesson(`2026-12-${day}`, 2, 6);
+        expect(free).toMatchObject({
+          listCents: 8000,
+          amountCents: 0,
+          coverage: 'capped',
+          paymentStatus: 'not_required',
+        });
+      }
+      expect(await overview()).toMatchObject({
         owedCents: 40000,
         unpaidCents: 40000,
         coverage: 'capped',
       });
-      await pass().expect(409, {
-        statusCode: 409,
-        code: 'already_covered',
-        message: 'This season is already covered',
-        owedCents: 40000,
+    });
+
+    it('accepts and ignores a topUp flag from the previous portal', async () => {
+      const record = await lesson('2026-12-01', 1, 1, { topUp: true });
+      expect(record).toMatchObject({
+        amountCents: 1000,
+        coverage: 'per_lesson',
       });
+      expect(ctx.repo.registerCalls[0]).not.toHaveProperty('topUp');
     });
 
     it('never lets the amount owed pass 40000', async () => {
@@ -498,7 +494,6 @@ describe('/me/insurance', () => {
           lessonDate: `2027-01-${String(i).padStart(2, '0')}`,
           durationHours: 2,
           students: students(4),
-          topUp: true,
         }).expect(201);
         expect((await overview()).owedCents).toBeLessThanOrEqual(40000);
       }
@@ -511,7 +506,6 @@ describe('/me/insurance', () => {
           lessonDate: `2027-04-${day}`,
           durationHours: 2,
           students: students(4),
-          topUp: true,
         }).expect(201);
       }
       expect((await overview()).coverage).toBe('capped');
@@ -532,60 +526,6 @@ describe('/me/insurance', () => {
       });
       const late = await lesson('2026-11-01', 1, 1);
       expect(late).toMatchObject({ seasonKey: '2026/27', amountCents: 0 });
-    });
-  });
-
-  describe('POST /me/insurance/season-pass', () => {
-    beforeEach(async () => {
-      ctx = await build();
-    });
-
-    it('costs 400 minus what is owed and makes later lessons free under season_pass', async () => {
-      await lesson('2026-11-20', 1, 3);
-      const seasonPass = (await pass().expect(201)).body as InsuranceRecord;
-      expect(seasonPass).toEqual({
-        id: expect.any(String) as unknown,
-        recordNo: 'INS-20261015-0002',
-        kind: 'season_pass',
-        seasonKey: '2026/27',
-        lessonDate: null,
-        durationHours: null,
-        locationId: null,
-        locationName: null,
-        locationOther: null,
-        students: [],
-        studentCount: null,
-        listCents: 40000,
-        amountCents: 37000,
-        coverage: null,
-        paymentStatus: 'unpaid',
-        paidOn: null,
-        createdAt: expect.any(String) as unknown,
-      });
-      const free = await lesson('2026-12-01', 2, 2);
-      expect(free).toMatchObject({
-        amountCents: 0,
-        coverage: 'season_pass',
-        paymentStatus: 'not_required',
-      });
-      expect(await overview()).toMatchObject({
-        owedCents: 40000,
-        coverage: 'season_pass',
-      });
-      await pass().expect(409);
-    });
-
-    it('buys a named season, repeats idempotently and 400s an unknown one', async () => {
-      const body = { season: '2027/28', idempotencyKey: randomUUID() };
-      const first = (await pass(body).expect(201)).body as InsuranceRecord;
-      expect(first).toMatchObject({ seasonKey: '2027/28', amountCents: 40000 });
-      await pass(body).expect(200, first);
-      await pass({ season: '2099/00' }).expect(400, {
-        statusCode: 400,
-        message: 'Unknown season',
-        error: 'Bad Request',
-      });
-      await pass({ season: 'next' }).expect(400);
     });
   });
 });

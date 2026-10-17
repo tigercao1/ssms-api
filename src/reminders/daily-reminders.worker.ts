@@ -16,6 +16,8 @@ import {
   DocumentRemindersService,
   type AssignmentRemindersResult,
 } from '../documents/document-reminders.service';
+import { DocumentExportRetentionService } from '../documents/document-export-retention.service';
+import type { DocumentExportRetentionResult } from '../documents/document-exports.types';
 import { SeasonsService } from '../seasons/seasons.service';
 import {
   DailyReminderRunsRepository,
@@ -44,6 +46,7 @@ export interface DailyRemindersSummary {
   documents: ReminderPart<AssignmentRemindersResult>;
   certifications: ReminderPart<CertificationExpiryResult>;
   invites: ReminderPart<InviteRemindersOutcome>;
+  exports: ReminderPart<DocumentExportRetentionResult>;
 }
 
 export type DailyRemindersTick =
@@ -82,6 +85,7 @@ export class DailyRemindersWorker implements OnModuleInit, OnModuleDestroy {
     private readonly certifications: CertificationExpiryService,
     private readonly invites: InviteRemindersService,
     private readonly seasons: SeasonsService,
+    private readonly exportRetention: DocumentExportRetentionService,
   ) {}
 
   scheduled(): boolean {
@@ -206,7 +210,11 @@ export class DailyRemindersWorker implements OnModuleInit, OnModuleDestroy {
     if (!lease.holds()) {
       return null;
     }
-    return { day, documents, certifications, invites };
+    const exports = await part(() => this.exportRetention.run(now));
+    if (!lease.holds()) {
+      return null;
+    }
+    return { day, documents, certifications, invites, exports };
   }
 
   private async remindInvites(
@@ -300,9 +308,10 @@ export function summaryLine(summary: DailyRemindersSummary): string {
     ),
     describePart('invites', summary.invites, ({ season, delivery }) =>
       delivery
-        ? `${season}: ${delivery.sent}/${delivery.candidates} due reminded, ${delivery.failed.length} failed, ${delivery.skipped} skipped, ${delivery.needsReview.length} need review`
-        : 'skipped: no current season',
+        ? `${season}: ${delivery.sent}/${delivery.candidates} due reminded, ${delivery.failed.length} failed, ${delivery.skipped} skipped, ${delivery.needsReview.length} need review;`
+        : 'skipped: no current season;',
     ),
+    describePart('exports', summary.exports, (r) => `${r.expired} expired`),
   ].join(' ');
 }
 

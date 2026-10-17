@@ -417,8 +417,12 @@ export class DocumentTemplatesService {
     if (!before || !(await this.repo.deleteTranslation(id, language))) {
       throw new NotFoundException(TRANSLATION_NOT_FOUND);
     }
-    await this.discardUpload(storageKeys.templateTranslationSource(id, language));
-    await this.discardUpload(storageKeys.templateTranslationUpload(id, language));
+    await this.discardUpload(
+      storageKeys.templateTranslationSource(id, language),
+    );
+    await this.discardUpload(
+      storageKeys.templateTranslationUpload(id, language),
+    );
     await this.audit.record({
       action: AUDIT_ACTIONS.documentTemplateTranslationRemove,
       actor: { ...actor, role: 'admin' },

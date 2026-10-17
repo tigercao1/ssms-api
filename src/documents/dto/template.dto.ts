@@ -134,7 +134,9 @@ export class UpdateTemplateDto {
 
 export const parseDocumentLanguage = () =>
   new ParseEnumPipe(
-    Object.fromEntries(DOCUMENT_LANGUAGES.map((language) => [language, language])),
+    Object.fromEntries(
+      DOCUMENT_LANGUAGES.map((language) => [language, language]),
+    ),
   );
 
 export class SourceUploadUrlDto {

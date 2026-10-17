@@ -97,6 +97,44 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     await expect(repo.update(ID, {})).rejects.toThrow('boom');
     await expect(repo.updateIfStatus(ID, ['live'], {})).rejects.toThrow('boom');
   });
+
+  it('upserts and deletes language versions', async () => {
+    const { client, queries } = recordingSupabase({
+      document_template_translations: [
+        ok(null),
+        ok([{ template_id: ID }]),
+        ok([]),
+        fail,
+        fail,
+      ],
+    });
+    const repo = new SupabaseDocumentTemplatesRepository(client);
+    await expect(
+      repo.upsertTranslation(ID, 'en', { fields: [] }),
+    ).resolves.toBeUndefined();
+    await expect(repo.deleteTranslation(ID, 'en')).resolves.toBe(true);
+    await expect(repo.deleteTranslation(ID, 'zh')).resolves.toBe(false);
+    await expect(repo.upsertTranslation(ID, 'en', {})).rejects.toThrow(
+      'save document template translation',
+    );
+    await expect(repo.deleteTranslation(ID, 'en')).rejects.toThrow('boom');
+    expect(DOCUMENT_TEMPLATE_COLUMNS).toContain(
+      'translations:document_template_translations(',
+    );
+    expect(queries[0].ops).toEqual([
+      [
+        'upsert',
+        { fields: [], template_id: ID, language: 'en' },
+        { onConflict: 'template_id,language' },
+      ],
+    ]);
+    expect(queries[1].ops).toEqual([
+      ['delete'],
+      ['eq', 'template_id', ID],
+      ['eq', 'language', 'en'],
+      ['select', 'template_id'],
+    ]);
+  });
 });
 
 describe('SupabaseDocumentAssignmentsRepository', () => {

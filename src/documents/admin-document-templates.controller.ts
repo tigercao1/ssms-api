@@ -129,11 +129,7 @@ export class AdminDocumentTemplatesController {
     @Param('language', parseDocumentLanguage()) language: DocumentLanguage,
     @Body() dto: SourceUploadUrlDto,
   ): Promise<UploadUrl> {
-    return this.templates.translationUploadUrl(
-      id,
-      language,
-      dto.contentLength,
-    );
+    return this.templates.translationUploadUrl(id, language, dto.contentLength);
   }
 
   @Post(':id/translations/:language/source/confirm')

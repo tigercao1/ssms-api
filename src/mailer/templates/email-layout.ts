@@ -99,7 +99,7 @@ function renderHtml(
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">',
     '<tr>',
     '<td align="center" style="padding:8px 0 24px;">',
-    `<img src="${escapeHtml(options.logoUrl)}" width="200" ${NO_TRANSLATE} alt="${escapeHtml(options.brandName)}" style="display:block;width:200px;max-width:200px;height:auto;border:0;outline:none;text-decoration:none;">`,
+    `<img src="${escapeHtml(options.logoUrl)}" width="200" height="77" ${NO_TRANSLATE} alt="${escapeHtml(options.brandName)}" style="display:block;width:200px;max-width:200px;height:77px;border:0;outline:none;text-decoration:none;">`,
     '</td>',
     '</tr>',
     '<tr>',

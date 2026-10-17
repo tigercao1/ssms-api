@@ -388,6 +388,16 @@ describe('auditRows', () => {
       'x',
     ]);
   });
+
+  it('names the signed language version only when it has one', () => {
+    expect(auditRows(AUDIT).map(([label]) => label)).not.toContain(
+      'Version signed / 签署版本',
+    );
+    expect(auditRows({ ...AUDIT, language: 'en' })[1]).toEqual([
+      'Version signed / 签署版本',
+      'English / 英文',
+    ]);
+  });
 });
 
 describe('loadStampFonts', () => {

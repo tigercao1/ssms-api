@@ -3,17 +3,25 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type {
+  DocumentLanguage,
   DocumentTemplateRow,
+  DocumentTemplateTranslationWrite,
   DocumentTemplateWrite,
   TemplateStatus,
 } from './documents.types';
 
 export const DOCUMENT_TEMPLATES_TABLE = 'document_templates';
+export const DOCUMENT_TEMPLATE_TRANSLATIONS_TABLE =
+  'document_template_translations';
+export const DOCUMENT_TEMPLATE_TRANSLATION_COLUMNS =
+  'template_id, language, source_key, source_sha256, page_count, pages, fields, ' +
+  'updated_by, inserted_at, updated_at';
 export const DOCUMENT_TEMPLATE_COLUMNS =
   'id, kind, audience, title_en, title_zh, description_en, description_zh, required, ' +
   'status, assign_to, season, published_at, published_by, ' +
-  'sort_order, source_key, source_sha256, page_count, pages, fields, ' +
-  'updated_by, inserted_at, updated_at';
+  'sort_order, source_language, source_key, source_sha256, page_count, pages, fields, ' +
+  'updated_by, inserted_at, updated_at, ' +
+  `translations:${DOCUMENT_TEMPLATE_TRANSLATIONS_TABLE}(${DOCUMENT_TEMPLATE_TRANSLATION_COLUMNS})`;
 
 export type NewDocumentTemplate = DocumentTemplateWrite &
   Pick<DocumentTemplateRow, 'kind' | 'audience' | 'title_en'>;
@@ -39,6 +47,15 @@ export abstract class DocumentTemplatesRepository {
     statuses: TemplateStatus[],
     patch: DocumentTemplateWrite,
   ): Promise<DocumentTemplateRow | null>;
+  abstract upsertTranslation(
+    templateId: string,
+    language: DocumentLanguage,
+    patch: DocumentTemplateTranslationWrite,
+  ): Promise<void>;
+  abstract deleteTranslation(
+    templateId: string,
+    language: DocumentLanguage,
+  ): Promise<boolean>;
 }
 
 @Injectable()
@@ -134,5 +151,33 @@ export class SupabaseDocumentTemplatesRepository extends DocumentTemplatesReposi
       .maybeSingle()) as DbResult<DocumentTemplateRow>;
     check(error, 'update document template');
     return data ?? null;
+  }
+
+  async upsertTranslation(
+    templateId: string,
+    language: DocumentLanguage,
+    patch: DocumentTemplateTranslationWrite,
+  ): Promise<void> {
+    const { error } = await this.supabase
+      .from(DOCUMENT_TEMPLATE_TRANSLATIONS_TABLE)
+      .upsert(
+        { ...patch, template_id: templateId, language },
+        { onConflict: 'template_id,language' },
+      );
+    check(error, 'save document template translation');
+  }
+
+  async deleteTranslation(
+    templateId: string,
+    language: DocumentLanguage,
+  ): Promise<boolean> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_TEMPLATE_TRANSLATIONS_TABLE)
+      .delete()
+      .eq('template_id', templateId)
+      .eq('language', language)
+      .select('template_id')) as DbResult<{ template_id: string }[]>;
+    check(error, 'delete document template translation');
+    return (data ?? []).length > 0;
   }
 }

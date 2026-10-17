@@ -26,7 +26,10 @@ import type {
   CertificationUploadRow,
   DocumentAssignmentRow,
   DocumentInstructorRow,
+  DocumentLanguage,
   DocumentTemplateRow,
+  DocumentTemplateTranslationRow,
+  DocumentTemplateTranslationWrite,
   DocumentTemplateWrite,
   InstructorCertificationRow,
   NewAssignmentRow,
@@ -181,6 +184,26 @@ export function templateRow(
     published_at: null,
     published_by: null,
     sort_order: 0,
+    source_language: null,
+    source_key: null,
+    source_sha256: null,
+    page_count: null,
+    pages: [],
+    fields: [],
+    updated_by: null,
+    inserted_at: now,
+    updated_at: now,
+    translations: [],
+    ...overrides,
+  };
+}
+
+export function translationRow(
+  overrides: Partial<DocumentTemplateTranslationRow> &
+    Pick<DocumentTemplateTranslationRow, 'template_id' | 'language'>,
+): DocumentTemplateTranslationRow {
+  const now = nextTimestamp();
+  return {
     source_key: null,
     source_sha256: null,
     page_count: null,
@@ -257,6 +280,50 @@ export class InMemoryDocumentTemplatesRepository extends DocumentTemplatesReposi
       ? this.update(id, patch)
       : Promise.resolve(null);
   }
+
+  upsertTranslation(
+    templateId: string,
+    language: DocumentLanguage,
+    patch: DocumentTemplateTranslationWrite,
+  ): Promise<void> {
+    const row = this.rows.get(templateId);
+    if (!row) {
+      return Promise.reject(
+        new DatabaseError(
+          'save document template translation',
+          '23503',
+          'insert or update on table "document_template_translations" violates foreign key constraint',
+        ),
+      );
+    }
+    const existing = row.translations.find((t) => t.language === language);
+    const next = existing
+      ? { ...existing, ...patch, updated_at: nextTimestamp() }
+      : translationRow({ ...patch, template_id: templateId, language });
+    this.rows.set(templateId, {
+      ...row,
+      translations: [
+        ...row.translations.filter((t) => t.language !== language),
+        next,
+      ],
+    });
+    return Promise.resolve();
+  }
+
+  deleteTranslation(
+    templateId: string,
+    language: DocumentLanguage,
+  ): Promise<boolean> {
+    const row = this.rows.get(templateId);
+    if (!row?.translations.some((t) => t.language === language)) {
+      return Promise.resolve(false);
+    }
+    this.rows.set(templateId, {
+      ...row,
+      translations: row.translations.filter((t) => t.language !== language),
+    });
+    return Promise.resolve(true);
+  }
 }
 
 /**
@@ -297,6 +364,7 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
       signer_user_agent: null,
       consent_at: null,
       template_sha256: null,
+      language: null,
       signed_key: null,
       signed_sha256: null,
       field_values: {},
@@ -326,6 +394,13 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
             required: t.required,
             status: t.status,
             sort_order: t.sort_order,
+            source_language: t.source_language,
+            source_key: t.source_key,
+            translations: t.translations.map((tr) => ({
+              language: tr.language,
+              source_key: tr.source_key,
+              fields: tr.fields,
+            })),
           }
         : null,
     };

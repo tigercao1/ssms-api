@@ -4,14 +4,18 @@ import type {
   CertUpload,
   CertificationUploadRow,
   DocumentAssignmentRow,
+  DocumentLanguage,
   DocumentTemplateRow,
+  DocumentTemplateTranslationRow,
   SigningTemplate,
   Template,
   TemplateCounts,
   TemplateField,
   TemplateFieldRow,
   TemplateSummary,
+  TemplateTranslation,
 } from './documents.types';
+import { templateLanguages, type TemplateVersion } from './template-versions';
 
 /** Stored field → API field. */
 export function toTemplateField(row: TemplateFieldRow): TemplateField {
@@ -75,6 +79,8 @@ export function toTemplateSummary(
     publishedAt: row.published_at,
     ...counts,
     sortOrder: row.sort_order,
+    sourceLanguage: row.source_language,
+    languages: templateLanguages(row),
     hasSource: row.source_key !== null,
     pageCount: row.page_count,
     fieldCount: row.fields.length,
@@ -83,10 +89,26 @@ export function toTemplateSummary(
   };
 }
 
+export function toTemplateTranslation(
+  row: DocumentTemplateTranslationRow,
+  sourceUrl: string | null,
+): TemplateTranslation {
+  return {
+    language: row.language,
+    hasSource: row.source_key !== null,
+    sourceSha256: row.source_sha256,
+    pageCount: row.page_count,
+    pages: row.pages,
+    fields: row.fields.map(toTemplateField),
+    sourceUrl,
+  };
+}
+
 export function toTemplate(
   row: DocumentTemplateRow,
   sourceUrl: string | null,
   counts: TemplateCounts,
+  translationUrls: ReadonlyMap<DocumentLanguage, string> = new Map(),
 ): Template {
   return {
     ...toTemplateSummary(row, counts),
@@ -95,6 +117,12 @@ export function toTemplate(
     fields: row.fields.map(toTemplateField),
     sourceUrl,
     updatedBy: row.updated_by,
+    translations: row.translations.map((translation) =>
+      toTemplateTranslation(
+        translation,
+        translationUrls.get(translation.language) ?? null,
+      ),
+    ),
   };
 }
 
@@ -125,6 +153,7 @@ export function toAssignment(row: DocumentAssignmentRow): Assignment {
     signerEmail: row.signer_email,
     consentAt: row.consent_at,
     templateSha256: row.template_sha256,
+    language: row.language,
     signedSha256: row.signed_sha256,
     hasSignedCopy: row.signed_key !== null,
     insertedAt: row.inserted_at,
@@ -182,7 +211,10 @@ export function toCertUploads(
     .map((row) => toCertUpload(row, currentIds.has(row.id), today));
 }
 
-export function toSigningTemplate(row: DocumentTemplateRow): SigningTemplate {
+export function toSigningTemplate(
+  row: DocumentTemplateRow,
+  version: TemplateVersion,
+): SigningTemplate {
   return {
     id: row.id,
     kind: row.kind,
@@ -190,8 +222,8 @@ export function toSigningTemplate(row: DocumentTemplateRow): SigningTemplate {
     titleZh: row.title_zh,
     descriptionEn: row.description_en,
     descriptionZh: row.description_zh,
-    pageCount: row.page_count,
-    pages: row.pages,
-    fields: row.fields.map(toTemplateField),
+    pageCount: version.page_count,
+    pages: version.pages,
+    fields: version.fields.map(toTemplateField),
   };
 }

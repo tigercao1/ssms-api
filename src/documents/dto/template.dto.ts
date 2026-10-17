@@ -18,11 +18,14 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { ParseEnumPipe } from '@nestjs/common';
 import {
   DOCUMENT_AUDIENCES,
   DOCUMENT_KINDS,
+  DOCUMENT_LANGUAGES,
   type DocumentAudience,
   type DocumentKind,
+  type DocumentLanguage,
   FIELD_PREFILLS,
   FIELD_TYPES,
   type FieldPrefill,
@@ -81,6 +84,10 @@ export class CreateTemplateDto {
 
   @IsInt()
   sortOrder!: number;
+
+  @IsOptional()
+  @IsIn(DOCUMENT_LANGUAGES)
+  sourceLanguage?: DocumentLanguage | null;
 }
 
 export class UpdateTemplateDto {
@@ -119,7 +126,18 @@ export class UpdateTemplateDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsIn(DOCUMENT_LANGUAGES)
+  sourceLanguage?: DocumentLanguage | null;
 }
+
+export const parseDocumentLanguage = () =>
+  new ParseEnumPipe(
+    Object.fromEntries(
+      DOCUMENT_LANGUAGES.map((language) => [language, language]),
+    ),
+  );
 
 export class SourceUploadUrlDto {
   @IsInt()

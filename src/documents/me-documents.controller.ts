@@ -8,6 +8,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -24,7 +25,10 @@ import type {
   SignedUrl,
   SigningDocument,
 } from './documents.types';
-import { CompleteDocumentDto } from './dto/complete-document.dto';
+import {
+  CompleteDocumentDto,
+  OpenDocumentQueryDto,
+} from './dto/complete-document.dto';
 import { MeDocumentsService } from './me-documents.service';
 
 /** `/me/documents`: the calling instructor's onboarding checklist and documents. */
@@ -44,9 +48,10 @@ export class MeDocumentsController {
   @Get(':assignmentId')
   open(
     @Param('assignmentId', new ParseUUIDPipe()) assignmentId: string,
+    @Query() query: OpenDocumentQueryDto,
     @CurrentUser() user: SupabaseJwtPayload,
   ): Promise<SigningDocument> {
-    return this.signing.open(user.sub, assignmentId);
+    return this.signing.open(user.sub, assignmentId, query.language);
   }
 
   @Post(':assignmentId/complete')

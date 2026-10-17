@@ -23,6 +23,7 @@ import type {
   CompletedDocument,
   DocumentAssignmentRow,
   DocumentInstructorRow,
+  DocumentLanguage,
   DocumentTemplateRow,
   SignedUrl,
   SigningDocument,
@@ -47,8 +48,16 @@ import {
   PDF_CONTENT_TYPE,
   sha256Hex,
 } from './template-pdf';
+import {
+  mainVersion,
+  signerLanguages,
+  signerVersion,
+  type TemplateVersion,
+} from './template-versions';
 
 export const ALREADY_COMPLETED = 'This document has already been completed';
+export const VERSION_HAS_NO_FIELDS =
+  'This version of the document has no fields to sign yet';
 export const ACKNOWLEDGEMENT_REQUIRED =
   'Tick "I have read and understood" to complete this document';
 export const CONSENT_REQUIRED =
@@ -56,6 +65,8 @@ export const CONSENT_REQUIRED =
 export const NO_SIGNED_COPY = 'This document has no signed copy';
 export const TEMPLATE_PDF_UNAVAILABLE =
   'The document PDF is not available; ask an admin to upload it again';
+export const LANGUAGE_UNAVAILABLE =
+  'This document is not available in that language';
 
 /** Fixed consent wording: returned to the signer by `open` and printed on the audit page. */
 export const SIGNING_CONSENT = {
@@ -103,11 +114,14 @@ export class DocumentSigningService {
   async open(
     authUserId: string,
     assignmentId: string,
+    language?: DocumentLanguage,
     now = new Date(),
   ): Promise<SigningDocument> {
     const instructor = await this.me.approvedInstructorFor(authUserId);
     let row = await this.ownedOpenable(instructor, assignmentId);
     const template = await this.loadTemplate(row.template_id);
+    const version =
+      (language && signerVersion(template, language)) || mainVersion(template);
     if (row.status === 'assigned') {
       row =
         (await this.assignments.updateIfStatus(row.id, ['assigned'], {
@@ -117,13 +131,15 @@ export class DocumentSigningService {
         (await this.assignments.findById(row.id)) ??
         row;
     }
-    const sourceUrl = template.source_key
-      ? (await this.storage.presignGet(template.source_key)).url
+    const sourceUrl = version.source_key
+      ? (await this.storage.presignGet(version.source_key)).url
       : null;
     return {
       assignment: toAssignment(row),
-      template: toSigningTemplate(template),
+      template: toSigningTemplate(template, version),
       sourceUrl,
+      language: version.language,
+      availableLanguages: signerLanguages(template),
       consentText: { en: SIGNING_CONSENT.en, zh: SIGNING_CONSENT.zh },
     };
   }
@@ -142,6 +158,7 @@ export class DocumentSigningService {
       throw new ConflictException(ALREADY_COMPLETED);
     }
     const template = await this.loadTemplate(row.template_id);
+    const version = this.signingVersion(template, dto.language);
     const signer = {
       viewed_at: row.viewed_at ?? now.toISOString(),
       consent_at: now.toISOString(),
@@ -158,18 +175,23 @@ export class DocumentSigningService {
       const updated = await this.markCompleted(row.id, {
         ...signer,
         signer_name: legalNameOf(instructor),
-        template_sha256: template.source_sha256,
+        template_sha256: version.source_sha256,
+        language: version.language,
       });
       return { assignment: toAssignment(updated) };
     }
     if (dto.consent !== true) {
       throw new BadRequestException(CONSENT_REQUIRED);
     }
-    const input = this.parseInput(template, dto, instructor, now);
+    if (version.fields.length === 0) {
+      throw new BadRequestException(VERSION_HAS_NO_FIELDS);
+    }
+    const input = this.parseInput(version, dto, instructor, now);
     const signed = await this.signAndStore(
       instructor,
       row,
       template,
+      version,
       input,
       evidence,
       signer,
@@ -210,14 +232,28 @@ export class DocumentSigningService {
     return { url, expiresAt, sha256: row.signed_sha256 };
   }
 
-  private parseInput(
+  private signingVersion(
     template: DocumentTemplateRow,
+    language: DocumentLanguage | null | undefined,
+  ): TemplateVersion {
+    if (!language) {
+      return mainVersion(template);
+    }
+    const version = signerVersion(template, language);
+    if (!version) {
+      throw new BadRequestException(LANGUAGE_UNAVAILABLE);
+    }
+    return version;
+  }
+
+  private parseInput(
+    version: TemplateVersion,
     dto: CompleteDocumentDto,
     instructor: DocumentInstructorRow,
     now: Date,
   ): SigningInput {
     try {
-      return parseSigningInput(template.fields, dto, {
+      return parseSigningInput(version.fields, dto, {
         email: instructor.email,
         dateSigned: torontoToday(now),
       });
@@ -233,6 +269,7 @@ export class DocumentSigningService {
     instructor: DocumentInstructorRow,
     row: DocumentAssignmentRow,
     template: DocumentTemplateRow,
+    version: TemplateVersion,
     input: SigningInput,
     evidence: SigningEvidence,
     signer: DocumentAssignmentWrite & {
@@ -240,7 +277,7 @@ export class DocumentSigningService {
       completed_at: string;
     },
   ): Promise<SignedDocument> {
-    const sourceKey = template.source_key;
+    const sourceKey = version.source_key;
     if (!sourceKey) {
       throw new BadRequestException(TEMPLATE_PDF_UNAVAILABLE);
     }
@@ -251,14 +288,14 @@ export class DocumentSigningService {
       }
       const source = await this.readSource(sourceKey);
       const templateSha256 = sha256Hex(source);
-      if (template.source_sha256 && template.source_sha256 !== templateSha256) {
+      if (version.source_sha256 && version.source_sha256 !== templateSha256) {
         this.logger.warn(
-          `Template ${template.id} source hash ${templateSha256} differs from the recorded ${template.source_sha256}`,
+          `Template ${template.id} source hash ${templateSha256} differs from the recorded ${version.source_sha256}`,
         );
       }
       const stamped = await stampDocument({
         source,
-        fields: template.fields,
+        fields: version.fields,
         values: input.values,
         signatures: input.signatures,
         audit: {
@@ -274,6 +311,7 @@ export class DocumentSigningService {
           userAgent: evidence.userAgent,
           viewedAt: signer.viewed_at,
           signedAt: signer.completed_at,
+          language: version.language,
         },
       });
       const key = storageKeys.instructorDocument(instructor.id, row.id);
@@ -282,6 +320,7 @@ export class DocumentSigningService {
         ...signer,
         signer_name: input.signerName,
         template_sha256: templateSha256,
+        language: version.language,
         signed_key: key,
         signed_sha256: stamped.sha256,
         field_values: input.fieldValues,

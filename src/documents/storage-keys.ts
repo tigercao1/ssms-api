@@ -1,9 +1,15 @@
+import type { DocumentLanguage } from './documents.types';
+
 /** Object keys in the private bucket. Every key is built here. */
 export const storageKeys = {
   /** Normalised source PDF of a template (latest only). */
   templateSource: (templateId: string) => `templates/${templateId}/source.pdf`,
   /** Raw admin upload waiting for confirm; replaced by `templateSource` once validated. */
   templateUpload: (templateId: string) => `templates/${templateId}/upload.pdf`,
+  templateTranslationSource: (templateId: string, language: DocumentLanguage) =>
+    `templates/${templateId}/translations/${language}/source.pdf`,
+  templateTranslationUpload: (templateId: string, language: DocumentLanguage) =>
+    `templates/${templateId}/translations/${language}/upload.pdf`,
   /** Signed, flattened copy of an instructor's assignment. */
   instructorDocument: (instructorId: string, assignmentId: string) =>
     `subjects/instructor/${instructorId}/documents/${assignmentId}.pdf`,

@@ -941,6 +941,7 @@ describe('document publishing HTTP', () => {
             viewedAt: null,
             completedAt: null,
             dueAt: null,
+            languages: [],
           },
           expect.objectContaining({
             type: 'document',

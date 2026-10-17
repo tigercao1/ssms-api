@@ -6,6 +6,7 @@ import { ActivationAuth, SupabaseActivationAuth } from './activation-auth';
 import { ActivationController } from './activation.controller';
 import { ActivationService } from './activation.service';
 import { InviteDispatcher } from './invite-dispatcher';
+import { InviteRemindersService } from './invite-reminders.service';
 import {
   InvitesRepository,
   SupabaseInvitesRepository,
@@ -31,6 +32,8 @@ import { MeActivationController } from './me-activation.controller';
       useFactory: (invites: InvitesRepository, mailer: MailerService) =>
         new InviteDispatcher(invites, mailer),
     },
+    InviteRemindersService,
   ],
+  exports: [InviteRemindersService],
 })
 export class ActivationModule {}

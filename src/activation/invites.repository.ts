@@ -167,6 +167,7 @@ export class SupabaseInvitesRepository extends InvitesRepository {
       .eq('season', season)
       .lte('sent_at', new Date(now.getTime() - REMINDER_DELAY_MS).toISOString())
       .is('redeemed_at', null)
+      .is('activated_at', null)
       .is('reminded_at', null)
       .is('remind_claimed_at', null)
       .gt('expires_at', now.toISOString())

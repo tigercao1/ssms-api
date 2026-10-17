@@ -105,6 +105,7 @@ import {
     DocumentNotificationsService,
     DocumentOnboardingService,
     CertificationExpiryService,
+    DocumentRemindersService,
   ],
 })
 export class DocumentsModule {}

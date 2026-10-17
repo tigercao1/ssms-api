@@ -92,6 +92,10 @@ export function torontoToday(now: Date = new Date()): string {
   return `${w.year}-${pad(w.month)}-${pad(w.day)}`;
 }
 
+export function torontoHour(now: Date = new Date()): number {
+  return wallClock(now).hour;
+}
+
 /** The instant (ISO, UTC) at which `date` (YYYY-MM-DD) starts in {@link SCHOOL_TIME_ZONE}. */
 export function torontoStartOfDay(date: string): string {
   const wall = dayNumber(date) * MS_PER_DAY;

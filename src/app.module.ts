@@ -27,6 +27,7 @@ import { InsuranceModule } from './insurance/insurance.module';
 import { ClassImportModule } from './class-import/class-import.module';
 import { DocumentsModule } from './documents/documents.module';
 import { ShopifyWebhooksModule } from './shopify-webhooks/shopify-webhooks.module';
+import { RemindersModule } from './reminders/reminders.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { ShopifyWebhooksModule } from './shopify-webhooks/shopify-webhooks.modul
     DocumentsModule,
     ShopifyWebhooksModule,
     AuthHooksModule,
+    RemindersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

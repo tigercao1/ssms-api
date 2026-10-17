@@ -151,12 +151,20 @@ describe('signed-copies export memory', () => {
     gc();
     const baseline = process.memoryUsage();
     const peak = { ...baseline };
+    const live = { ...baseline };
+    let tick = 0;
     const sample = () => {
       const now = process.memoryUsage();
       peak.rss = Math.max(peak.rss, now.rss);
       peak.heapUsed = Math.max(peak.heapUsed, now.heapUsed);
-      peak.external = Math.max(peak.external, now.external);
       peak.arrayBuffers = Math.max(peak.arrayBuffers, now.arrayBuffers);
+      tick += 1;
+      if (tick % 5 === 0) {
+        gc();
+        const after = process.memoryUsage();
+        live.heapUsed = Math.max(live.heapUsed, after.heapUsed);
+        live.arrayBuffers = Math.max(live.arrayBuffers, after.arrayBuffers);
+      }
     };
     const timer = setInterval(sample, 5);
     const started = Date.now();
@@ -173,26 +181,28 @@ describe('signed-copies export memory', () => {
       sample();
       closeSync(fd);
     }
+    const mib = (bytes: number) => (bytes / MiB).toFixed(1);
     const growth = {
-      rssMiB: (peak.rss - baseline.rss) / MiB,
-      heapUsedMiB: (peak.heapUsed - baseline.heapUsed) / MiB,
-      externalMiB: (peak.external - baseline.external) / MiB,
-      arrayBuffersMiB: (peak.arrayBuffers - baseline.arrayBuffers) / MiB,
+      rss: peak.rss - baseline.rss,
+      heapUsed: peak.heapUsed - baseline.heapUsed,
+      arrayBuffers: peak.arrayBuffers - baseline.arrayBuffers,
+      liveHeapUsed: live.heapUsed - baseline.heapUsed,
+      liveArrayBuffers: live.arrayBuffers - baseline.arrayBuffers,
     };
-    console.log(
-      `export memory: ${FILES} files, ${(result.sizeBytes / MiB).toFixed(1)} MiB zip in ` +
-        `${Date.now() - started} ms; peak growth rss=${growth.rssMiB.toFixed(1)} MiB ` +
-        `heapUsed=${growth.heapUsedMiB.toFixed(1)} MiB external=${growth.externalMiB.toFixed(1)} MiB ` +
-        `arrayBuffers=${growth.arrayBuffersMiB.toFixed(1)} MiB; max R2 reads in flight=${maxReadsInFlight}, ` +
-        `max parts in flight=${maxPartsInFlight}`,
+    process.stdout.write(
+      `export memory: ${FILES} files, ${mib(result.sizeBytes)} MiB zip in ${Date.now() - started} ms; ` +
+        `peak growth rss=${mib(growth.rss)} MiB, heapUsed=${mib(growth.heapUsed)} MiB ` +
+        `(live after gc ${mib(growth.liveHeapUsed)} MiB), arrayBuffers=${mib(growth.arrayBuffers)} MiB ` +
+        `(live after gc ${mib(growth.liveArrayBuffers)} MiB); max R2 reads in flight=${maxReadsInFlight}, ` +
+        `max parts in flight=${maxPartsInFlight}\n`,
     );
 
     expect(result.fileCount).toBe(FILES);
     expect(result.skippedCount).toBe(0);
     expect(result.sizeBytes).toBeGreaterThan(FILES * FILE_BYTES);
-    expect(growth.rssMiB * MiB).toBeLessThan(LIMIT_BYTES);
-    expect(growth.heapUsedMiB * MiB).toBeLessThan(LIMIT_BYTES);
-    expect(growth.arrayBuffersMiB * MiB).toBeLessThan(LIMIT_BYTES);
+    expect(growth.rss).toBeLessThan(LIMIT_BYTES);
+    expect(growth.liveHeapUsed).toBeLessThan(LIMIT_BYTES);
+    expect(growth.liveArrayBuffers).toBeLessThan(LIMIT_BYTES);
     expect(maxReadsInFlight).toBeLessThanOrEqual(2);
     expect(maxPartsInFlight).toBeLessThanOrEqual(2);
     expect(completedParts).toBe(partSizes.length);

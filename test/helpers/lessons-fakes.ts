@@ -86,6 +86,7 @@ export function recordingSupabase(
       'ilike',
       'gte',
       'lt',
+      'lte',
       'limit',
       'range',
       'order',

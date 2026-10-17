@@ -76,6 +76,8 @@ export const AUDIT_ACTIONS = {
   documentAssignmentCreate: 'document_assignment.create',
   documentAssignmentArchive: 'document_assignment.archive',
   documentAssignmentRemind: 'document_assignment.remind',
+  documentExportCreate: 'document_export.create',
+  documentExportDownload: 'document_export.download',
   certificationUploadReview: 'certification_upload.review',
   certificationUploadView: 'certification_upload.view',
   certificationUploadFileDelete: 'certification_upload.file_delete',
@@ -124,6 +126,7 @@ export interface AuditEntry {
     | 'class_import'
     | 'document_template'
     | 'document_assignment'
+    | 'document_export'
     | 'certification_upload'
     | 'season'
     | 'lesson_insurance_record'

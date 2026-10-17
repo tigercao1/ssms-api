@@ -4,11 +4,13 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { InMemoryCertificationUploadsRepository } from '../../test/helpers/certification-fakes';
+import { InMemoryDocumentExportsRepository } from '../../test/helpers/document-exports-fakes';
 import {
   certificationUploadRow,
   InMemoryDocumentAssignmentsRepository,
   InMemoryDocumentSubjectsRepository,
   InMemoryDocumentTemplatesRepository,
+  InMemoryPrivateStorage,
   startDocumentsApp,
 } from '../../test/helpers/documents-fakes';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
@@ -31,12 +33,15 @@ import { CertificationExpiryService } from '../documents/certification-expiry.se
 import { CertificationUploadsRepository } from '../documents/certification-uploads.repository';
 import { addDays } from '../documents/certification-validity';
 import { DocumentAssignmentsRepository } from '../documents/document-assignments.repository';
+import { DocumentExportRetentionService } from '../documents/document-export-retention.service';
+import { DocumentExportsRepository } from '../documents/document-exports.repository';
 import { DocumentNotificationsService } from '../documents/document-notifications.service';
 import { DocumentRemindersAuthGuard } from '../documents/document-reminders-auth.guard';
 import { DocumentRemindersService } from '../documents/document-reminders.service';
 import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
 import { DocumentTemplatesRepository } from '../documents/document-templates.repository';
 import { InternalDocumentsController } from '../documents/internal-documents.controller';
+import { PrivateStorageClient } from '../documents/private-storage.client';
 import { MailerService } from '../mailer/mailer.service';
 import { SeasonsRepository } from '../seasons/seasons.repository';
 import { SeasonsService } from '../seasons/seasons.service';
@@ -79,6 +84,11 @@ async function build(
   const assignments = new InMemoryDocumentAssignmentsRepository(templates);
   const subjects = new InMemoryDocumentSubjectsRepository();
   const uploads = new InMemoryCertificationUploadsRepository(subjects);
+  const exportsRepo = new InMemoryDocumentExportsRepository(
+    assignments,
+    subjects,
+  );
+  const storage = new InMemoryPrivateStorage();
   const mailer = new RecordingMailer();
   const config = new ConfigService({
     DOCUMENT_REMINDERS_TOKEN: TOKEN,
@@ -92,6 +102,9 @@ async function build(
         DocumentNotificationsService,
         DocumentRemindersService,
         CertificationExpiryService,
+        DocumentExportRetentionService,
+        { provide: DocumentExportsRepository, useValue: exportsRepo },
+        { provide: PrivateStorageClient, useValue: storage },
         DocumentRemindersAuthGuard,
         RolesGuard,
         { provide: SupabaseAuthGuard, useValue: { canActivate: () => false } },
@@ -144,6 +157,15 @@ async function build(
       sent_at: ago(8),
       expires_at: new Date(Date.now() + 22 * DAY).toISOString(),
     });
+  const seedExpiredExport = () => {
+    storage.seed('exports/old.zip', Buffer.from('zip'));
+    return exportsRepo.seed({
+      template_id: template.id,
+      status: 'ready',
+      zip_key: 'exports/old.zip',
+      expires_at: ago(1),
+    });
+  };
   const seedAll = () => {
     seedDueDocument();
     seedExpiringCertification();
@@ -157,6 +179,8 @@ async function build(
     mailer,
     assignments,
     subjects,
+    exportsRepo,
+    storage,
     otherMachine: () =>
       new DailyRemindersWorker(
         app.get(ConfigService),
@@ -165,6 +189,7 @@ async function build(
         app.get(CertificationExpiryService),
         app.get(InviteRemindersService),
         app.get(SeasonsService),
+        app.get(DocumentExportRetentionService),
       ),
     certifications: app.get(CertificationExpiryService),
     documents: app.get(DocumentRemindersService),
@@ -172,6 +197,7 @@ async function build(
     seedDueDocument,
     seedExpiringCertification,
     seedDueInvite,
+    seedExpiredExport,
     seedAll,
     templatesSent: () => mailer.sent.map((m) => m.template).sort(),
   };
@@ -406,13 +432,53 @@ describe('DailyRemindersWorker', () => {
     expect(summaries()).toEqual([
       'Daily reminders 2026-10-17: documents 1/1 due reminded in 1 email(s); ' +
         'certifications 1 expiring, 0 expired, 0 not sent; ' +
-        'invites 2026/27: 1/1 due reminded, 0 failed, 0 skipped, 0 need review',
+        'invites 2026/27: 1/1 due reminded, 0 failed, 0 skipped, 0 need review; ' +
+        'exports 0 expired',
     ]);
     expect(ctx.runs.runs.get('2026-10-17')?.finished).toEqual({
       documents: { sent: 1, error: null },
       certifications: { sent: 1, error: null },
       invites: { sent: 1, error: null },
     });
+  });
+
+  it('expires export ZIPs past their 24 hours once per daily run', async () => {
+    ctx = await build();
+    const old = ctx.seedExpiredExport();
+    const retention = jest.spyOn(
+      ctx.app.get(DocumentExportRetentionService),
+      'run',
+    );
+
+    await expect(ctx.worker.tick()).resolves.toMatchObject({
+      outcome: 'ran',
+      summary: { exports: { ok: true, result: { expired: 1 } } },
+    });
+    await ctx.worker.tick();
+
+    expect(retention).toHaveBeenCalledTimes(1);
+    expect(ctx.storage.deleted).toEqual(['exports/old.zip']);
+    expect(ctx.exportsRepo.rows.get(old.id)?.status).toBe('expired');
+    expect(summaries()[0]).toContain('exports 1 expired');
+  });
+
+  it('still sends every reminder when export retention fails', async () => {
+    ctx = await build();
+    ctx.seedAll();
+    jest
+      .spyOn(ctx.app.get(DocumentExportRetentionService), 'run')
+      .mockRejectedValueOnce(new Error('db down'));
+
+    await expect(ctx.worker.tick()).resolves.toMatchObject({
+      outcome: 'ran',
+      summary: { exports: { ok: false, error: 'db down' } },
+    });
+    expect(ctx.templatesSent()).toEqual([
+      'certification.expiring',
+      'documents.reminder',
+      'invite.reminder',
+    ]);
+    expect(summaries()[0]).toContain('exports FAILED (db down)');
   });
 
   it('reminds an invite once and never again on later days', async () => {
@@ -862,6 +928,7 @@ describe('DailyRemindersWorker', () => {
       expect(res.body).toEqual({
         documents: { due: 0, reminded: 0, emails: 0 },
         certifications: { expiring: 0, expired: 0, failed: 0 },
+        exports: { expired: 0 },
       });
       expect(ctx.mailer.sentOf('documents.reminder')).toHaveLength(1);
       expect(ctx.mailer.sentOf('certification.expiring')).toHaveLength(1);

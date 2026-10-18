@@ -135,13 +135,15 @@ describe('MediaService (T3.5)', () => {
       expect(instructors.updates).toEqual([
         {
           id: 'inst-1',
-          url: 'https://storage.test/object/public/instructor-public/inst-1/avatar.jpg',
+          url: expect.stringMatching(
+            /^https:\/\/storage\.test\/object\/public\/instructor-public\/inst-1\/avatar\.jpg\?v=\d+$/,
+          ) as string,
         },
       ]);
       expect(profile.profilePhotoUrl).toContain('inst-1/avatar.jpg');
     });
 
-    it('bumps the photo version after storing the URL, even when the URL is unchanged', async () => {
+    it('bumps the photo version after storing the URL on every confirm', async () => {
       const { service, instructors } = makeService();
       await service.confirmAvatarUpload('inst-1', 'image/jpeg');
       await service.confirmAvatarUpload('inst-1', 'image/jpeg');
@@ -217,8 +219,12 @@ describe('MediaService (T3.5)', () => {
       );
       await service.confirmAvatarUpload('inst-1', 'image/jpeg', 3);
       expect(instructors.calls).toEqual([
-        'slot2:inst-1:https://storage.test/object/public/instructor-public/inst-1/photo-2.png',
-        'slot3:inst-1:https://storage.test/object/public/instructor-public/inst-1/photo-3.jpg',
+        expect.stringMatching(
+          /^slot2:inst-1:https:\/\/storage\.test\/object\/public\/instructor-public\/inst-1\/photo-2\.png\?v=\d+$/,
+        ),
+        expect.stringMatching(
+          /^slot3:inst-1:https:\/\/storage\.test\/object\/public\/instructor-public\/inst-1\/photo-3\.jpg\?v=\d+$/,
+        ),
       ]);
       expect(instructors.updates).toHaveLength(0);
       expect(profile.photo2Url).toContain('inst-1/photo-2.png');

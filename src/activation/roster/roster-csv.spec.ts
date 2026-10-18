@@ -214,9 +214,9 @@ describe('parseRosterCsv', () => {
           },
         ],
         unmappedCertifications: [],
-        locationKeys: [],
+        locationKeys: ['teaching_location.lakeridge'],
         llmLocationKeys: [],
-        unmappedLocations: ['Lakeridge (Weekdays only)'],
+        unmappedLocations: [],
         llmRejected: [],
         llmResolved: [],
         raw: {

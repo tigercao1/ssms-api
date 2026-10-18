@@ -29,7 +29,7 @@ const INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, first_name, last_name, ' +
   'display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'date_of_birth, profile_photo_url, preferred_language, approval_status, ' +
-  'is_active, published_at, published_by, min_student_age, display_order, inserted_at, updated_at';
+  'is_active, min_student_age, display_order, inserted_at, updated_at';
 
 const INSTRUCTOR_CALENDAR_EMBED = 'instructor_calendars(instructor_id)';
 
@@ -161,12 +161,6 @@ export class SupabaseAdminRepository extends AdminRepository {
     }
     if (filter.isActive !== undefined) {
       query = query.eq('is_active', filter.isActive);
-    }
-    if (filter.published === true) {
-      query = query.not('published_at', 'is', null);
-    }
-    if (filter.published === false) {
-      query = query.is('published_at', null);
     }
     if (filter.calendarConnected === true) {
       query = query.not('instructor_calendars', 'is', null);

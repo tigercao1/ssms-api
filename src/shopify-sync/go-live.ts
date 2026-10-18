@@ -30,8 +30,7 @@ export type GoLiveMissingItem =
       assignmentId: string;
       titleEn: string;
       titleZh: string | null;
-    }
-  | { group: 'review' };
+    };
 
 export type GoLiveCertificationStatus =
   | 'verified'
@@ -185,9 +184,6 @@ export function goLiveReadiness(
         titleZh: document.titleZh,
       });
     }
-  }
-  if (snapshot.instructor.published_at === null) {
-    missing.push({ group: 'review' });
   }
   return { ready: missing.length === 0, missing, certifications };
 }

@@ -2,7 +2,6 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import {
   ADMIN_AUTH as admin,
-  ADMIN_ID,
   INSTRUCTOR_AUTH,
   startAdminApp,
 } from '../../test/helpers/admin-http';
@@ -21,8 +20,6 @@ import { AdminService } from './admin.service';
 import type {
   AdminInstructorListRecord,
   AdminInstructorListRow,
-  AdminInstructorPatch,
-  AdminInstructorRecord,
   ListInstructorsFilter,
 } from './admin.types';
 
@@ -47,8 +44,6 @@ function makeRow(n: number): AdminInstructorListRow {
     preferred_language: 'en',
     approval_status: n % 3 === 0 ? 'pending' : 'approved',
     is_active: n % 5 !== 0,
-    published_at: n % 2 === 0 ? '2026-10-01T00:00:00.000Z' : null,
-    published_by: n % 2 === 0 ? ADMIN_ID : null,
     inserted_at: new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString(),
     updated_at: '2026-01-01T00:00:00.000Z',
     instructor_calendars:
@@ -75,11 +70,6 @@ class InMemoryInstructorList {
       )
       .filter(
         (r) =>
-          filter.published === undefined ||
-          (r.published_at !== null) === filter.published,
-      )
-      .filter(
-        (r) =>
           filter.calendarConnected === undefined ||
           (r.instructor_calendars !== null) === filter.calendarConnected,
       )
@@ -96,26 +86,11 @@ class InMemoryInstructorList {
       total: matches.length,
     });
   }
-
-  findInstructorById(id: string): Promise<AdminInstructorListRow | null> {
-    return Promise.resolve(this.rows.find((r) => r.id === id) ?? null);
-  }
-
-  updateInstructor(
-    id: string,
-    patch: AdminInstructorPatch,
-  ): Promise<AdminInstructorListRow | null> {
-    const index = this.rows.findIndex((r) => r.id === id);
-    if (index < 0) return Promise.resolve(null);
-    this.rows[index] = { ...this.rows[index], ...patch };
-    return Promise.resolve(this.rows[index]);
-  }
 }
 
 async function build(count = 60) {
   const repo = new InMemoryInstructorList();
   repo.rows = Array.from({ length: count }, (_, i) => makeRow(i + 1));
-  const audit = recordingAudit();
   const app = await startAdminApp(
     Test.createTestingModule({
       controllers: [AdminController],
@@ -127,11 +102,11 @@ async function build(count = 60) {
         { provide: MailerService, useValue: {} },
         { provide: DocumentOnboardingService, useValue: {} },
         { provide: BIO_TRANSLATOR, useValue: {} },
-        { provide: AuditService, useValue: audit },
+        { provide: AuditService, useValue: recordingAudit() },
       ],
     }),
   );
-  return { app, repo, audits: audit.entries };
+  return { app, repo };
 }
 
 const ids = (res: request.Response) =>
@@ -207,24 +182,6 @@ describe('GET /admin/instructors', () => {
     expect(ids(res)).toEqual(newestFirst(10, 9, 7, 6, 5, 3, 2, 1));
     expect(res.headers['x-total-count']).toBe('8');
     expect(ctx.repo.calls[0].filter).toEqual({ calendarConnected: false });
-  });
-
-  it('narrows to published or unpublished instructors and shows when each was published', async () => {
-    ctx = await build(6);
-    const published = await list('?published=true').expect(200);
-    expect(ids(published)).toEqual(newestFirst(6, 4, 2));
-    expect(published.headers['x-total-count']).toBe('3');
-    expect(
-      (published.body as AdminInstructorListRecord[]).map((r) => r.publishedAt),
-    ).toEqual(Array(3).fill('2026-10-01T00:00:00.000Z'));
-    const unpublished = await list('?published=false&status=pending').expect(
-      200,
-    );
-    expect(ids(unpublished)).toEqual(newestFirst(3));
-    expect(ctx.repo.calls[1].filter).toEqual({
-      status: 'pending',
-      published: false,
-    });
   });
 
   it('pages within the calendar filter combined with status, with the filtered total', async () => {
@@ -313,127 +270,9 @@ describe('GET /admin/instructors', () => {
     'calendarConnected=yes',
     'calendarConnected=1',
     'calendarConnected=',
-    'published=yes',
-    'published=',
   ])('rejects %s with 400', async (query) => {
     ctx = await build();
     await list(`?${query}`).expect(400);
     expect(ctx.repo.calls).toEqual([]);
-  });
-});
-
-describe('PATCH /admin/instructors/:id/publication', () => {
-  let ctx: Awaited<ReturnType<typeof build>>;
-  const http = () => request(ctx.app.getHttpServer());
-  const url = (id = instructorId(3)) => `/admin/instructors/${id}/publication`;
-  const row = (n = 3) => ctx.repo.rows.find((r) => r.id === instructorId(n));
-
-  afterEach(async () => {
-    await ctx.app.close();
-  });
-
-  it('needs an admin JWT and changes nothing otherwise', async () => {
-    ctx = await build(4);
-    await http().patch(url()).send({ published: true }).expect(401);
-    await http()
-      .patch(url())
-      .set('Authorization', INSTRUCTOR_AUTH)
-      .send({ published: true })
-      .expect(403);
-    expect(row()?.published_at).toBeNull();
-    expect(ctx.audits.map((a) => a.action)).toEqual([
-      'auth.admin_guard_failure',
-    ]);
-  });
-
-  it('publishes a pending instructor, returns the admin record and audits it', async () => {
-    ctx = await build(4);
-    const before = Date.now();
-    const res = await http()
-      .patch(url())
-      .set('Authorization', admin)
-      .set('User-Agent', 'jest')
-      .send({ published: true })
-      .expect(200);
-    const record = res.body as AdminInstructorRecord;
-    expect(record).toMatchObject({
-      id: instructorId(3),
-      approvalStatus: 'pending',
-      publishedAt: row()?.published_at,
-    });
-    expect(record).not.toHaveProperty('publishedBy');
-    expect(Date.parse(record.publishedAt!)).toBeGreaterThanOrEqual(before);
-    expect(row()?.published_by).toBe(ADMIN_ID);
-    expect(ctx.audits).toEqual([
-      {
-        action: 'instructor.publish',
-        actor: { userId: ADMIN_ID, role: 'admin', userAgent: 'jest' },
-        targetType: 'instructor',
-        targetId: instructorId(3),
-        metadata: { from: false, to: true },
-      },
-    ]);
-  });
-
-  it('unpublishes, clearing who published and when, and audits it', async () => {
-    ctx = await build(4);
-    const res = await http()
-      .patch(url(instructorId(2)))
-      .set('Authorization', admin)
-      .send({ published: false })
-      .expect(200);
-    expect((res.body as AdminInstructorRecord).publishedAt).toBeNull();
-    expect(row(2)).toMatchObject({ published_at: null, published_by: null });
-    expect(ctx.audits).toEqual([
-      expect.objectContaining({
-        action: 'instructor.unpublish',
-        targetId: instructorId(2),
-        metadata: { from: true, to: false },
-      }),
-    ]);
-  });
-
-  it('leaves an instructor already in the requested state untouched', async () => {
-    ctx = await build(4);
-    const res = await http()
-      .patch(url(instructorId(2)))
-      .set('Authorization', admin)
-      .send({ published: true })
-      .expect(200);
-    expect((res.body as AdminInstructorRecord).publishedAt).toBe(
-      '2026-10-01T00:00:00.000Z',
-    );
-    expect(ctx.audits).toEqual([]);
-  });
-
-  it.each([
-    ['missing', {}],
-    ['a string', { published: 'true' }],
-    ['null', { published: null }],
-    ['with extra fields', { published: true, isActive: true }],
-  ])('rejects a body that is %s (400)', async (_label, body) => {
-    ctx = await build(4);
-    await http()
-      .patch(url())
-      .set('Authorization', admin)
-      .send(body)
-      .expect(400);
-    expect(row()?.published_at).toBeNull();
-    expect(ctx.audits).toEqual([]);
-  });
-
-  it('404s an unknown instructor and 400s a malformed id', async () => {
-    ctx = await build(4);
-    await http()
-      .patch(url(instructorId(99)))
-      .set('Authorization', admin)
-      .send({ published: true })
-      .expect(404);
-    await http()
-      .patch(url('not-a-uuid'))
-      .set('Authorization', admin)
-      .send({ published: true })
-      .expect(400);
-    expect(ctx.audits).toEqual([]);
   });
 });

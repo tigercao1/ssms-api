@@ -16,6 +16,11 @@ import {
   startInsuranceApp,
   UNVERIFIED_AUTH,
 } from '../../test/helpers/insurance-fakes';
+import {
+  InMemoryDocumentAssignmentsRepository,
+  InMemoryDocumentSubjectsRepository,
+  InMemoryDocumentTemplatesRepository,
+} from '../../test/helpers/documents-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import {
   InMemorySeasonsRepository,
@@ -24,12 +29,17 @@ import {
   seasonsProviders,
 } from '../../test/helpers/seasons-fakes';
 import { AuditService } from '../audit/audit.service';
+import { DocumentAssignmentsRepository } from '../documents/document-assignments.repository';
+import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
+import { DocumentTemplatesRepository } from '../documents/document-templates.repository';
+import { MeDocumentsService } from '../documents/me-documents.service';
 import { AdminInsuranceController } from './admin-insurance.controller';
 import { AdminInsuranceService } from './admin-insurance.service';
 import type { InsuranceRecord } from './insurance.presenters';
 import { LessonInsuranceRepository } from './lesson-insurance.repository';
 import { MeInsuranceController } from './me-insurance.controller';
 import {
+  INSURANCE_ONBOARDING_INCOMPLETE,
   INSURANCE_PENDING,
   INSURANCE_REJECTED,
   MeInsuranceService,
@@ -48,6 +58,12 @@ async function build(
   );
   repo.addInstructor(ADA_USER, ADA_INSTRUCTOR, 'Ada Lovelace', approval);
   repo.addInstructor(BO_USER, BO_INSTRUCTOR, 'Bo Zhang');
+  const templates = new InMemoryDocumentTemplatesRepository();
+  const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
   const app = await startInsuranceApp(
     Test.createTestingModule({
       controllers: [MeInsuranceController, AdminInsuranceController],
@@ -55,13 +71,17 @@ async function build(
         ...seasonsProviders(seasons, now),
         MeInsuranceService,
         AdminInsuranceService,
+        MeDocumentsService,
+        { provide: DocumentTemplatesRepository, useValue: templates },
+        { provide: DocumentAssignmentsRepository, useValue: assignments },
+        { provide: DocumentSubjectsRepository, useValue: subjects },
         { provide: LessonInsuranceRepository, useValue: repo },
         { provide: AuditService, useValue: recordingAudit() },
         { provide: ConfigService, useValue: { get: () => undefined } },
       ],
     }),
   );
-  return { app, repo, seasons };
+  return { app, repo, seasons, templates, assignments, subjects };
 }
 
 const students = (n: number, waiver = true) =>
@@ -298,6 +318,96 @@ describe('/me/insurance', () => {
       }).expect(403, { message, reason });
       expect(ctx.repo.registerCalls).toHaveLength(0);
     });
+  });
+
+  describe('onboarding', () => {
+    const assign = (status: 'assigned' | 'completed') =>
+      ctx.assignments.seed({
+        template_id: ctx.templates.seed({}).id,
+        subject_id: ADA_INSTRUCTOR,
+        status,
+        season: SEASON_2026.key,
+      });
+    const lessonBody = {
+      lessonDate: '2026-12-01',
+      durationHours: 1,
+      students: students(1),
+    };
+
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    it('locks an approved instructor with a required document left and reads no records', async () => {
+      await lesson('2026-12-01', 1, 1);
+      assign('completed');
+      assign('assigned');
+      const records = jest.spyOn(ctx.repo, 'recordsFor');
+      expect(await overview()).toEqual({
+        locked: true,
+        lockReason: 'onboarding_incomplete',
+        season: {
+          key: '2026/27',
+          startsOn: '2026-11-01',
+          endsOn: '2027-04-30',
+        },
+        capCents: 40000,
+        owedCents: 0,
+        paidCents: 0,
+        unpaidCents: 0,
+        coverage: 'none',
+        records: [],
+      });
+      expect(records).not.toHaveBeenCalled();
+    });
+
+    it('cannot register a lesson while onboarding is incomplete', async () => {
+      assign('assigned');
+      await register(lessonBody).expect(403, {
+        message: INSURANCE_ONBOARDING_INCOMPLETE,
+        reason: 'onboarding_incomplete',
+      });
+      expect(ctx.repo.registerCalls).toHaveLength(0);
+    });
+
+    it('locks an instructor whose certification is missing', async () => {
+      ctx.subjects.certifications.set(ADA_INSTRUCTOR, [
+        { org: 'csia', track: 'regular', level: 2 },
+      ]);
+      await expect(overview()).resolves.toMatchObject({
+        locked: true,
+        lockReason: 'onboarding_incomplete',
+      });
+    });
+
+    it('unlocks reads and writes once the last document is completed', async () => {
+      const last = assign('assigned');
+      await expect(overview()).resolves.toMatchObject({ locked: true });
+      ctx.assignments.rows.set(last.id, {
+        ...ctx.assignments.rows.get(last.id)!,
+        status: 'completed',
+      });
+      const record = await lesson('2026-12-01', 1, 1);
+      const body = await overview();
+      expect(body).toMatchObject({ locked: false, lockReason: null });
+      expect(body.records.map((r) => r.id)).toEqual([record.id]);
+    });
+
+    it.each([
+      ['pending', 'pending_approval', INSURANCE_PENDING],
+      ['rejected', 'rejected', INSURANCE_REJECTED],
+    ] as const)(
+      'keeps the %s lock ahead of onboarding',
+      async (approval, reason, message) => {
+        ctx.repo.instructors.get(ADA_INSTRUCTOR)!.approval_status = approval;
+        assign('assigned');
+        await expect(overview()).resolves.toMatchObject({
+          locked: true,
+          lockReason: reason,
+        });
+        await register(lessonBody).expect(403, { message, reason });
+      },
+    );
   });
 
   describe('POST /me/insurance/records', () => {

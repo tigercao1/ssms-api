@@ -25,6 +25,7 @@ import type {
   DocumentInstructorRow,
   DocumentTemplateRow,
   InstructorCertificationRow,
+  OnboardingLockReason,
 } from './documents.types';
 import { signerLanguages } from './template-versions';
 
@@ -269,6 +270,20 @@ export class MeDocumentsService {
       ...documents,
       ...toCertificationItems(certifications, uploads, today, false),
     ]);
+  }
+
+  async onboardingLockFor(
+    instructor: { id: string; approval_status: string },
+    today = torontoToday(),
+  ): Promise<OnboardingLockReason | null> {
+    if (instructor.approval_status === 'rejected') {
+      return 'rejected';
+    }
+    if (instructor.approval_status !== 'approved') {
+      return 'pending_approval';
+    }
+    const complete = await this.onboardingComplete(instructor.id, today);
+    return complete ? null : 'onboarding_incomplete';
   }
 
   async onboardingDocuments(

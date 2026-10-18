@@ -450,6 +450,11 @@ export type ChecklistLockReason =
   | 'rejected'
   | 'deactivated';
 
+export type OnboardingLockReason =
+  | 'pending_approval'
+  | 'rejected'
+  | 'onboarding_incomplete';
+
 /** `GET /me/documents`; while `locked`, `items` is a preview and nothing is assigned. */
 export interface Checklist {
   season: string | null;

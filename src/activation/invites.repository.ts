@@ -93,6 +93,7 @@ export abstract class InvitesRepository {
   abstract markReminded(id: string, at: Date): Promise<void>;
   abstract markRedeemed(id: string, at: Date): Promise<void>;
   abstract markActivated(authUserId: string, at: Date): Promise<void>;
+  abstract approveIfPendingAndActive(instructorId: string): Promise<boolean>;
 }
 
 /** {@link InvitesRepository} over the service-role Supabase client. */
@@ -306,6 +307,20 @@ export class SupabaseInvitesRepository extends InvitesRepository {
     if (error) {
       throw failure('update invite', error.message);
     }
+  }
+
+  async approveIfPendingAndActive(instructorId: string): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('instructors')
+      .update({ approval_status: 'approved' })
+      .eq('id', instructorId)
+      .eq('approval_status', 'pending')
+      .eq('is_active', true)
+      .select('id');
+    if (error) {
+      throw failure('approve instructor', error.message);
+    }
+    return ((data ?? []) as unknown[]).length > 0;
   }
 
   private async update(id: string, patch: Record<string, string>) {

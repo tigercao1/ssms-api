@@ -336,7 +336,28 @@ describe('SupabaseInvitesRepository', () => {
     ]);
   });
 
+  it('approves only a pending, active instructor and says whether it did', async () => {
+    const { db, repo } = setup(
+      { data: [{ id: 'ins-1' }], error: null },
+      { data: [], error: null },
+    );
+    expect(await repo.approveIfPendingAndActive('ins-1')).toBe(true);
+    expect(await repo.approveIfPendingAndActive('ins-1')).toBe(false);
+    expect(db.queries[0].table).toBe('instructors');
+    expect(db.ops(0)).toEqual([
+      ['update', [{ approval_status: 'approved' }]],
+      ['eq', ['id', 'ins-1']],
+      ['eq', ['approval_status', 'pending']],
+      ['eq', ['is_active', true]],
+      ['select', ['id']],
+    ]);
+  });
+
   it.each([
+    [
+      'approveIfPendingAndActive',
+      (r: SupabaseInvitesRepository) => r.approveIfPendingAndActive('i'),
+    ],
     [
       'findByTokenHash',
       (r: SupabaseInvitesRepository) => r.findByTokenHash('h'),

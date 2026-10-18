@@ -49,6 +49,7 @@ export function instructorRow(
     display_order: null,
     approval_status: 'approved',
     is_active: true,
+    published_at: null,
     ...overrides,
   };
 }
@@ -85,6 +86,7 @@ export function readySnapshotOf(
     ...rest,
     instructor: {
       profile_photo_url: `https://abc.supabase.co/storage/v1/object/public/instructor-public/${INSTRUCTOR_ID}/avatar.jpg`,
+      published_at: '2026-10-01T00:00:00.000Z',
       ...instructor,
     },
   });

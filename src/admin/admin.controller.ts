@@ -41,6 +41,7 @@ import { ListInstructorsQueryDto } from './dto/list-instructors-query.dto';
 import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateApprovalStatusDto } from './dto/update-approval-status.dto';
 import { UpdateDisplayOrderDto } from './dto/update-display-order.dto';
+import { UpdatePublicationDto } from './dto/update-publication.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { Roles, RolesGuard } from './roles.guard';
 
@@ -73,7 +74,7 @@ export class AdminController {
     private readonly seasons: SeasonsService,
   ) {}
 
-  /** T6.3 — list instructors of every status, optional `?status=`/`?active=`/`?calendarConnected=`. */
+  /** T6.3 — list instructors of every status, optional `?status=`/`?active=`/`?calendarConnected=`/`?published=`. */
   @Get('instructors')
   async listInstructors(
     @Query() query: ListInstructorsQueryDto,
@@ -84,6 +85,7 @@ export class AdminController {
         status: query.status,
         isActive: query.active,
         calendarConnected: query.calendarConnected,
+        published: query.published,
         q: query.q,
       },
       query.page,
@@ -133,6 +135,16 @@ export class AdminController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<AdminInstructorRecord> {
     return this.admin.setActive(id, dto.isActive, toActor(user, userAgent));
+  }
+
+  @Patch('instructors/:id/publication')
+  setPublication(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdatePublicationDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminInstructorRecord> {
+    return this.admin.setPublished(id, dto.published, toActor(user, userAgent));
   }
 
   @Patch('instructors/:id/display-order')

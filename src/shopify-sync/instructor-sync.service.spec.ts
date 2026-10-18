@@ -283,6 +283,27 @@ describe('InstructorSyncService', () => {
       expect(repo.states.size).toBe(0);
     });
 
+    it('creates nothing for a ready instructor an admin has not published', async () => {
+      const { repo, shopify, service } = setupGoLive(
+        readySnapshotOf({ instructor: { published_at: null } }),
+      );
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('skipped');
+
+      expect(shopify.calls).toHaveLength(0);
+      expect(repo.states.size).toBe(0);
+    });
+
+    it('sets a live entry to DRAFT once an admin unpublishes the instructor', async () => {
+      const { repo, shopify, service } = setupGoLive();
+      await service.sync(INSTRUCTOR_ID);
+      repo.snapshots.get(INSTRUCTOR_ID)!.instructor.published_at = null;
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('draft');
+
+      expect(shopify.entry('eddie-chen')?.status).toBe('DRAFT');
+    });
+
     it('sets a live entry to DRAFT once a required document is outstanding', async () => {
       const { repo, shopify, service, templates, assignments } = setupGoLive();
       await service.sync(INSTRUCTOR_ID);

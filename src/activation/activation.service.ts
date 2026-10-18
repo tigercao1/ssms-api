@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { AuditService } from '../audit/audit.service';
+import { AUDIT_ACTIONS } from '../audit/audit.types';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import type {
   InviteRow,
@@ -46,6 +48,7 @@ export class ActivationService {
     private readonly dispatcher: InviteDispatcher,
     private readonly onboarding: DocumentOnboardingService,
     private readonly cooldowns: ResendCooldownRepository,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -135,13 +138,20 @@ export class ActivationService {
 
   /**
    * Stamps `activated_at` on the caller's invites (a no-op when already set or
-   * absent), then, if the instructor is already approved, assigns the published
-   * onboarding documents. Assignment failures are logged and never fail
+   * absent), approves the invited instructor if they are still pending and
+   * active, then assigns the published onboarding documents to an approved
+   * instructor. Approval and assignment failures are logged and never fail
    * activation.
    */
   async complete(authUserId: string): Promise<void> {
     await this.invites.markActivated(authUserId, new Date());
-    await this.assignOnboardingDocuments(authUserId);
+    const invite = await this.latestInvite(authUserId);
+    if (invite) {
+      await this.approveInvitedInstructor(invite);
+      await this.onboarding.assignPublished(invite.instructor_id);
+    } else {
+      await this.onboarding.assignPublishedForAuthUser(authUserId);
+    }
   }
 
   private async resendRetryAfter(email: string): Promise<number> {
@@ -155,20 +165,44 @@ export class ActivationService {
     }
   }
 
-  private async assignOnboardingDocuments(authUserId: string): Promise<void> {
-    let invite: InviteRow | null = null;
+  private async latestInvite(authUserId: string): Promise<InviteRow | null> {
     try {
-      invite = await this.invites.findLatestByAuthUser(authUserId);
+      return await this.invites.findLatestByAuthUser(authUserId);
     } catch (err) {
       this.logger.error(
-        `Could not load the invite for onboarding documents: ` +
+        `Could not load the invite of the activated account: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async approveInvitedInstructor(invite: InviteRow): Promise<void> {
+    let approved = false;
+    try {
+      approved = await this.invites.approveIfPendingAndActive(
+        invite.instructor_id,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Could not approve invited instructor ${invite.instructor_id}: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    if (invite) {
-      await this.onboarding.assignPublished(invite.instructor_id);
-    } else {
-      await this.onboarding.assignPublishedForAuthUser(authUserId);
+    if (approved) {
+      await this.audit.record({
+        action: AUDIT_ACTIONS.instructorApprove,
+        actor: { userId: null, role: 'system' },
+        targetType: 'instructor',
+        targetId: invite.instructor_id,
+        metadata: {
+          from: 'pending',
+          to: 'approved',
+          reason: null,
+          source: 'invite_activation',
+          inviteId: invite.id,
+        },
+      });
     }
   }
 }

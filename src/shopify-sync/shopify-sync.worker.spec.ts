@@ -265,6 +265,22 @@ describe('ShopifySyncWorker', () => {
       },
     );
 
+    it('does not poll in the web process group', async () => {
+      jest.useFakeTimers();
+      const { repo, worker, enqueue } = setup({
+        ...enabledEnv,
+        FLY_PROCESS_GROUP: 'app',
+      });
+      enqueue(INSTRUCTOR_ID, T0);
+
+      worker.onModuleInit();
+      await jest.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS * 3);
+
+      expect(repo.claimCalls).toHaveLength(0);
+      expect(repo.queue.size).toBe(1);
+      await worker.onModuleDestroy();
+    });
+
     it('stops at the next tick after being turned off and keeps the queue', async () => {
       jest.useFakeTimers();
       const { repo, settingsRepo, worker, enqueue } = setup();

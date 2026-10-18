@@ -469,6 +469,20 @@ describe('TranslationWorkerService polling', () => {
     await worker.onModuleDestroy();
   });
 
+  it('does not poll in the web process group', async () => {
+    const { worker, processNext } = stubbedWorker({
+      TRANSLATION_ENABLED: 'true',
+      FLY_PROCESS_GROUP: 'app',
+    });
+    processNext.mockResolvedValue('idle');
+
+    worker.onModuleInit();
+    await jest.advanceTimersByTimeAsync(TRANSLATION_POLL_INTERVAL_MS * 3);
+
+    expect(processNext).not.toHaveBeenCalled();
+    await worker.onModuleDestroy();
+  });
+
   it('polls every interval when enabled and stops on destroy', async () => {
     const { worker, processNext } = stubbedWorker({
       TRANSLATION_ENABLED: 'true',

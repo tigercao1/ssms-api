@@ -251,20 +251,10 @@ describe('goLiveReadiness', () => {
     ]);
   });
 
-  it('is not ready until an admin has published the instructor', () => {
-    expect(
-      goLiveReadiness(goLive({ instructor: { published_at: null } }), TODAY),
-    ).toEqual({
-      ready: false,
-      missing: [{ group: 'review' }],
-      certifications: [expect.objectContaining({ status: 'verified' })],
-    });
-  });
-
-  it('orders missing items profile, certification, onboarding, then review', () => {
+  it('orders missing items profile, certification, then onboarding', () => {
     const readiness = goLiveReadiness(
       goLive({
-        instructor: { profile_photo_url: null, published_at: null },
+        instructor: { profile_photo_url: null },
         certificationUploads: [],
         documents: [document()],
       }),
@@ -274,7 +264,6 @@ describe('goLiveReadiness', () => {
       'profile',
       'certification',
       'onboarding',
-      'review',
     ]);
   });
 
@@ -287,11 +276,7 @@ describe('goLiveReadiness', () => {
     (_state, instructor) => {
       const readiness = goLiveReadiness(
         goLive({
-          instructor: {
-            ...instructor,
-            profile_photo_url: null,
-            published_at: null,
-          },
+          instructor: { ...instructor, profile_photo_url: null },
           documents: [document()],
         }),
         TODAY,

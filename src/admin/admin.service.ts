@@ -275,46 +275,6 @@ export class AdminService {
     return this.toRecord(updated);
   }
 
-  async setPublished(
-    id: string,
-    published: boolean,
-    actor?: AuditActor,
-  ): Promise<AdminInstructorRecord> {
-    const current = await this.repo.findInstructorById(id);
-    if (!current) {
-      throw new NotFoundException('Instructor not found');
-    }
-
-    const wasPublished = current.published_at !== null;
-    if (wasPublished === published) {
-      return this.toRecord(current);
-    }
-    const updated = await this.repo.updateInstructor(
-      id,
-      published
-        ? {
-            published_at: new Date().toISOString(),
-            published_by: actor?.userId ?? null,
-          }
-        : { published_at: null, published_by: null },
-    );
-    if (!updated) {
-      throw new NotFoundException('Instructor not found');
-    }
-
-    await this.audit.record({
-      action: published
-        ? AUDIT_ACTIONS.instructorPublish
-        : AUDIT_ACTIONS.instructorUnpublish,
-      actor: { ...actor, role: 'admin' },
-      targetType: 'instructor',
-      targetId: id,
-      metadata: { from: wasPublished, to: published },
-    });
-
-    return this.toRecord(updated);
-  }
-
   async setDisplayOrder(
     id: string,
     displayOrder: number | null,
@@ -679,7 +639,6 @@ export class AdminService {
       preferredLanguage: row.preferred_language,
       approvalStatus: row.approval_status,
       isActive: row.is_active,
-      publishedAt: row.published_at,
       insertedAt: row.inserted_at,
       updatedAt: row.updated_at,
     };

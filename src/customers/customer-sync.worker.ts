@@ -17,6 +17,7 @@ import {
 } from './customer-sync.service';
 import { CustomersRepository } from './customers.repository';
 import { ShopifyWebhookEventsRepository } from './shopify-webhook-events.repository';
+import { runsBackgroundWorkers } from '../config/process-group';
 
 export const CUSTOMER_SYNC_INTERVAL_KEY = 'CUSTOMER_SYNC_INTERVAL_MINUTES';
 export const DEFAULT_CUSTOMER_SYNC_INTERVAL_MINUTES = 15;
@@ -85,6 +86,12 @@ export class CustomerSyncWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (!runsBackgroundWorkers(this.config)) {
+      this.logger.log(
+        `Scheduled customer sync runs in the worker process group`,
+      );
+      return;
+    }
     if (!this.sync.isEnabled()) {
       this.logger.log(
         `Scheduled customer sync disabled: ${CUSTOMER_SYNC_FLAG} is not "true"`,

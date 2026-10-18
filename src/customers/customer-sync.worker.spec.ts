@@ -95,6 +95,19 @@ describe('CustomerSyncWorker', () => {
     await worker.onModuleDestroy();
   });
 
+  it('does not schedule itself in the web process group', async () => {
+    jest.useFakeTimers();
+    const { worker, graphql, status } = build({
+      ...ON,
+      FLY_PROCESS_GROUP: 'app',
+    });
+    worker.onModuleInit();
+    jest.advanceTimersByTime(24 * 60 * MINUTE);
+    expect(graphql).not.toHaveBeenCalled();
+    expect(status.leases).toEqual([]);
+    await worker.onModuleDestroy();
+  });
+
   it('ticks every 15 minutes by default, or as configured, and stops on shutdown', async () => {
     jest.useFakeTimers();
     const byDefault = build(ON, [customersPage([])]);

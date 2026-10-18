@@ -11,6 +11,7 @@ import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { BIO_TRANSLATOR } from './bio-translator.interface';
 import type { BioLang, BioTranslator } from './bio-translator.interface';
 import type { BioTranslationJobRow } from './bio-translation-job.types';
+import { runsBackgroundWorkers } from '../config/process-group';
 
 export const TRANSLATION_POLL_INTERVAL_MS = 10_000;
 export const TRANSLATION_BATCH_SIZE = 10;
@@ -94,6 +95,12 @@ export class TranslationWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (!runsBackgroundWorkers(this.config)) {
+      this.logger.log(
+        `Bio translation worker runs in the worker process group`,
+      );
+      return;
+    }
     if (!this.isEnabled()) {
       this.logger.log(
         'Bio translation worker disabled: TRANSLATION_ENABLED is not "true"',

@@ -227,33 +227,6 @@ describe('SupabaseAdminRepository', () => {
   });
 
   it.each([
-    [true, ['not', 'published_at', 'is', null]],
-    [false, ['is', 'published_at', null]],
-  ])(
-    'listInstructors with published=%s filters on published_at',
-    async (published, publishedOp) => {
-      const { client, queries } = recordingSupabase({
-        instructors: { data: [], error: null, count: 0 },
-      });
-      await new SupabaseAdminRepository(client).listInstructors({
-        status: 'approved',
-        published,
-      });
-      expect(queries[0].ops).toEqual([
-        [
-          'select',
-          expect.stringContaining('published_at, published_by'),
-          { count: 'exact' },
-        ],
-        ['eq', 'approval_status', 'approved'],
-        publishedOp,
-        ['order', 'inserted_at', { ascending: false }],
-        ['order', 'id', { ascending: true }],
-      ]);
-    },
-  );
-
-  it.each([
     [true, ['not', 'instructor_calendars', 'is', null]],
     [false, ['is', 'instructor_calendars', null]],
   ])(

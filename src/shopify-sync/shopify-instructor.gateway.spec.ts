@@ -24,6 +24,45 @@ describe('ShopifyInstructorGateway', () => {
     ).toEqual(['ssms_instructor', 'ssms_instructor', 'ssms_instructor']);
   });
 
+  it('lists every legacy our_team entry across pages by handle and name', async () => {
+    const shopify = new FakeShopify();
+    shopify.on('SsmsLegacyRoster', (v) =>
+      v.after == null
+        ? {
+            metaobjects: {
+              pageInfo: { hasNextPage: true, endCursor: 'c1' },
+              nodes: [
+                {
+                  handle: 'aaron',
+                  displayName: 'x',
+                  name: { value: ' Aaron ' },
+                },
+              ],
+            },
+          }
+        : {
+            metaobjects: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                { handle: 'bea', displayName: 'Bea', name: null },
+                { handle: 'cy', displayName: null, name: null },
+              ],
+            },
+          },
+    );
+    const gateway = new ShopifyInstructorGateway(shopify.client);
+
+    await expect(gateway.listLegacyEntries()).resolves.toEqual([
+      { handle: 'aaron', name: 'Aaron' },
+      { handle: 'bea', name: 'Bea' },
+      { handle: 'cy', name: '' },
+    ]);
+    expect(shopify.calls.map((c) => c.variables)).toEqual([
+      { type: 'our_team', first: 250, after: null },
+      { type: 'our_team', first: 250, after: 'c1' },
+    ]);
+  });
+
   it('throws when an upsert returns no metaobject', async () => {
     const shopify = new FakeShopify();
     shopify.on('SsmsInstructorUpsert', () => ({

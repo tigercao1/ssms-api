@@ -65,6 +65,7 @@ export interface InstructorShopifyState {
   synced_photo_3_version: string | null;
   last_synced_at: string | null;
   last_status: string | null;
+  dismissed_legacy_handles?: string[];
 }
 
 export type InstructorShopifyStatePatch = Partial<

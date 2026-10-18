@@ -8,6 +8,7 @@ import {
 import { englishTranslations } from './instructor-fields.builder';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
+import { LegacyRoster } from './legacy-roster';
 import type { SyncInstructorRow } from './instructor-sync.types';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
@@ -22,6 +23,7 @@ function setup() {
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
     readyWhenVisible(repo),
+    new LegacyRoster(gateway, repo),
   );
   const syncWith = (instructor: Partial<SyncInstructorRow>) => {
     repo.snapshots.set(INSTRUCTOR_ID, snapshotOf({ instructor }));
@@ -200,6 +202,7 @@ describe('English reference translations', () => {
       }),
       new InstructorTranslationsSync(gateway),
       readyWhenVisible(repo),
+      new LegacyRoster(gateway, repo),
     );
     const withNames = snapshotOf({
       locations: [{ name: 'Whistler', name_zh: '惠斯勒' }],

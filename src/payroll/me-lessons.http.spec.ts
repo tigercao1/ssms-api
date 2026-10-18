@@ -218,6 +218,7 @@ describe('GET /me/lessons', () => {
       ['missing', undefined, undefined],
       ['expired', 'approved', '2026-01-19'],
       ['rejected', 'rejected', '2026-10-31'],
+      ['awaiting review', 'pending', '2026-10-31'],
     ] as const)(
       'locks an instructor whose certification is %s',
       async (_name, review, validUntil) => {
@@ -231,7 +232,7 @@ describe('GET /me/lessons', () => {
       assign('assigned', { required: false });
       assign('assigned', { season: '2025-26' });
       assign('archived');
-      certify('pending', '2026-01-25');
+      certify('approved', '2026-10-31');
       const body = await mine();
       expect(body).toMatchObject({ locked: false, lockReason: null });
       expect(body.upcoming.lessons).toHaveLength(1);

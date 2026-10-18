@@ -132,7 +132,7 @@ export function certificationState(
 
 /** Whether a state satisfies the certification requirement (no new upload needed). */
 export function isCertificationSatisfied(state: CertificationState): boolean {
-  return state === 'valid' || state === 'expiring' || state === 'pending';
+  return state === 'valid' || state === 'expiring';
 }
 
 /** Map key for an `(org, track)` pair. */

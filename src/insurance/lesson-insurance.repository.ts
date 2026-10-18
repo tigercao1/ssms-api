@@ -19,6 +19,7 @@ export const INSURANCE_RECORD_COLUMNS = [
 export const ADMIN_INSURANCE_RECORD_COLUMNS = [
   INSURANCE_RECORD_COLUMNS,
   'instructor:instructors(display_name_en, display_name_zh, email)',
+  'request:lesson_insurance_requests!lesson_insurance_records_request_id_fkey(request_no)',
 ].join(', ');
 export const INSURANCE_REQUEST_COLUMNS = [
   'id, instructor_id, season_key, request_no, payment_status, total_cents, lesson_count, paid_on, paid_note, paid_by, voided_at, voided_reason, voided_by, voided_from_status, created_by, created_at, updated_at',
@@ -84,6 +85,7 @@ export interface InsuranceRowInstructor {
 
 export interface AdminInsuranceRecordRow extends InsuranceRecordRow {
   instructor: InsuranceRowInstructor | null;
+  request?: { request_no: string } | null;
 }
 
 export interface InsuranceRequestRow {

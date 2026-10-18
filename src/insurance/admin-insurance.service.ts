@@ -494,7 +494,11 @@ export class AdminInsuranceService {
     if (!lesson) {
       throw new NotFoundException(RECORD_NOT_FOUND);
     }
-    return toAdminRecord({ ...lesson, instructor: request.instructor });
+    return toAdminRecord({
+      ...lesson,
+      instructor: request.instructor,
+      request: { request_no: request.request_no },
+    });
   }
 
   private async transitionRequest(

@@ -35,6 +35,8 @@ export interface InsuranceRecord {
 }
 
 export interface AdminInsuranceRecord extends InsuranceRecord {
+  requestId: string | null;
+  requestNo: string | null;
   instructorId: string;
   instructorName: string | null;
   instructorNameZh: string | null;
@@ -118,6 +120,8 @@ export function toAdminRecord(
 ): AdminInsuranceRecord {
   return {
     ...toRecord(row),
+    requestId: row.request_id,
+    requestNo: row.request?.request_no ?? null,
     instructorId: row.instructor_id,
     instructorName: row.instructor?.display_name_en ?? null,
     instructorNameZh: row.instructor?.display_name_zh ?? null,
@@ -207,7 +211,11 @@ export function toAdminRequest(
     createdBy: row.created_by,
     updatedAt: row.updated_at,
     lessons: inEnteredOrder(row.lessons).map((lesson) =>
-      toAdminRecord({ ...lesson, instructor: row.instructor }),
+      toAdminRecord({
+        ...lesson,
+        instructor: row.instructor,
+        request: { request_no: row.request_no },
+      }),
     ),
   };
 }

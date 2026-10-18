@@ -882,7 +882,28 @@ describe('insurance requests', () => {
           paidOn: null,
           paidNote: null,
           locationName: 'CI Hill',
+          requestId: req.id,
+          requestNo: req.requestNo,
         });
+        const listed = (
+          await http()
+            .get('/admin/insurance/records?season=2026%2F27')
+            .set('Authorization', ADMIN_AUTH)
+            .expect(200)
+        ).body as { records: AdminInsuranceRecord[] };
+        expect(
+          listed.records
+            .filter((r) => r.id === first.id || r.id === second.id)
+            .map((r) => [r.requestId, r.requestNo]),
+        ).toEqual([
+          [req.id, req.requestNo],
+          [req.id, req.requestNo],
+        ]);
+        expect(
+          listed.records
+            .filter((r) => r.requestId === null)
+            .every((r) => r.requestNo === null),
+        ).toBe(true);
         expect(ctx.repo.requests.get(req.id)?.payment_status).toBe('unpaid');
         expect(
           [...ctx.repo.rows.values()]

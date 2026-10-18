@@ -583,9 +583,17 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     snapshot.forEach((value, key) => target.set(key, value));
   }
 
+  private withRequest(row: AdminInsuranceRecordRow): AdminInsuranceRecordRow {
+    const request = row.request_id ? this.requests.get(row.request_id) : null;
+    return {
+      ...structuredClone(row),
+      request: request ? { request_no: request.request_no } : null,
+    };
+  }
+
   findRecord(id: string): Promise<AdminInsuranceRecordRow | null> {
     const row = this.rows.get(id);
-    return Promise.resolve(row ? structuredClone(row) : null);
+    return Promise.resolve(row ? this.withRequest(row) : null);
   }
 
   recordsFor(
@@ -603,7 +611,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
 
   seasonRecords(seasonKey: string): Promise<AdminInsuranceRecordRow[]> {
     return Promise.resolve(
-      this.matching({ seasonKey }).map((r) => structuredClone(r)),
+      this.matching({ seasonKey }).map((r) => this.withRequest(r)),
     );
   }
 
@@ -622,7 +630,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     return Promise.resolve({
       rows: all
         .slice(page.offset, page.offset + page.limit)
-        .map((r) => structuredClone(r)),
+        .map((r) => this.withRequest(r)),
       total: all.length,
     });
   }
@@ -652,7 +660,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
       );
     }
     Object.assign(row, patch, { updated_at: this.now().toISOString() });
-    return Promise.resolve(structuredClone(row));
+    return Promise.resolve(this.withRequest(row));
   }
 
   private matching(filter: InsuranceRecordFilter): AdminInsuranceRecordRow[] {

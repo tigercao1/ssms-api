@@ -19,6 +19,8 @@ import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
 import type { InvitesRepository } from './invites.repository';
 import type { DocumentOnboardingService } from '../documents/document-onboarding.service';
+import type { AuditService } from '../audit/audit.service';
+import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 
 const NOW = new Date('2026-10-11T04:00:00Z');
 const TOKEN = 'A'.repeat(43);
@@ -54,6 +56,7 @@ function setup() {
     findLatestByAuthUser: jest
       .fn<Promise<InviteRow | null>, [string]>()
       .mockResolvedValue(null),
+    approveIfPendingAndActive: jest.fn().mockResolvedValue(false),
   };
   const auth = {
     findEmail: jest.fn().mockResolvedValue('Jane@Example.test'),
@@ -65,14 +68,16 @@ function setup() {
     assignPublishedForAuthUser: jest.fn().mockResolvedValue(null),
   };
   const cooldowns = new InMemoryResendCooldownRepository();
+  const audit = recordingAudit();
   const service = new ActivationService(
     invites as unknown as InvitesRepository,
     auth,
     dispatcher as unknown as InviteDispatcher,
     onboarding as unknown as DocumentOnboardingService,
     cooldowns,
+    audit as unknown as AuditService,
   );
-  return { service, invites, auth, dispatcher, onboarding, cooldowns };
+  return { service, invites, auth, dispatcher, onboarding, cooldowns, audit };
 }
 
 beforeEach(() => {
@@ -299,6 +304,7 @@ function setupWithInvite() {
     new InviteDispatcher(invites, mailer),
     {} as DocumentOnboardingService,
     cooldowns,
+    recordingAudit() as unknown as AuditService,
   );
   return { service, mailer, cooldowns };
 }
@@ -430,5 +436,118 @@ describe('ActivationService.complete', () => {
     expect(onboarding.assignPublishedForAuthUser).toHaveBeenCalledWith(
       'auth-1',
     );
+  });
+});
+
+describe('ActivationService.complete for an invited instructor', () => {
+  function setupInvited(instructor: {
+    approval_status: string;
+    is_active: boolean;
+  }) {
+    const invites = new InMemoryInvitesRepository();
+    const invite = invites.seed({
+      instructor_id: 'ins-1',
+      auth_user_id: 'auth-1',
+    });
+    invites.instructors.set('ins-1', { ...instructor });
+    const audit = recordingAudit();
+    const onboarding = {
+      assignPublished: jest.fn(() =>
+        Promise.resolve(
+          invites.instructors.get('ins-1')?.approval_status === 'approved'
+            ? { created: 2, skipped: 0 }
+            : null,
+        ),
+      ),
+      assignPublishedForAuthUser: jest.fn().mockResolvedValue(null),
+    };
+    const service = new ActivationService(
+      invites,
+      {} as ActivationAuth,
+      {} as InviteDispatcher,
+      onboarding as unknown as DocumentOnboardingService,
+      new InMemoryResendCooldownRepository(),
+      audit as unknown as AuditService,
+    );
+    return { service, invites, invite, audit, onboarding };
+  }
+
+  it('approves a pending instructor, audits it as the system and then assigns documents without the approval email', async () => {
+    const { service, invites, invite, audit, onboarding } = setupInvited({
+      approval_status: 'pending',
+      is_active: true,
+    });
+    await service.complete('auth-1');
+    expect(invites.instructors.get('ins-1')?.approval_status).toBe('approved');
+    expect(audit.entries).toEqual([
+      {
+        action: 'instructor.approve',
+        actor: { userId: null, role: 'system' },
+        targetType: 'instructor',
+        targetId: 'ins-1',
+        metadata: {
+          from: 'pending',
+          to: 'approved',
+          reason: null,
+          source: 'invite_activation',
+          inviteId: invite.id,
+        },
+      },
+    ]);
+    expect(onboarding.assignPublished).toHaveBeenCalledTimes(1);
+    expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
+    await expect(
+      onboarding.assignPublished.mock.results[0].value,
+    ).resolves.toEqual({ created: 2, skipped: 0 });
+  });
+
+  it('does not audit again when activation is repeated', async () => {
+    const { service, audit } = setupInvited({
+      approval_status: 'pending',
+      is_active: true,
+    });
+    await service.complete('auth-1');
+    await service.complete('auth-1');
+    expect(audit.entries).toHaveLength(1);
+  });
+
+  it.each([
+    ['rejected', { approval_status: 'rejected', is_active: true }],
+    ['deactivated', { approval_status: 'pending', is_active: false }],
+    ['already approved', { approval_status: 'approved', is_active: true }],
+  ])('leaves a %s instructor as they are', async (_label, instructor) => {
+    const { service, invites, audit } = setupInvited(instructor);
+    await service.complete('auth-1');
+    expect(invites.instructors.get('ins-1')).toEqual(instructor);
+    expect(audit.entries).toEqual([]);
+  });
+
+  it('approves nobody for a self-registered instructor without an invite', async () => {
+    const { service, invites, audit, onboarding } = setupInvited({
+      approval_status: 'pending',
+      is_active: true,
+    });
+    await service.complete('auth-2');
+    expect(invites.instructors.get('ins-1')?.approval_status).toBe('pending');
+    expect(audit.entries).toEqual([]);
+    expect(onboarding.assignPublishedForAuthUser).toHaveBeenCalledWith(
+      'auth-2',
+    );
+    expect(onboarding.assignPublished).not.toHaveBeenCalled();
+  });
+
+  it('still completes and assigns when the approval cannot be written', async () => {
+    const { service, invites, audit, onboarding } = setupInvited({
+      approval_status: 'pending',
+      is_active: true,
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    jest
+      .spyOn(invites, 'approveIfPendingAndActive')
+      .mockRejectedValueOnce(new Error('db down'));
+    await expect(service.complete('auth-1')).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    expect(audit.entries).toEqual([]);
+    expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
   });
 });

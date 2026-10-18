@@ -58,6 +58,10 @@ export function inviteRecipient(
 
 export class InMemoryInvitesRepository extends InvitesRepository {
   readonly rows = new Map<string, InviteRecipient>();
+  readonly instructors = new Map<
+    string,
+    { approval_status: string; is_active: boolean }
+  >();
 
   seed(overrides: Partial<InviteRecipient> = {}): InviteRecipient {
     const row = inviteRecipient(overrides);
@@ -195,6 +199,15 @@ export class InMemoryInvitesRepository extends InvitesRepository {
       }
     }
     return Promise.resolve();
+  }
+
+  approveIfPendingAndActive(instructorId: string): Promise<boolean> {
+    const instructor = this.instructors.get(instructorId);
+    if (instructor?.approval_status !== 'pending' || !instructor.is_active) {
+      return Promise.resolve(false);
+    }
+    instructor.approval_status = 'approved';
+    return Promise.resolve(true);
   }
 
   private list(match: (row: InviteRecipient) => boolean): InviteRecipient[] {

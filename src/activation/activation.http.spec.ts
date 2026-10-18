@@ -29,12 +29,13 @@ import { InMemoryResendCooldownRepository } from '../../test/helpers/reminders-f
 
 const TOKEN = 'b'.repeat(43);
 const EXPIRED_TOKEN = 'c'.repeat(43);
+const audit = { record: jest.fn().mockResolvedValue(undefined) };
 
 @Global()
 @Module({
   providers: [
     { provide: SUPABASE_CLIENT, useValue: {} },
-    { provide: AuditService, useValue: {} },
+    { provide: AuditService, useValue: audit },
   ],
   exports: [SUPABASE_CLIENT, AuditService],
 })
@@ -90,6 +91,7 @@ describe('Activation HTTP', () => {
     findLatestByAuthUser: jest.fn(
       (): Promise<InviteRow | null> => Promise.resolve(invite()),
     ),
+    approveIfPendingAndActive: jest.fn().mockResolvedValue(true),
   };
   const onboarding = {
     assignPublished: jest.fn().mockResolvedValue({ created: 2, skipped: 0 }),
@@ -295,7 +297,7 @@ describe('Activation HTTP', () => {
   });
 
   describe('POST /me/activation/complete', () => {
-    it('204, stamps activated_at and assigns onboarding documents for the invite season', async () => {
+    it('204, stamps activated_at, approves the invited instructor and assigns onboarding documents', async () => {
       await request(app.getHttpServer())
         .post('/me/activation/complete')
         .set('Authorization', 'Bearer good')
@@ -303,6 +305,14 @@ describe('Activation HTTP', () => {
       expect(invites.markActivated).toHaveBeenCalledWith(
         'auth-1',
         expect.any(Date),
+      );
+      expect(invites.approveIfPendingAndActive).toHaveBeenCalledWith('ins-1');
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'instructor.approve',
+          actor: { userId: null, role: 'system' },
+          targetId: 'ins-1',
+        }),
       );
       expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
     });
@@ -323,6 +333,7 @@ describe('Activation HTTP', () => {
         .post('/me/activation/complete')
         .expect(401);
       expect(invites.markActivated).not.toHaveBeenCalled();
+      expect(invites.approveIfPendingAndActive).not.toHaveBeenCalled();
       expect(onboarding.assignPublished).not.toHaveBeenCalled();
     });
   });

@@ -47,6 +47,8 @@ export interface AdminInstructorRow {
   preferred_language: PreferredLanguage;
   approval_status: ApprovalStatus;
   is_active: boolean;
+  published_at: string | null;
+  published_by: string | null;
   inserted_at: string;
   updated_at: string;
 }
@@ -73,6 +75,7 @@ export interface AdminInstructorRecord {
   preferredLanguage: PreferredLanguage;
   approvalStatus: ApprovalStatus;
   isActive: boolean;
+  publishedAt: string | null;
   insertedAt: string;
   updatedAt: string;
 }
@@ -86,6 +89,7 @@ export interface ListInstructorsFilter {
   status?: ApprovalStatus;
   isActive?: boolean;
   calendarConnected?: boolean;
+  published?: boolean;
   q?: string;
 }
 
@@ -94,6 +98,8 @@ export interface AdminInstructorPatch {
   approval_status?: ApprovalStatus;
   is_active?: boolean;
   display_order?: number | null;
+  published_at?: string | null;
+  published_by?: string | null;
 }
 
 /**

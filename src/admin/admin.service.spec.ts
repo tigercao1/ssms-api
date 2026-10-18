@@ -41,6 +41,8 @@ function makeRow(over: Partial<AdminInstructorRow> = {}): AdminInstructorRow {
     preferred_language: 'en',
     approval_status: 'pending',
     is_active: true,
+    published_at: null,
+    published_by: null,
     inserted_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     ...over,

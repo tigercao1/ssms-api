@@ -341,6 +341,17 @@ describe('DailyRemindersWorker', () => {
     ]);
   });
 
+  it('leaves the schedule to the worker process group when running in the web group', async () => {
+    jest.setSystemTime(TORONTO_8AM);
+    ctx = await build({ ...ON, FLY_PROCESS_GROUP: 'app' });
+    ctx.seedAll();
+
+    await jest.advanceTimersByTimeAsync(3 * DAY);
+
+    expect(ctx.runs.runs.size).toBe(0);
+    expect(ctx.mailer.sent).toEqual([]);
+  });
+
   it('stops ticking on shutdown', async () => {
     ctx = await build();
     await ctx.app.close();

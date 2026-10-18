@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { BOOKING_CLOCK, type BookingClock } from './booking-calendars.service';
 import { BookingRepository } from './booking.repository';
 import { CalendarSyncService } from './calendar-sync.service';
+import { runsBackgroundWorkers } from '../config/process-group';
 
 export const CALENDAR_SYNC_FLAG = 'BOOKING_CALENDAR_SYNC_ENABLED';
 export const CALENDAR_SYNC_INTERVAL_MS = 60_000;
@@ -48,6 +49,12 @@ export class CalendarSyncWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (!runsBackgroundWorkers(this.config)) {
+      this.logger.log(
+        `Calendar sync reconciler runs in the worker process group`,
+      );
+      return;
+    }
     if (!this.enabled()) {
       this.logger.log(
         `Calendar sync reconciler disabled: ${CALENDAR_SYNC_FLAG} is not "true"`,

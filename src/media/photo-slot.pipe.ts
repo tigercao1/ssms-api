@@ -6,9 +6,11 @@ import {
 } from './dto/photo-upload-request.dto';
 
 @Injectable()
-export class ParsePhotoSlotPipe implements PipeTransform<string, PhotoSlot> {
-  transform(value: string): PhotoSlot {
-    const slot = PHOTO_SLOTS.find((candidate) => String(candidate) === value);
+export class ParsePhotoSlotPipe implements PipeTransform<unknown, PhotoSlot> {
+  transform(value: unknown): PhotoSlot {
+    const slot = PHOTO_SLOTS.find(
+      (candidate) => String(candidate) === String(value),
+    );
     if (slot === undefined) {
       throw new BadRequestException(PHOTO_SLOT_MESSAGE);
     }

@@ -132,6 +132,9 @@ jobs:
       - name: Daily reminders checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/daily_reminders_checks.sql
 
+      - name: Go-live checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/go_live_checks.sql
+
       # Mirrors what the post-merge job does to dev and prod: the base branch's
       # migrations are already applied, and only this PR's new files run.
       - name: Apply on top of base branch (PRs only)

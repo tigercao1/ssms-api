@@ -53,11 +53,18 @@ function lockFor(
     : { message: PENDING_APPROVAL, reason: PENDING_APPROVAL_REASON };
 }
 
+/** Whether a document item no longer blocks onboarding: optional, or completed. */
+export function isDocumentItemDone(
+  item: Pick<DocumentChecklistItem, 'required' | 'status'>,
+): boolean {
+  return !item.required || item.status === 'completed';
+}
+
 export function isOnboardingComplete(items: readonly ChecklistItem[]): boolean {
   return items.every((item) =>
     item.type === 'certification'
       ? isCertificationSatisfied(item.state)
-      : !item.required || item.status === 'completed',
+      : isDocumentItemDone(item),
   );
 }
 
@@ -263,6 +270,13 @@ export class MeDocumentsService {
       ...documents,
       ...toCertificationItems(certifications, uploads, today, false),
     ]);
+  }
+
+  /** The document items of the instructor's current-season checklist, without certifications. */
+  async onboardingDocuments(
+    instructorId: string,
+  ): Promise<DocumentChecklistItem[]> {
+    return (await this.currentDocuments(instructorId)).documents;
   }
 
   private async currentDocuments(

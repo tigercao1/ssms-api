@@ -71,8 +71,10 @@ export class AdminCertificationUploadsService {
 
   /**
    * Sets the review outcome (and optionally the note and a corrected
-   * `validUntil`), stamping `reviewed_by`/`reviewed_at`. Changing `validUntil`
-   * clears `expiry_reminder_sent_at` so the expiry emails follow the new date.
+   * `validUntil`), stamping `reviewed_by`/`reviewed_at`. Approving records the
+   * instructor's declared level for the `(org, track)` as `verified_level`;
+   * rejecting clears it. Changing `validUntil` clears `expiry_reminder_sent_at`
+   * so the expiry emails follow the new date.
    * Rejecting deletes the file (best effort, audited) and emails the
    * instructor; a rejected upload cannot move to another status (409).
    */
@@ -92,6 +94,11 @@ export class AdminCertificationUploadsService {
       reviewed_by: actor.userId ?? null,
       reviewed_at: now.toISOString(),
     };
+    if (dto.reviewStatus === 'approved') {
+      patch.verified_level = await this.declaredLevel(before);
+    } else if (dto.reviewStatus === 'rejected') {
+      patch.verified_level = null;
+    }
     const fields: ReviewedField[] = ['review_status'];
     if (dto.reviewNote !== undefined) {
       patch.review_note = dto.reviewNote || null;
@@ -214,6 +221,18 @@ export class AdminCertificationUploadsService {
       },
       idempotencyKey: `certification.rejected:${row.id}`,
     });
+  }
+
+  private async declaredLevel(
+    row: CertificationUploadRow,
+  ): Promise<number | null> {
+    const certifications = await this.subjects.listCertifications(
+      row.instructor_id,
+    );
+    return (
+      certifications.find((c) => c.org === row.org && c.track === row.track)
+        ?.level ?? null
+    );
   }
 
   private async load(id: string): Promise<CertificationUploadRow> {

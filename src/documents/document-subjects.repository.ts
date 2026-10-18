@@ -14,7 +14,7 @@ export const DOCUMENT_INSTRUCTOR_COLUMNS =
 export const CERTIFICATION_UPLOADS_TABLE = 'certification_uploads';
 export const CERTIFICATION_UPLOAD_COLUMNS =
   'id, instructor_id, org, track, file_key, sha256, content_type, size_bytes, ' +
-  'review_status, review_note, reviewed_by, reviewed_at, valid_until, ' +
+  'review_status, review_note, reviewed_by, reviewed_at, valid_until, verified_level, ' +
   'expiry_reminder_sent_at, ai_result, ai_model, ai_checked_at, inserted_at, updated_at';
 export const INSTRUCTOR_ID_CHUNK = 100;
 

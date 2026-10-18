@@ -3,6 +3,7 @@ import {
   INSTRUCTOR_ID,
   InMemorySyncRepository,
   snapshotOf,
+  readyWhenVisible,
 } from '../../test/helpers/shopify-sync-fakes';
 import { englishTranslations } from './instructor-fields.builder';
 import { InstructorPhotoSync } from './instructor-photo.sync';
@@ -20,6 +21,7 @@ function setup() {
     gateway,
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
+    readyWhenVisible(repo),
   );
   const syncWith = (instructor: Partial<SyncInstructorRow>) => {
     repo.snapshots.set(INSTRUCTOR_ID, snapshotOf({ instructor }));
@@ -197,6 +199,7 @@ describe('English reference translations', () => {
         sleep: () => Promise.resolve(),
       }),
       new InstructorTranslationsSync(gateway),
+      readyWhenVisible(repo),
     );
     const withNames = snapshotOf({
       locations: [{ name: 'Whistler', name_zh: '惠斯勒' }],

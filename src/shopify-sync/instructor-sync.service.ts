@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { GoLiveService } from './go-live.service';
 import {
   buildInstructorFields,
   englishTranslations,
@@ -7,10 +8,9 @@ import { baseHandle, handleCandidate } from './instructor-handle';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncRepository } from './instructor-sync.repository';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
-import {
-  type InstructorShopifyState,
-  type InstructorSnapshot,
-  isVisible,
+import type {
+  InstructorShopifyState,
+  InstructorSnapshot,
 } from './instructor-sync.types';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 
@@ -31,17 +31,18 @@ export class InstructorSyncService {
     private readonly gateway: ShopifyInstructorGateway,
     private readonly photos: InstructorPhotoSync,
     private readonly translations: InstructorTranslationsSync,
+    private readonly goLive: GoLiveService,
   ) {}
 
   async sync(instructorId: string): Promise<SyncOutcome> {
-    const [snapshot, state] = await Promise.all([
-      this.repo.loadSnapshot(instructorId),
+    const [assessment, state] = await Promise.all([
+      this.goLive.assess(instructorId),
       this.repo.getState(instructorId),
     ]);
-    if (!snapshot || !isVisible(snapshot.instructor)) {
+    if (!assessment?.readiness.ready) {
       return this.hide(instructorId, state);
     }
-    return this.publish(snapshot, state);
+    return this.publish(assessment.publishable, state);
   }
 
   async reconcile(): Promise<ReconcileResult> {

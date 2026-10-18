@@ -1,7 +1,13 @@
 import { Module } from '@nestjs/common';
 import { RolesGuard } from '../admin/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { DocumentsModule } from '../documents/documents.module';
 import { ShopifyModule } from '../shopify/shopify.module';
+import {
+  AdminGoLiveController,
+  MeGoLiveController,
+} from './go-live.controller';
+import { GoLiveService } from './go-live.service';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import {
   InstructorSyncRepository,
@@ -22,8 +28,13 @@ import { ShopifySyncController } from './shopify-sync.controller';
 import { ShopifySyncWorker } from './shopify-sync.worker';
 
 @Module({
-  imports: [ShopifyModule],
-  controllers: [ShopifySyncController, ShopifySyncAdminController],
+  imports: [ShopifyModule, DocumentsModule],
+  controllers: [
+    ShopifySyncController,
+    ShopifySyncAdminController,
+    MeGoLiveController,
+    AdminGoLiveController,
+  ],
   providers: [
     {
       provide: InstructorSyncRepository,
@@ -38,6 +49,7 @@ import { ShopifySyncWorker } from './shopify-sync.worker';
     ShopifyInstructorGateway,
     InstructorPhotoSync,
     InstructorTranslationsSync,
+    GoLiveService,
     InstructorSyncService,
     ShopifySyncWorker,
     SupabaseAuthGuard,

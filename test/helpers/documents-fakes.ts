@@ -660,6 +660,7 @@ export function certificationUploadRow(
     reviewed_by: null,
     reviewed_at: null,
     valid_until: '2027-10-31',
+    verified_level: null,
     expiry_reminder_sent_at: null,
     ai_result: null,
     ai_model: null,

@@ -6,6 +6,7 @@ import {
   InMemorySettingsRepository,
   InMemorySyncRepository,
   snapshotOf,
+  readyWhenVisible,
 } from '../../test/helpers/shopify-sync-fakes';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
@@ -47,6 +48,7 @@ function setup(
     gateway,
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
+    readyWhenVisible(repo),
   );
   const config = { get: (key: string) => env[key] } as ConfigService;
   const worker = new ShopifySyncWorker(

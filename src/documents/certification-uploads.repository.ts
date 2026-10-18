@@ -41,6 +41,7 @@ export type CertificationUploadWrite = Partial<
     | 'reviewed_by'
     | 'reviewed_at'
     | 'valid_until'
+    | 'verified_level'
     | 'expiry_reminder_sent_at'
   >
 >;

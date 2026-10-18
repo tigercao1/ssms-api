@@ -64,6 +64,7 @@ export class InMemoryCertificationUploadsRepository extends CertificationUploads
       review_note: null,
       reviewed_by: null,
       reviewed_at: null,
+      verified_level: null,
       expiry_reminder_sent_at: null,
       ai_result: null,
       ai_model: null,

@@ -219,6 +219,7 @@ export interface CertificationUploadRow {
   reviewed_by: string | null;
   reviewed_at: string | null;
   valid_until: string;
+  verified_level: number | null;
   expiry_reminder_sent_at: string | null;
   ai_result: Record<string, unknown> | null;
   ai_model: string | null;

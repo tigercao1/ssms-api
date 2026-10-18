@@ -1152,6 +1152,38 @@ describe('certification uploads over HTTP', () => {
       expect(ctx.mailer.sent).toEqual([]);
     });
 
+    function approve(body: Record<string, unknown> = {}) {
+      return http()
+        .patch(`/admin/certification-uploads/${row.id}`)
+        .set('Authorization', admin)
+        .send({ reviewStatus: 'approved', ...body });
+    }
+
+    it('records the declared level as verified on approve and clears it on reject', async () => {
+      await approve().expect(200);
+      expect(ctx.subjects.uploads[0].verified_level).toBe(2);
+
+      await reject().expect(200);
+      expect(ctx.subjects.uploads[0].verified_level).toBeNull();
+    });
+
+    it('re-records the declared level when an approved upload is approved again', async () => {
+      await approve().expect(200);
+      ctx.subjects.certifications.set(ctx.instructor.id, [
+        { org: 'csia', track: 'regular', level: 3 },
+      ]);
+
+      await approve({ validUntil: addDays(torontoToday(), 40) }).expect(200);
+
+      expect(ctx.subjects.uploads[0].verified_level).toBe(3);
+    });
+
+    it('verifies no level when the profile no longer lists the certification', async () => {
+      ctx.subjects.certifications.set(ctx.instructor.id, []);
+      await approve().expect(200);
+      expect(ctx.subjects.uploads[0].verified_level).toBeNull();
+    });
+
     it('lets a rejected upload be re-saved as rejected, retrying the delete without emailing again', async () => {
       await reject().expect(200);
       const remove = jest.spyOn(ctx.storage, 'delete');

@@ -3,6 +3,7 @@ import {
   INSTRUCTOR_ID,
   InMemorySyncRepository,
   snapshotOf,
+  readyWhenVisible,
 } from '../../test/helpers/shopify-sync-fakes';
 import {
   InstructorPhotoSync,
@@ -36,6 +37,7 @@ function setup(instructor: Partial<SyncInstructorRow> = {}) {
       },
     }),
     new InstructorTranslationsSync(gateway),
+    readyWhenVisible(repo),
   );
   const setInstructor = (overrides: Partial<SyncInstructorRow>) =>
     repo.snapshots.set(

@@ -196,6 +196,7 @@ describe('/me/insurance', () => {
         unpaidCents: 0,
         coverage: 'none',
         records: [],
+        requests: [],
       });
     });
 
@@ -307,6 +308,7 @@ describe('/me/insurance', () => {
         unpaidCents: 0,
         coverage: 'none',
         records: [],
+        requests: [],
       });
     });
 
@@ -343,6 +345,7 @@ describe('/me/insurance', () => {
       assign('completed');
       assign('assigned');
       const records = jest.spyOn(ctx.repo, 'recordsFor');
+      const requests = jest.spyOn(ctx.repo, 'requestsFor');
       expect(await overview()).toEqual({
         locked: true,
         lockReason: 'onboarding_incomplete',
@@ -357,8 +360,10 @@ describe('/me/insurance', () => {
         unpaidCents: 0,
         coverage: 'none',
         records: [],
+        requests: [],
       });
       expect(records).not.toHaveBeenCalled();
+      expect(requests).not.toHaveBeenCalled();
     });
 
     it('cannot register a lesson while onboarding is incomplete', async () => {
@@ -368,6 +373,19 @@ describe('/me/insurance', () => {
         reason: 'onboarding_incomplete',
       });
       expect(ctx.repo.registerCalls).toHaveLength(0);
+    });
+
+    it('cannot submit an insurance request while onboarding is incomplete', async () => {
+      assign('assigned');
+      await http()
+        .post('/me/insurance/requests')
+        .set('Authorization', ADA_AUTH)
+        .send({ idempotencyKey: randomUUID(), lessons: [lessonBody] })
+        .expect(403, {
+          message: INSURANCE_ONBOARDING_INCOMPLETE,
+          reason: 'onboarding_incomplete',
+        });
+      expect(ctx.repo.requests.size).toBe(0);
     });
 
     it('locks an instructor whose certification is missing', async () => {

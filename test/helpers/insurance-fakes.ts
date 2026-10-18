@@ -17,16 +17,22 @@ import {
 import type { PageRequest, RowPage } from '../../src/database/pagination';
 import {
   type AdminInsuranceRecordRow,
+  type AdminInsuranceRequestRow,
   type GrantSeasonPassInput,
   type InsuranceInstructorRow,
   type InsuranceRecordFilter,
   type InsuranceRecordPatch,
   type InsuranceRecordRow,
+  type InsuranceRequestRow,
   type InsuranceSummaryInstructorRow,
   LessonInsuranceRepository,
   type PaymentStatus,
   type RegisterInput,
   type RegisterOutcome,
+  type RequestTransitionInput,
+  type RequestTransitionOutcome,
+  type SubmitRequestInput,
+  type SubmitRequestOutcome,
 } from '../../src/insurance/lesson-insurance.repository';
 import type { SeasonRow } from '../../src/seasons/seasons.repository';
 
@@ -41,6 +47,17 @@ export const ADA_INSTRUCTOR = 'a1000000-0000-4000-8000-0000000000ad';
 export const BO_INSTRUCTOR = 'b1000000-0000-4000-8000-0000000000b0';
 export const HILL_ID = 'c1000000-0000-4000-8000-00000000c001';
 const CAP = 40000;
+const MAX_LESSONS = 10;
+
+type StoredRequest = Omit<InsuranceRequestRow, 'lessons'>;
+
+function withoutInstructor<T extends { instructor: unknown }>(
+  row: T,
+): Omit<T, 'instructor'> {
+  const copy: Partial<T> = { ...row };
+  delete copy.instructor;
+  return copy as Omit<T, 'instructor'>;
+}
 
 const USERS: Record<string, string> = {
   admin: INSURANCE_ADMIN_ID,
@@ -100,6 +117,10 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
   readonly locations = new Map<string, string>([[HILL_ID, 'CI Hill']]);
   readonly registerCalls: RegisterInput[] = [];
   readonly grantCalls: GrantSeasonPassInput[] = [];
+  readonly requests = new Map<string, StoredRequest>();
+  readonly requestIdempotency = new Map<string, string>();
+  readonly submitCalls: SubmitRequestInput[] = [];
+  readonly transitionCalls: RequestTransitionInput[] = [];
   grantFaultAfterInsert: Error | null = null;
   private tick = 0;
 
@@ -226,17 +247,13 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
       amount = CAP - owed;
       coverage = null;
     }
-    const now = new Date(this.now().getTime() + this.tick++);
-    const day = now
-      .toLocaleDateString('en-CA', { timeZone: 'America/Toronto' })
-      .replace(/-/g, '');
-    const no = (this.counters.get(day) ?? 0) + 1;
-    this.counters.set(day, no);
+    const { now, number } = this.nextNumber();
     const instructor = this.instructors.get(input.instructorId)!;
     const lesson = input.kind === 'lesson';
     const row: AdminInsuranceRecordRow = {
       id: randomUUID(),
       instructor_id: input.instructorId,
+      request_id: null,
       season_key: season.key,
       kind: input.kind,
       lesson_date: lesson ? input.lessonDate : null,
@@ -256,7 +273,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
       voided_reason: null,
       voided_by: null,
       voided_from_status: null,
-      record_no: `INS-${day}-${String(no).padStart(4, '0')}`,
+      record_no: number,
       created_by: input.actor,
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
@@ -319,14 +336,264 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     }
   }
 
+  private nextNumber(): { now: Date; number: string } {
+    const now = new Date(this.now().getTime() + this.tick++);
+    const day = now
+      .toLocaleDateString('en-CA', { timeZone: 'America/Toronto' })
+      .replace(/-/g, '');
+    const no = (this.counters.get(day) ?? 0) + 1;
+    this.counters.set(day, no);
+    return { now, number: `INS-${day}-${String(no).padStart(4, '0')}` };
+  }
+
+  private seasonOn(date: string): SeasonRow | undefined {
+    return this.seasons().find((s) => s.starts_on <= date && date <= s.ends_on);
+  }
+
+  async submitRequest(
+    input: SubmitRequestInput,
+  ): Promise<SubmitRequestOutcome> {
+    this.submitCalls.push(input);
+    const idemKey = `${input.instructorId}|${input.idempotencyKey}`;
+    const existing = this.requestIdempotency.get(idemKey);
+    if (existing) {
+      return { outcome: 'existing', id: existing };
+    }
+    if (input.lessons.length > MAX_LESSONS) {
+      return {
+        outcome: 'too_many_lessons',
+        lesson_count: input.lessons.length,
+      };
+    }
+    let seasonKey = input.seasonKey;
+    if (seasonKey && !this.seasons().some((s) => s.key === seasonKey)) {
+      return { outcome: 'no_season' };
+    }
+    for (const [index, lesson] of input.lessons.entries()) {
+      const season = this.seasonOn(lesson.lessonDate);
+      if (!season) {
+        return { outcome: 'no_season', lesson_index: index };
+      }
+      seasonKey ??= season.key;
+      if (season.key !== seasonKey) {
+        return {
+          outcome: 'mixed_seasons',
+          lesson_index: index,
+          season_key: seasonKey,
+        };
+      }
+    }
+    const rows = new Map(
+      [...this.rows].map(([id, row]) => [id, structuredClone(row)]),
+    );
+    const idempotency = new Map(this.idempotency);
+    const counters = new Map(this.counters);
+    const tick = this.tick;
+    try {
+      const { now, number } = this.nextNumber();
+      const id = randomUUID();
+      const lessonIds: string[] = [];
+      for (const lesson of input.lessons) {
+        const outcome = await this.register({
+          instructorId: input.instructorId,
+          kind: 'lesson',
+          seasonKey: null,
+          ...lesson,
+          idempotencyKey: randomUUID(),
+          actor: input.actor,
+        });
+        if (outcome.outcome !== 'created') {
+          throw new Error(`lesson not created: ${outcome.outcome}`);
+        }
+        this.rows.get(outcome.id)!.request_id = id;
+        lessonIds.push(outcome.id);
+      }
+      const total = lessonIds.reduce(
+        (sum, lessonId) => sum + this.rows.get(lessonId)!.amount_cents,
+        0,
+      );
+      this.requests.set(id, {
+        id,
+        instructor_id: input.instructorId,
+        season_key: seasonKey!,
+        request_no: number,
+        payment_status: total > 0 ? 'unpaid' : 'not_required',
+        total_cents: total,
+        lesson_count: input.lessons.length,
+        paid_on: null,
+        paid_note: null,
+        paid_by: null,
+        voided_at: null,
+        voided_reason: null,
+        voided_by: null,
+        voided_from_status: null,
+        created_by: input.actor,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+      this.requestIdempotency.set(idemKey, id);
+      return { outcome: 'created', id };
+    } catch (error) {
+      this.restore(this.rows, rows);
+      this.restore(this.idempotency, idempotency);
+      this.restore(this.counters, counters);
+      this.tick = tick;
+      throw error;
+    }
+  }
+
+  private requestRow(stored: StoredRequest): AdminInsuranceRequestRow {
+    const instructor = this.instructors.get(stored.instructor_id);
+    return structuredClone({
+      ...stored,
+      lessons: [...this.rows.values()]
+        .filter((r) => r.request_id === stored.id)
+        .map((r) => withoutInstructor(r)),
+      instructor: instructor
+        ? {
+            display_name_en: instructor.display_name_en,
+            display_name_zh: instructor.display_name_zh,
+            email: instructor.email,
+          }
+        : null,
+    });
+  }
+
+  findRequest(id: string): Promise<AdminInsuranceRequestRow | null> {
+    const stored = this.requests.get(id);
+    return Promise.resolve(stored ? this.requestRow(stored) : null);
+  }
+
+  private matchingRequests(
+    filter: InsuranceRecordFilter,
+  ): AdminInsuranceRequestRow[] {
+    return [...this.requests.values()]
+      .filter(
+        (r) =>
+          r.season_key === filter.seasonKey &&
+          (!filter.instructorId || r.instructor_id === filter.instructorId) &&
+          (!filter.paymentStatus || r.payment_status === filter.paymentStatus),
+      )
+      .map((r) => this.requestRow(r));
+  }
+
+  requestsFor(
+    instructorId: string,
+    seasonKey: string,
+  ): Promise<InsuranceRequestRow[]> {
+    return Promise.resolve(
+      this.matchingRequests({ seasonKey, instructorId }).map((r) =>
+        withoutInstructor(r),
+      ),
+    );
+  }
+
+  readonly listRequestCalls: {
+    filter: InsuranceRecordFilter;
+    page: PageRequest;
+  }[] = [];
+
+  listRequests(
+    filter: InsuranceRecordFilter,
+    page: PageRequest,
+  ): Promise<RowPage<AdminInsuranceRequestRow>> {
+    this.listRequestCalls.push({ filter, page });
+    const all = this.matchingRequests(filter).sort(
+      (a, b) =>
+        b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
+    );
+    return Promise.resolve({
+      rows: all.slice(page.offset, page.offset + page.limit),
+      total: all.length,
+    });
+  }
+
+  transitionRequest(
+    input: RequestTransitionInput,
+  ): Promise<RequestTransitionOutcome> {
+    this.transitionCalls.push(input);
+    const request = this.requests.get(input.requestId);
+    if (!request) {
+      return Promise.resolve({ outcome: 'not_found' });
+    }
+    const from = request.payment_status;
+    const lessons = [...this.rows.values()].filter(
+      (r) => r.request_id === request.id,
+    );
+    const updated_at = this.now().toISOString();
+    const paid = {
+      payment_status: 'paid' as const,
+      paid_on: input.paidOn,
+      paid_note: input.note,
+      paid_by: input.actor,
+      updated_at,
+    };
+    const unpaid = {
+      payment_status: 'unpaid' as const,
+      paid_on: null,
+      paid_note: null,
+      paid_by: null,
+      updated_at,
+    };
+    const voided = (status: Exclude<PaymentStatus, 'voided'>) => ({
+      payment_status: 'voided' as const,
+      voided_at: updated_at,
+      voided_reason: input.reason,
+      voided_by: input.actor,
+      voided_from_status: status,
+      updated_at,
+    });
+    if (input.action === 'mark_paid') {
+      if (from !== 'unpaid') {
+        return Promise.resolve({ outcome: 'conflict', from });
+      }
+      Object.assign(request, paid);
+      lessons
+        .filter((r) => r.payment_status === 'unpaid')
+        .forEach((r) => Object.assign(r, paid));
+    } else if (input.action === 'mark_unpaid') {
+      if (from !== 'paid') {
+        return Promise.resolve({ outcome: 'conflict', from });
+      }
+      Object.assign(request, unpaid);
+      lessons
+        .filter((r) => r.payment_status === 'paid')
+        .forEach((r) => Object.assign(r, unpaid));
+    } else {
+      if (from === 'voided') {
+        return Promise.resolve({ outcome: 'conflict', from });
+      }
+      Object.assign(request, voided(from));
+      for (const r of lessons) {
+        if (r.payment_status !== 'voided') {
+          Object.assign(r, voided(r.payment_status));
+        }
+      }
+    }
+    return Promise.resolve({
+      outcome: 'updated',
+      from,
+      to: request.payment_status,
+      request: this.requestRow(request),
+    });
+  }
+
   private restore<K, V>(target: Map<K, V>, snapshot: Map<K, V>): void {
     target.clear();
     snapshot.forEach((value, key) => target.set(key, value));
   }
 
+  private withRequest(row: AdminInsuranceRecordRow): AdminInsuranceRecordRow {
+    const request = row.request_id ? this.requests.get(row.request_id) : null;
+    return {
+      ...structuredClone(row),
+      request: request ? { request_no: request.request_no } : null,
+    };
+  }
+
   findRecord(id: string): Promise<AdminInsuranceRecordRow | null> {
     const row = this.rows.get(id);
-    return Promise.resolve(row ? structuredClone(row) : null);
+    return Promise.resolve(row ? this.withRequest(row) : null);
   }
 
   recordsFor(
@@ -344,7 +611,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
 
   seasonRecords(seasonKey: string): Promise<AdminInsuranceRecordRow[]> {
     return Promise.resolve(
-      this.matching({ seasonKey }).map((r) => structuredClone(r)),
+      this.matching({ seasonKey }).map((r) => this.withRequest(r)),
     );
   }
 
@@ -363,7 +630,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
     return Promise.resolve({
       rows: all
         .slice(page.offset, page.offset + page.limit)
-        .map((r) => structuredClone(r)),
+        .map((r) => this.withRequest(r)),
       total: all.length,
     });
   }
@@ -393,7 +660,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
       );
     }
     Object.assign(row, patch, { updated_at: this.now().toISOString() });
-    return Promise.resolve(structuredClone(row));
+    return Promise.resolve(this.withRequest(row));
   }
 
   private matching(filter: InsuranceRecordFilter): AdminInsuranceRecordRow[] {

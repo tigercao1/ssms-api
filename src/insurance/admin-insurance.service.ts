@@ -21,15 +21,19 @@ import {
 } from './dto/insurance.dto';
 import {
   type AdminInsuranceRecord,
+  type AdminInsuranceRequest,
   type SeasonCoverage,
   toAdminRecord,
+  toAdminRequest,
   totalsOf,
 } from './insurance.presenters';
 import {
   type AdminInsuranceRecordRow,
+  type AdminInsuranceRequestRow,
   type InsuranceRecordPatch,
   LessonInsuranceRepository,
   type PaymentStatus,
+  type RequestTransitionInput,
 } from './lesson-insurance.repository';
 
 export const RECORD_NOT_FOUND = 'Insurance record not found';
@@ -38,6 +42,12 @@ export const MARK_PAID_NEEDS_UNPAID =
 export const MARK_UNPAID_NEEDS_PAID = 'Only a paid record can be marked unpaid';
 export const ALREADY_VOIDED = 'This record is already voided';
 export const RECORD_CHANGED = 'This record changed; reload and try again';
+export const REQUEST_NOT_FOUND = 'Insurance request not found';
+export const REQUEST_MARK_PAID_NEEDS_UNPAID =
+  'Only an unpaid request can be marked paid';
+export const REQUEST_MARK_UNPAID_NEEDS_PAID =
+  'Only a paid request can be marked unpaid';
+export const REQUEST_ALREADY_VOIDED = 'This request is already voided';
 export const INSTRUCTOR_NOT_FOUND = 'Instructor not found';
 export const INSTRUCTOR_NOT_APPROVED =
   'Only an approved instructor can be granted a season pass';
@@ -64,6 +74,18 @@ export interface AdminInsuranceRecordPage {
   total: number;
 }
 
+export interface AdminInsuranceRequestPage {
+  requests: AdminInsuranceRequest[];
+  total: number;
+}
+
+interface RequestChange {
+  input: Omit<RequestTransitionInput, 'requestId' | 'actor'>;
+  conflict: string;
+  action: AuditAction;
+  metadata: Record<string, unknown>;
+}
+
 interface StatusChange {
   from: PaymentStatus;
   conflict: string;
@@ -76,6 +98,24 @@ interface StatusChange {
 export interface MarkPaidInput {
   paidOn?: string;
   note?: string | null;
+}
+
+function markUnpaidChange(conflict: string): RequestChange {
+  return {
+    input: { action: 'mark_unpaid', paidOn: null, note: null, reason: null },
+    conflict,
+    action: AUDIT_ACTIONS.lessonInsuranceRequestMarkUnpaid,
+    metadata: {},
+  };
+}
+
+function voidChange(reason: string, conflict: string): RequestChange {
+  return {
+    input: { action: 'void', paidOn: null, note: null, reason },
+    conflict,
+    action: AUDIT_ACTIONS.lessonInsuranceRequestVoid,
+    metadata: { reason },
+  };
 }
 
 function passPaymentStatus(
@@ -162,6 +202,66 @@ export class AdminInsuranceService {
     return { records: rows.map(toAdminRecord), total };
   }
 
+  async requests(
+    query: AdminInsuranceRecordsQueryDto,
+  ): Promise<AdminInsuranceRequestPage> {
+    const season = await this.seasonFor(query.season);
+    if (!season) {
+      return { requests: [], total: 0 };
+    }
+    const limit = query.limit ?? INSURANCE_LIST_DEFAULT_LIMIT;
+    const { rows, total } = await this.repo.listRequests(
+      {
+        seasonKey: season.key,
+        instructorId: query.instructorId,
+        paymentStatus: query.paymentStatus,
+      },
+      { limit, offset: pageOffset(query.page ?? 1, limit) },
+    );
+    return { requests: rows.map(toAdminRequest), total };
+  }
+
+  async markRequestPaid(
+    id: string,
+    input: MarkPaidInput,
+    actor: AuditActor,
+  ): Promise<AdminInsuranceRequest> {
+    return toAdminRequest(
+      await this.transitionRequest(
+        id,
+        actor,
+        this.markPaidChange(input, REQUEST_MARK_PAID_NEEDS_UNPAID),
+      ),
+    );
+  }
+
+  async markRequestUnpaid(
+    id: string,
+    actor: AuditActor,
+  ): Promise<AdminInsuranceRequest> {
+    return toAdminRequest(
+      await this.transitionRequest(
+        id,
+        actor,
+        markUnpaidChange(REQUEST_MARK_UNPAID_NEEDS_PAID),
+      ),
+    );
+  }
+
+  async voidRequest(
+    id: string,
+    reason: string,
+    actor: AuditActor,
+  ): Promise<AdminInsuranceRequest> {
+    return toAdminRequest(
+      await this.transitionRequest(
+        id,
+        actor,
+        voidChange(reason, REQUEST_ALREADY_VOIDED),
+      ),
+    );
+  }
+
   async grantSeasonPass(
     instructorId: string,
     dto: GrantSeasonPassDto,
@@ -233,9 +333,19 @@ export class AdminInsuranceService {
     input: MarkPaidInput,
     actor: AuditActor,
   ): Promise<AdminInsuranceRecord> {
+    const current = await this.findOrThrow(id);
+    if (current.request_id !== null) {
+      return this.transitionThroughRequest(
+        current,
+        current.request_id,
+        'unpaid',
+        actor,
+        this.markPaidChange(input, MARK_PAID_NEEDS_UNPAID),
+      );
+    }
     const paidOn = input.paidOn ?? this.seasons.today();
     const note = input.note ? input.note : null;
-    return this.transition(await this.findOrThrow(id), {
+    return this.transition(current, {
       from: 'unpaid',
       conflict: MARK_PAID_NEEDS_UNPAID,
       patch: {
@@ -254,7 +364,17 @@ export class AdminInsuranceService {
     id: string,
     actor: AuditActor,
   ): Promise<AdminInsuranceRecord> {
-    return this.transition(await this.findOrThrow(id), {
+    const current = await this.findOrThrow(id);
+    if (current.request_id !== null) {
+      return this.transitionThroughRequest(
+        current,
+        current.request_id,
+        'paid',
+        actor,
+        markUnpaidChange(MARK_UNPAID_NEEDS_PAID),
+      );
+    }
+    return this.transition(current, {
       from: 'paid',
       conflict: MARK_UNPAID_NEEDS_PAID,
       patch: {
@@ -278,6 +398,15 @@ export class AdminInsuranceService {
     const current = await this.findOrThrow(id);
     if (current.payment_status === 'voided') {
       throw new ConflictException(ALREADY_VOIDED);
+    }
+    if (current.request_id !== null) {
+      return this.transitionThroughRequest(
+        current,
+        current.request_id,
+        current.payment_status,
+        actor,
+        voidChange(reason, ALREADY_VOIDED),
+      );
     }
     const from = current.payment_status;
     return this.transition(current, {
@@ -327,6 +456,85 @@ export class AdminInsuranceService {
       },
     });
     return toAdminRecord(row);
+  }
+
+  private markPaidChange(
+    input: MarkPaidInput,
+    conflict: string,
+  ): RequestChange {
+    const paidOn = input.paidOn ?? this.seasons.today();
+    const note = input.note ? input.note : null;
+    return {
+      input: { action: 'mark_paid', paidOn, note, reason: null },
+      conflict,
+      action: AUDIT_ACTIONS.lessonInsuranceRequestMarkPaid,
+      metadata: { paidOn, note },
+    };
+  }
+
+  private async transitionThroughRequest(
+    record: AdminInsuranceRecordRow,
+    requestId: string,
+    from: PaymentStatus,
+    actor: AuditActor,
+    change: RequestChange,
+  ): Promise<AdminInsuranceRecord> {
+    if (record.payment_status !== from) {
+      throw new ConflictException(change.conflict);
+    }
+    const request = await this.transitionRequest(requestId, actor, {
+      ...change,
+      metadata: {
+        ...change.metadata,
+        recordId: record.id,
+        via: 'record_route',
+      },
+    });
+    const lesson = request.lessons.find((row) => row.id === record.id);
+    if (!lesson) {
+      throw new NotFoundException(RECORD_NOT_FOUND);
+    }
+    return toAdminRecord({
+      ...lesson,
+      instructor: request.instructor,
+      request: { request_no: request.request_no },
+    });
+  }
+
+  private async transitionRequest(
+    id: string,
+    actor: AuditActor,
+    change: RequestChange,
+  ): Promise<AdminInsuranceRequestRow> {
+    const outcome = await this.repo.transitionRequest({
+      requestId: id,
+      actor: actor.userId ?? null,
+      ...change.input,
+    });
+    if (outcome.outcome === 'not_found') {
+      throw new NotFoundException(REQUEST_NOT_FOUND);
+    }
+    if (outcome.outcome === 'conflict') {
+      throw new ConflictException(change.conflict);
+    }
+    const row = outcome.request;
+    await this.audit.record({
+      action: change.action,
+      actor: { ...actor, role: actor.role ?? 'admin' },
+      targetType: 'lesson_insurance_request',
+      targetId: row.id,
+      metadata: {
+        requestNo: row.request_no,
+        instructorId: row.instructor_id,
+        seasonKey: row.season_key,
+        totalCents: row.total_cents,
+        recordIds: row.lessons.map((lesson) => lesson.id),
+        from: outcome.from,
+        to: outcome.to,
+        ...change.metadata,
+      },
+    });
+    return row;
   }
 
   private async findOrThrow(id: string): Promise<AdminInsuranceRecordRow> {

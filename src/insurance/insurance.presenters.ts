@@ -1,9 +1,11 @@
 import { torontoToday } from '../documents/certification-validity';
 import type {
   AdminInsuranceRecordRow,
+  AdminInsuranceRequestRow,
   InsuranceCoverage,
   InsuranceKind,
   InsuranceRecordRow,
+  InsuranceRequestRow,
   InsuranceStudent,
   PaymentStatus,
 } from './lesson-insurance.repository';
@@ -33,6 +35,8 @@ export interface InsuranceRecord {
 }
 
 export interface AdminInsuranceRecord extends InsuranceRecord {
+  requestId: string | null;
+  requestNo: string | null;
   instructorId: string;
   instructorName: string | null;
   instructorNameZh: string | null;
@@ -45,6 +49,38 @@ export interface AdminInsuranceRecord extends InsuranceRecord {
   voidedFromStatus: Exclude<PaymentStatus, 'voided'> | null;
   createdBy: string | null;
   updatedAt: string;
+}
+
+export interface InsuranceRequest {
+  id: string;
+  requestNo: string;
+  seasonKey: string;
+  paymentStatus: PaymentStatus;
+  totalCents: number;
+  lessonCount: number;
+  studentCount: number;
+  createdAt: string;
+  paidOn: string | null;
+  lessons: InsuranceRecord[];
+}
+
+export interface AdminInsuranceRequest extends Omit<
+  InsuranceRequest,
+  'lessons'
+> {
+  instructorId: string;
+  instructorName: string | null;
+  instructorNameZh: string | null;
+  instructorEmail: string | null;
+  paidNote: string | null;
+  paidBy: string | null;
+  voidedAt: string | null;
+  voidedReason: string | null;
+  voidedBy: string | null;
+  voidedFromStatus: Exclude<PaymentStatus, 'voided'> | null;
+  createdBy: string | null;
+  updatedAt: string;
+  lessons: AdminInsuranceRecord[];
 }
 
 export interface InsuranceTotals {
@@ -84,6 +120,8 @@ export function toAdminRecord(
 ): AdminInsuranceRecord {
   return {
     ...toRecord(row),
+    requestId: row.request_id,
+    requestNo: row.request?.request_no ?? null,
     instructorId: row.instructor_id,
     instructorName: row.instructor?.display_name_en ?? null,
     instructorNameZh: row.instructor?.display_name_zh ?? null,
@@ -127,5 +165,67 @@ export function byLessonDateDesc(
     sortDate(b).localeCompare(sortDate(a)) ||
     Date.parse(b.created_at) - Date.parse(a.created_at) ||
     b.record_no.localeCompare(a.record_no)
+  );
+}
+
+function inEnteredOrder(
+  lessons: readonly InsuranceRecordRow[],
+): InsuranceRecordRow[] {
+  return [...lessons].sort((a, b) => a.record_no.localeCompare(b.record_no));
+}
+
+export function toRequest(row: InsuranceRequestRow): InsuranceRequest {
+  const lessons = inEnteredOrder(row.lessons);
+  return {
+    id: row.id,
+    requestNo: row.request_no,
+    seasonKey: row.season_key,
+    paymentStatus: row.payment_status,
+    totalCents: row.total_cents,
+    lessonCount: row.lesson_count,
+    studentCount: lessons.reduce(
+      (total, lesson) => total + (lesson.student_count ?? 0),
+      0,
+    ),
+    createdAt: row.created_at,
+    paidOn: row.paid_on,
+    lessons: lessons.map(toRecord),
+  };
+}
+
+export function toAdminRequest(
+  row: AdminInsuranceRequestRow,
+): AdminInsuranceRequest {
+  return {
+    ...toRequest(row),
+    instructorId: row.instructor_id,
+    instructorName: row.instructor?.display_name_en ?? null,
+    instructorNameZh: row.instructor?.display_name_zh ?? null,
+    instructorEmail: row.instructor?.email ?? null,
+    paidNote: row.paid_note,
+    paidBy: row.paid_by,
+    voidedAt: row.voided_at,
+    voidedReason: row.voided_reason,
+    voidedBy: row.voided_by,
+    voidedFromStatus: row.voided_from_status,
+    createdBy: row.created_by,
+    updatedAt: row.updated_at,
+    lessons: inEnteredOrder(row.lessons).map((lesson) =>
+      toAdminRecord({
+        ...lesson,
+        instructor: row.instructor,
+        request: { request_no: row.request_no },
+      }),
+    ),
+  };
+}
+
+export function byCreatedDesc(
+  a: InsuranceRequestRow,
+  b: InsuranceRequestRow,
+): number {
+  return (
+    Date.parse(b.created_at) - Date.parse(a.created_at) ||
+    b.request_no.localeCompare(a.request_no)
   );
 }

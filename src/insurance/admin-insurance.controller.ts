@@ -18,6 +18,7 @@ import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
   type AdminInsuranceRecordPage,
+  type AdminInsuranceRequestPage,
   AdminInsuranceService,
   type InstructorInsuranceSummary,
 } from './admin-insurance.service';
@@ -28,7 +29,10 @@ import {
   MarkPaidDto,
   VoidRecordDto,
 } from './dto/insurance.dto';
-import type { AdminInsuranceRecord } from './insurance.presenters';
+import type {
+  AdminInsuranceRecord,
+  AdminInsuranceRequest,
+} from './insurance.presenters';
 
 const uuid = () => new ParseUUIDPipe();
 
@@ -50,6 +54,45 @@ export class AdminInsuranceController {
     @Query() query: AdminInsuranceRecordsQueryDto,
   ): Promise<AdminInsuranceRecordPage> {
     return this.insurance.records(query);
+  }
+
+  @Get('requests')
+  requests(
+    @Query() query: AdminInsuranceRecordsQueryDto,
+  ): Promise<AdminInsuranceRequestPage> {
+    return this.insurance.requests(query);
+  }
+
+  @Post('requests/:id/mark-paid')
+  @HttpCode(HttpStatus.OK)
+  markRequestPaid(
+    @Param('id', uuid()) id: string,
+    @Body() dto: MarkPaidDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminInsuranceRequest> {
+    return this.insurance.markRequestPaid(id, dto, toActor(user, userAgent));
+  }
+
+  @Post('requests/:id/mark-unpaid')
+  @HttpCode(HttpStatus.OK)
+  markRequestUnpaid(
+    @Param('id', uuid()) id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminInsuranceRequest> {
+    return this.insurance.markRequestUnpaid(id, toActor(user, userAgent));
+  }
+
+  @Post('requests/:id/void')
+  @HttpCode(HttpStatus.OK)
+  voidRequest(
+    @Param('id', uuid()) id: string,
+    @Body() dto: VoidRecordDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AdminInsuranceRequest> {
+    return this.insurance.voidRequest(id, dto.reason, toActor(user, userAgent));
   }
 
   @Post('instructors/:instructorId/season-pass')

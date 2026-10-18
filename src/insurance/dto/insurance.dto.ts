@@ -22,6 +22,7 @@ import { SEASON_KEY } from '../../seasons/dto/season.dto';
 import type { PaymentStatus } from '../lesson-insurance.repository';
 
 export const MAX_STUDENTS = 50;
+export const MAX_REQUEST_LESSONS = 10;
 export const INSURANCE_LIST_DEFAULT_LIMIT = 50;
 export const PAYMENT_STATUSES: PaymentStatus[] = [
   'unpaid',
@@ -81,6 +82,43 @@ export class RegisterLessonDto {
   @IsOptional()
   @IsBoolean()
   topUp?: boolean;
+
+  @IsUUID('all')
+  idempotencyKey!: string;
+}
+
+export class RequestLessonDto {
+  @Matches(DATE_ONLY, { message: DATE_MESSAGE })
+  @IsISO8601({ strict: true })
+  lessonDate!: string;
+
+  @IsIn([1, 2])
+  durationHours!: 1 | 2;
+
+  @IsOptional()
+  @IsUUID('all')
+  locationId?: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(200)
+  locationOther?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(MAX_STUDENTS)
+  @ValidateNested({ each: true })
+  @Type(() => InsuranceStudentDto)
+  students!: InsuranceStudentDto[];
+}
+
+export class SubmitInsuranceRequestDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => RequestLessonDto)
+  lessons!: RequestLessonDto[];
 
   @IsUUID('all')
   idempotencyKey!: string;

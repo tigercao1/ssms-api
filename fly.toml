@@ -32,6 +32,7 @@ primary_region = 'iad'
     type = "http"
     port = 3000
     path = "/health"
+    processes = ["app", "worker"]
     interval = "30s"
     timeout = "5s"
     # /health makes live calls to Supabase (DB count + JWKS fetch), so allow

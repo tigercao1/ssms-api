@@ -170,7 +170,13 @@ export interface RequestTransitionInput {
 }
 
 export type RequestTransitionOutcome =
-  | { outcome: 'updated' | 'conflict'; from: PaymentStatus }
+  | {
+      outcome: 'updated';
+      from: PaymentStatus;
+      to: PaymentStatus;
+      request: AdminInsuranceRequestRow;
+    }
+  | { outcome: 'conflict'; from: PaymentStatus }
   | { outcome: 'not_found' };
 
 export interface GrantSeasonPassInput {

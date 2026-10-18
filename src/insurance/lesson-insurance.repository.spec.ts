@@ -309,7 +309,12 @@ describe('SupabaseLessonInsuranceRepository', () => {
   it('transitions a request through one plpgsql call', async () => {
     const { client, calls } = recordingPayrollSupabase({
       'rpc:lesson_insurance_request_transition': [
-        ok({ outcome: 'updated', from: 'unpaid' }),
+        ok({
+          outcome: 'updated',
+          from: 'unpaid',
+          to: 'paid',
+          request: { id: ID },
+        }),
         ok(null),
         fail,
       ],
@@ -326,6 +331,8 @@ describe('SupabaseLessonInsuranceRepository', () => {
     await expect(repo.transitionRequest(input)).resolves.toEqual({
       outcome: 'updated',
       from: 'unpaid',
+      to: 'paid',
+      request: { id: ID },
     });
     expect(calls[0].ops).toEqual([
       [

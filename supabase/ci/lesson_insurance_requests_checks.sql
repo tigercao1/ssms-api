@@ -216,6 +216,18 @@ begin
      or req.paid_note <> 'e-transfer' or req.paid_by <> admin_id then
     raise exception 'mark_paid should mark the request paid: % %', r, req;
   end if;
+  if coalesce(r ->> 'from' <> 'unpaid' or r ->> 'to' <> 'paid'
+     or r -> 'request' ->> 'id' <> req_id::text or r -> 'request' ->> 'payment_status' <> 'paid'
+     or r -> 'request' ->> 'paid_on' <> '2026-10-15' or r -> 'request' ? 'idempotency_key'
+     or r -> 'request' -> 'instructor' ->> 'email' <> 'ci-req-b@example.com'
+     or jsonb_array_length(r -> 'request' -> 'lessons') <> 2
+     or (select array_agg(l ->> 'payment_status') from jsonb_array_elements(r -> 'request' -> 'lessons') l)
+        <> array['paid', 'not_required']
+     or r -> 'request' -> 'lessons' -> 0 ? 'idempotency_key'
+     or not (r -> 'request' -> 'lessons' -> 0 ? 'location')
+     or (r -> 'request' -> 'lessons' -> 0 ->> 'request_id') <> req_id::text, true) then
+    raise exception 'mark_paid should return the updated request with its lessons: %', r;
+  end if;
   if (select array_agg(payment_status || ':' || coalesce(paid_on::text, '-') order by record_no)
         from lesson_insurance_records where request_id = req_id)
      <> array['paid:2026-10-15', 'not_required:-'] then
@@ -236,6 +248,11 @@ begin
   perform public.lesson_insurance_request_transition(req_id, 'mark_paid', admin_id, '2026-10-16', null, null);
 
   r := public.lesson_insurance_request_transition(req_id, 'void', admin_id, null, null, 'duplicate');
+  if coalesce(r ->> 'from' <> 'paid' or r ->> 'to' <> 'voided' or r -> 'request' ->> 'voided_from_status' <> 'paid'
+     or (select array_agg(l ->> 'payment_status') from jsonb_array_elements(r -> 'request' -> 'lessons') l)
+        <> array['voided', 'voided'], true) then
+    raise exception 'void should return the voided request with its lessons: %', r;
+  end if;
   select * into req from lesson_insurance_requests where id = req_id;
   if r ->> 'outcome' <> 'updated' or req.payment_status <> 'voided' or req.voided_from_status <> 'paid'
      or req.voided_reason <> 'duplicate' or req.voided_by <> admin_id or req.paid_on <> '2026-10-16' then
@@ -340,6 +357,13 @@ rollback;
 
 create extension if not exists dblink;
 
+insert into seasons (key, starts_on, ends_on) values ('2027/28', '2027-11-01', '2028-04-30');
+
+create function pg_temp.counter_now() returns int language sql as $$
+  select coalesce((select last_no from lesson_insurance_record_counters
+                    where day = (now() at time zone 'America/Toronto')::date), 0);
+$$;
+
 insert into auth.users (id, email) values
   ('11111111-1111-4111-8111-1111111111b3', 'ci-req-c@example.com');
 insert into instructors (id, auth_user_id, email, display_name_en) values
@@ -420,9 +444,114 @@ begin
 end
 $$;
 
+do $$
+declare
+  c constant uuid := '22222222-2222-4222-8222-2222222222b3';
+  k uuid := gen_random_uuid();
+  conn text := 'dbname=' || current_database()
+    || ' user=' || current_user
+    || ' port=' || current_setting('port')
+    || ' host=' || split_part(current_setting('unix_socket_directories'), ',', 1);
+  lesson text := '[{"lessonDate": "%s", "durationHours": 1, "students": [{"name": "A", "waiverConfirmed": true}]}]';
+  call_one text := format('select public.lesson_insurance_submit_request(%L, null, %L::jsonb, %L, null)::text',
+    c, format(lesson, '2027-01-11'), k);
+  call_two text := format('select public.lesson_insurance_submit_request(%L, null, %L::jsonb, %L, null)::text',
+    c, format(lesson, '2027-12-11'), k);
+  first jsonb;
+  second jsonb;
+  requests_before int := (select count(*) from lesson_insurance_requests where instructor_id = c);
+  records_before int := (select count(*) from lesson_insurance_records where instructor_id = c);
+  counter_before int;
+begin
+  perform dblink_connect('key_one', conn);
+  perform dblink_connect('key_two', conn);
+  perform dblink_exec('key_one', 'begin');
+  select r::jsonb into first from dblink('key_one', call_one) as t(r text);
+  counter_before := (select last_no from dblink('key_one',
+    'select last_no from lesson_insurance_record_counters where day = (now() at time zone ''America/Toronto'')::date')
+    as t(last_no int));
+  perform dblink_send_query('key_two', call_two);
+  perform pg_sleep(0.5);
+  if dblink_is_busy('key_two') <> 1 then
+    raise exception 'a same-key submit in another season did not wait for the first';
+  end if;
+  perform dblink_exec('key_one', 'commit');
+  select r::jsonb into second from dblink_get_result('key_two') as t(r text);
+  perform dblink_disconnect('key_one');
+  perform dblink_disconnect('key_two');
+
+  if coalesce(first ->> 'outcome' <> 'created' or second ->> 'outcome' <> 'existing' or first ->> 'id' <> second ->> 'id', true) then
+    raise exception 'same-key submits in two seasons should give created then the original: % %', first, second;
+  end if;
+  if coalesce((select count(*) from lesson_insurance_requests where instructor_id = c) <> requests_before + 1
+     or (select count(*) from lesson_insurance_records where instructor_id = c) <> records_before + 1
+     or (select season_key from lesson_insurance_requests where id = (first ->> 'id')::uuid) <> '2026/27', true) then
+    raise exception 'same-key submits in two seasons left extra rows behind';
+  end if;
+  if coalesce(pg_temp.counter_now() <> counter_before, true) then
+    raise exception 'the repeated same-key submit used a number';
+  end if;
+end
+$$;
+
+do $$
+declare
+  c constant uuid := '22222222-2222-4222-8222-2222222222b3';
+  admin_id constant uuid := '11111111-1111-4111-8111-1111111111b3';
+  req_id uuid;
+  conn text := 'dbname=' || current_database()
+    || ' user=' || current_user
+    || ' port=' || current_setting('port')
+    || ' host=' || split_part(current_setting('unix_socket_directories'), ',', 1);
+  first jsonb;
+  second jsonb;
+begin
+  perform dblink_connect('move_one', conn);
+  perform dblink_connect('move_two', conn);
+  select (r::jsonb ->> 'id')::uuid into req_id from dblink('move_one', format(
+    'select public.lesson_insurance_submit_request(%L, null, %L::jsonb, gen_random_uuid(), null)::text', c,
+    '[{"lessonDate": "2027-12-12", "durationHours": 1, "students": [{"name": "A", "waiverConfirmed": true}]},
+      {"lessonDate": "2027-12-13", "durationHours": 2, "students": [{"name": "A", "waiverConfirmed": true}]}]'))
+    as t(r text);
+  perform dblink_exec('move_one', 'begin');
+  select r::jsonb into first from dblink('move_one', format(
+    'select public.lesson_insurance_request_transition(%L, ''mark_paid'', %L, ''2026-10-15'', null, null)::text',
+    req_id, admin_id)) as t(r text);
+  perform dblink_send_query('move_two', format(
+    'select public.lesson_insurance_request_transition(%L, ''mark_unpaid'', %L, null, null, null)::text',
+    req_id, admin_id));
+  perform pg_sleep(0.5);
+  if dblink_is_busy('move_two') <> 1 then
+    raise exception 'a second transition did not wait for the first';
+  end if;
+  perform dblink_exec('move_one', 'commit');
+  select r::jsonb into second from dblink_get_result('move_two') as t(r text);
+  perform dblink_disconnect('move_one');
+  perform dblink_disconnect('move_two');
+
+  if coalesce(first ->> 'from' <> 'unpaid' or first ->> 'to' <> 'paid'
+     or first -> 'request' ->> 'payment_status' <> 'paid'
+     or first -> 'request' ->> 'paid_on' <> '2026-10-15'
+     or (select bool_and(l ->> 'payment_status' = 'paid') from jsonb_array_elements(first -> 'request' -> 'lessons') l)
+        is not true, true) then
+    raise exception 'the first transition should answer with its own result: %', first;
+  end if;
+  if coalesce(second ->> 'from' <> 'paid' or second ->> 'to' <> 'unpaid'
+     or second -> 'request' ->> 'payment_status' <> 'unpaid'
+     or (select bool_and(l ->> 'payment_status' = 'unpaid') from jsonb_array_elements(second -> 'request' -> 'lessons') l)
+        is not true, true) then
+    raise exception 'the second transition should start from the first result: %', second;
+  end if;
+  if (select payment_status from lesson_insurance_requests where id = req_id) <> 'unpaid' then
+    raise exception 'the request should end unpaid';
+  end if;
+end
+$$;
+
 delete from lesson_insurance_records where instructor_id = '22222222-2222-4222-8222-2222222222b3';
 delete from lesson_insurance_requests where instructor_id = '22222222-2222-4222-8222-2222222222b3';
 delete from instructors where id = '22222222-2222-4222-8222-2222222222b3';
 delete from auth.users where id = '11111111-1111-4111-8111-1111111111b3';
+delete from seasons where key = '2027/28';
 
 \echo 'Lesson insurance request checks passed.'

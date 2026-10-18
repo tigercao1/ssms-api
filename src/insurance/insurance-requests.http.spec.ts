@@ -26,21 +26,29 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AdminInsuranceController } from './admin-insurance.controller';
 import {
+  ALREADY_VOIDED,
+  type AdminInsuranceRecordPage,
   type AdminInsuranceRequestPage,
   AdminInsuranceService,
   type InstructorInsuranceSummary,
-  RECORD_IN_REQUEST,
+  MARK_PAID_NEEDS_UNPAID,
+  MARK_UNPAID_NEEDS_PAID,
+  RECORD_NOT_FOUND,
   REQUEST_ALREADY_VOIDED,
   REQUEST_MARK_PAID_NEEDS_UNPAID,
   REQUEST_MARK_UNPAID_NEEDS_PAID,
   REQUEST_NOT_FOUND,
 } from './admin-insurance.service';
 import type {
+  AdminInsuranceRecord,
   AdminInsuranceRequest,
   InsuranceRecord,
   InsuranceRequest,
 } from './insurance.presenters';
-import { LessonInsuranceRepository } from './lesson-insurance.repository';
+import {
+  LessonInsuranceRepository,
+  type RequestTransitionInput,
+} from './lesson-insurance.repository';
 import { MeInsuranceController } from './me-insurance.controller';
 import {
   INSURANCE_PENDING,
@@ -748,32 +756,250 @@ describe('insurance requests', () => {
       expect(ctx.audit.entries).toHaveLength(0);
     });
 
-    it('404s when the request disappears after the update', async () => {
-      const req = await created([lessonOf('2026-12-01', 1, 1)]);
-      jest.spyOn(ctx.repo, 'findRequest').mockResolvedValueOnce(null);
-      await admin(`${req.id}/mark-paid`).expect(404);
+    it('answers with its own transition even when another lands before the response', async () => {
+      const req = await created([
+        lessonOf('2026-12-01', 1, 1),
+        lessonOf('2026-12-02', 1, 2),
+      ]);
+      jest
+        .spyOn(ctx.repo, 'transitionRequest')
+        .mockImplementationOnce(async (input: RequestTransitionInput) => {
+          const first = await ctx.repo.transitionRequest(input);
+          await ctx.repo.transitionRequest({
+            requestId: req.id,
+            action: 'mark_unpaid',
+            actor: INSURANCE_ADMIN_ID,
+            paidOn: null,
+            note: null,
+            reason: null,
+          });
+          return first;
+        });
+      const res = await admin(`${req.id}/mark-paid`, {
+        paidOn: '2026-10-01',
+      }).expect(200);
+      const body = res.body as AdminInsuranceRequest;
+      expect(body.paymentStatus).toBe('paid');
+      expect(body.lessons.map((l) => l.paymentStatus)).toEqual([
+        'paid',
+        'paid',
+      ]);
+      expect(ctx.audit.entries.at(-1)).toMatchObject({
+        action: 'lesson_insurance_request.mark_paid',
+        metadata: { from: 'unpaid', to: 'paid', paidOn: '2026-10-01' },
+      });
+      expect(ctx.repo.requests.get(req.id)?.payment_status).toBe('unpaid');
     });
 
-    it('refuses record-level actions on a lesson that belongs to a request', async () => {
-      const req = await created([lessonOf('2026-12-01', 1, 1)]);
-      const lessonId = req.lessons[0].id;
-      for (const [path, body] of [
-        [`${lessonId}/mark-paid`, {}],
-        [`${lessonId}/mark-unpaid`, {}],
-        [`${lessonId}/void`, { reason: 'x' }],
-      ] as const) {
-        await http()
+    describe('record routes on a lesson in a request', () => {
+      const recordAction = (path: string, body: object) =>
+        http()
           .post(`/admin/insurance/records/${path}`)
           .set('Authorization', ADMIN_AUTH)
-          .send(body)
-          .expect(409, {
-            statusCode: 409,
-            code: 'part_of_request',
-            message: RECORD_IN_REQUEST,
-            requestId: req.id,
-          });
-      }
-      expect(ctx.repo.rows.get(lessonId)?.payment_status).toBe('unpaid');
+          .send(body);
+
+      it('marks the whole request paid and unpaid, answering with the selected record', async () => {
+        const req = await created([
+          lessonOf('2026-12-01', 1, 1, { locationId: HILL_ID }),
+          lessonOf('2026-12-02', 1, 2),
+        ]);
+        const [first, second] = req.lessons;
+        const paid = (
+          await recordAction(`${second.id}/mark-paid`, {
+            paidOn: '2026-10-02',
+            note: 'cash',
+          }).expect(200)
+        ).body as AdminInsuranceRecord;
+        expect(paid).toMatchObject({
+          id: second.id,
+          recordNo: second.recordNo,
+          kind: 'lesson',
+          paymentStatus: 'paid',
+          paidOn: '2026-10-02',
+          paidNote: 'cash',
+          paidBy: INSURANCE_ADMIN_ID,
+          instructorId: ADA_INSTRUCTOR,
+          instructorName: 'Ada Lovelace',
+          amountCents: 2000,
+        });
+        expect(Object.keys(paid).sort()).toEqual(
+          Object.keys(
+            (
+              (
+                await http()
+                  .get('/admin/insurance/records')
+                  .set('Authorization', ADMIN_AUTH)
+                  .expect(200)
+              ).body as AdminInsuranceRecordPage
+            ).records[0],
+          ).sort(),
+        );
+        expect(
+          [...ctx.repo.rows.values()]
+            .filter((r) => r.request_id === req.id)
+            .map((r) => r.payment_status),
+        ).toEqual(['paid', 'paid']);
+        expect(ctx.repo.requests.get(req.id)?.payment_status).toBe('paid');
+        expect(ctx.audit.entries).toEqual([
+          {
+            action: 'lesson_insurance_request.mark_paid',
+            actor: {
+              userId: INSURANCE_ADMIN_ID,
+              role: 'admin',
+              userAgent: null,
+            },
+            targetType: 'lesson_insurance_request',
+            targetId: req.id,
+            metadata: {
+              requestNo: req.requestNo,
+              instructorId: ADA_INSTRUCTOR,
+              seasonKey: '2026/27',
+              totalCents: 3000,
+              recordIds: [first.id, second.id],
+              from: 'unpaid',
+              to: 'paid',
+              paidOn: '2026-10-02',
+              note: 'cash',
+              recordId: second.id,
+              via: 'record_route',
+            },
+          },
+        ]);
+        await recordAction(`${first.id}/mark-paid`, {
+          paidOn: '2026-10-02',
+        }).expect(409, {
+          statusCode: 409,
+          message: MARK_PAID_NEEDS_UNPAID,
+          error: 'Conflict',
+        });
+
+        const unpaid = (
+          await recordAction(`${first.id}/mark-unpaid`, {}).expect(200)
+        ).body as AdminInsuranceRecord;
+        expect(unpaid).toMatchObject({
+          id: first.id,
+          paymentStatus: 'unpaid',
+          paidOn: null,
+          paidNote: null,
+          locationName: 'CI Hill',
+        });
+        expect(ctx.repo.requests.get(req.id)?.payment_status).toBe('unpaid');
+        expect(
+          [...ctx.repo.rows.values()]
+            .filter((r) => r.request_id === req.id)
+            .every((r) => r.payment_status === 'unpaid'),
+        ).toBe(true);
+        expect(ctx.audit.entries.at(-1)).toMatchObject({
+          action: 'lesson_insurance_request.mark_unpaid',
+          targetId: req.id,
+          metadata: {
+            from: 'paid',
+            to: 'unpaid',
+            recordId: first.id,
+            via: 'record_route',
+          },
+        });
+        await recordAction(`${first.id}/mark-unpaid`, {}).expect(409, {
+          statusCode: 409,
+          message: MARK_UNPAID_NEEDS_PAID,
+          error: 'Conflict',
+        });
+      });
+
+      it('voids the whole request from one lesson', async () => {
+        for (const day of ['01', '02', '03', '04']) {
+          await register(lessonOf(`2026-11-${day}`, 2, 4));
+        }
+        const req = await created([
+          lessonOf('2026-12-01', 2, 4),
+          lessonOf('2026-12-02', 1, 1),
+        ]);
+        const [, free] = req.lessons;
+        expect(free.paymentStatus).toBe('not_required');
+        await recordAction(`${free.id}/mark-paid`, {
+          paidOn: '2026-10-02',
+        }).expect(409, {
+          statusCode: 409,
+          message: MARK_PAID_NEEDS_UNPAID,
+          error: 'Conflict',
+        });
+        const res = await recordAction(`${free.id}/void`, {
+          reason: 'duplicate',
+        }).expect(200);
+        expect(res.body).toMatchObject({
+          id: free.id,
+          paymentStatus: 'voided',
+          voidedFromStatus: 'not_required',
+          voidedReason: 'duplicate',
+        });
+        expect(ctx.repo.requests.get(req.id)).toMatchObject({
+          payment_status: 'voided',
+          voided_from_status: 'unpaid',
+        });
+        expect(
+          [...ctx.repo.rows.values()]
+            .filter((r) => r.request_id === req.id)
+            .map((r) => [r.payment_status, r.voided_from_status]),
+        ).toEqual([
+          ['voided', 'unpaid'],
+          ['voided', 'not_required'],
+        ]);
+        expect(ctx.audit.entries.at(-1)).toMatchObject({
+          action: 'lesson_insurance_request.void',
+          targetType: 'lesson_insurance_request',
+          targetId: req.id,
+          metadata: {
+            from: 'unpaid',
+            to: 'voided',
+            reason: 'duplicate',
+            recordId: free.id,
+            via: 'record_route',
+          },
+        });
+        expect(await summaryRow()).toMatchObject({
+          owedCents: 32000,
+          unpaidCents: 32000,
+        });
+        await recordAction(`${req.lessons[0].id}/void`, {
+          reason: 'again',
+        }).expect(409, {
+          statusCode: 409,
+          message: ALREADY_VOIDED,
+          error: 'Conflict',
+        });
+      });
+
+      it('maps a request conflict to the record message and never touches one lesson alone', async () => {
+        const req = await created([lessonOf('2026-12-01', 1, 1)]);
+        const lessonId = req.lessons[0].id;
+        jest.spyOn(ctx.repo, 'transitionRequest').mockResolvedValueOnce({
+          outcome: 'conflict',
+          from: 'paid',
+        });
+        const update = jest.spyOn(ctx.repo, 'updateIfStatus');
+        await recordAction(`${lessonId}/mark-paid`, {
+          paidOn: '2026-10-02',
+        }).expect(409, {
+          statusCode: 409,
+          message: MARK_PAID_NEEDS_UNPAID,
+          error: 'Conflict',
+        });
+        jest.spyOn(ctx.repo, 'transitionRequest').mockResolvedValueOnce({
+          outcome: 'updated',
+          from: 'unpaid',
+          to: 'paid',
+          request: { ...(await ctx.repo.findRequest(req.id))!, lessons: [] },
+        });
+        await recordAction(`${lessonId}/mark-paid`, {
+          paidOn: '2026-10-02',
+        }).expect(404, {
+          statusCode: 404,
+          message: RECORD_NOT_FOUND,
+          error: 'Not Found',
+        });
+        expect(update).not.toHaveBeenCalled();
+        expect(ctx.repo.rows.get(lessonId)?.payment_status).toBe('unpaid');
+      });
     });
   });
 });

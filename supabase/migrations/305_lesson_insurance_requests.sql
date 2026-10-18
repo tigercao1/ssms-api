@@ -111,6 +111,11 @@ begin
     raise exception 'an insurance request needs an idempotency key' using errcode = '22023';
   end if;
 
+  perform pg_advisory_xact_lock(
+    hashtext('lesson_insurance_request_key'),
+    hashtext(p_instructor_id::text || '|' || p_idempotency_key::text)
+  );
+
   select id into v_existing from lesson_insurance_requests
    where instructor_id = p_instructor_id and idempotency_key = p_idempotency_key;
   if found then
@@ -155,12 +160,6 @@ begin
     hashtext('lesson_insurance'),
     hashtext(p_instructor_id::text || '|' || v_season)
   );
-
-  select id into v_existing from lesson_insurance_requests
-   where instructor_id = p_instructor_id and idempotency_key = p_idempotency_key;
-  if found then
-    return jsonb_build_object('outcome', 'existing', 'id', v_existing);
-  end if;
 
   v_day := (now() at time zone 'America/Toronto')::date;
   insert into lesson_insurance_record_counters as c (day, last_no)
@@ -228,6 +227,8 @@ set search_path = public
 as $$
 declare
   v_from text;
+  v_to text;
+  v_request jsonb;
 begin
   if p_action not in ('mark_paid', 'mark_unpaid', 'void') then
     raise exception 'unknown insurance request action %', p_action using errcode = '22023';
@@ -246,7 +247,8 @@ begin
     end if;
     update lesson_insurance_requests
        set payment_status = 'paid', paid_on = p_paid_on, paid_note = p_note, paid_by = p_actor
-     where id = p_request_id;
+     where id = p_request_id
+    returning payment_status into v_to;
     update lesson_insurance_records
        set payment_status = 'paid', paid_on = p_paid_on, paid_note = p_note, paid_by = p_actor
      where request_id = p_request_id and payment_status = 'unpaid';
@@ -256,7 +258,8 @@ begin
     end if;
     update lesson_insurance_requests
        set payment_status = 'unpaid', paid_on = null, paid_note = null, paid_by = null
-     where id = p_request_id;
+     where id = p_request_id
+    returning payment_status into v_to;
     update lesson_insurance_records
        set payment_status = 'unpaid', paid_on = null, paid_note = null, paid_by = null
      where request_id = p_request_id and payment_status = 'paid';
@@ -267,14 +270,39 @@ begin
     update lesson_insurance_requests
        set payment_status = 'voided', voided_at = now(), voided_reason = p_reason,
            voided_by = p_actor, voided_from_status = payment_status
-     where id = p_request_id;
+     where id = p_request_id
+    returning payment_status into v_to;
     update lesson_insurance_records
        set payment_status = 'voided', voided_at = now(), voided_reason = p_reason,
            voided_by = p_actor, voided_from_status = payment_status
      where request_id = p_request_id and payment_status <> 'voided';
   end if;
 
-  return jsonb_build_object('outcome', 'updated', 'from', v_from);
+  select (to_jsonb(q) - 'idempotency_key') || jsonb_build_object(
+           'lessons', coalesce((
+             select jsonb_agg(
+                      (to_jsonb(r) - 'idempotency_key')
+                      || jsonb_build_object(
+                           'location', case when l.id is null then null
+                                            else jsonb_build_object('name', l.name) end)
+                      order by r.record_no)
+               from lesson_insurance_records r
+               left join teaching_locations l on l.id = r.location_id
+              where r.request_id = q.id
+           ), '[]'::jsonb),
+           'instructor', (
+             select jsonb_build_object(
+                      'display_name_en', i.display_name_en,
+                      'display_name_zh', i.display_name_zh,
+                      'email', i.email)
+               from instructors i
+              where i.id = q.instructor_id
+           ))
+    into v_request
+    from lesson_insurance_requests q
+   where q.id = p_request_id;
+
+  return jsonb_build_object('outcome', 'updated', 'from', v_from, 'to', v_to, 'request', v_request);
 end;
 $$;
 

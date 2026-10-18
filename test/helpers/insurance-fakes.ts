@@ -570,7 +570,12 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
         }
       }
     }
-    return Promise.resolve({ outcome: 'updated', from });
+    return Promise.resolve({
+      outcome: 'updated',
+      from,
+      to: request.payment_status,
+      request: this.requestRow(request),
+    });
   }
 
   private restore<K, V>(target: Map<K, V>, snapshot: Map<K, V>): void {

@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { LEGACY_METAOBJECT_TYPE } from '../shopify/legacy-pairing/legacy-our-team';
+import type { LegacyEntryName } from '../shopify/legacy-pairing/name-matching';
 import { ShopifyAdminClient } from '../shopify/shopify-admin.client';
 import { assertNoUserErrors } from '../shopify/shopify-user-errors';
 import {
@@ -50,6 +52,21 @@ const ENTRY_BY_HANDLE = `
     }
   }
 `;
+
+const LEGACY_ROSTER = `
+  query SsmsLegacyRoster($type: String!, $first: Int!, $after: String) {
+    metaobjects(type: $type, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        handle
+        displayName
+        name: field(key: "name") { value }
+      }
+    }
+  }
+`;
+
+const LEGACY_ROSTER_PAGE_SIZE = 250;
 
 const UPSERT_ENTRY = `
   mutation SsmsInstructorUpsert(
@@ -163,6 +180,37 @@ export class ShopifyInstructorGateway {
     }>(ENTRY_BY_HANDLE, { handle: { type: SSMS_INSTRUCTOR_TYPE, handle } });
     const entry = data.metaobjectByHandle;
     return entry ? { id: entry.id, ssmsId: entry.ssmsId?.value ?? null } : null;
+  }
+
+  async listLegacyEntries(): Promise<LegacyEntryName[]> {
+    const entries: LegacyEntryName[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const data: {
+        metaobjects: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: {
+            handle: string;
+            displayName: string | null;
+            name: { value: string | null } | null;
+          }[];
+        };
+      } = await this.shopify.graphql(LEGACY_ROSTER, {
+        type: LEGACY_METAOBJECT_TYPE,
+        first: LEGACY_ROSTER_PAGE_SIZE,
+        after,
+      });
+      for (const node of data.metaobjects.nodes) {
+        entries.push({
+          handle: node.handle,
+          name: (node.name?.value ?? node.displayName ?? '').trim(),
+        });
+      }
+      if (!data.metaobjects.pageInfo.hasNextPage) {
+        return entries;
+      }
+      after = data.metaobjects.pageInfo.endCursor;
+    }
   }
 
   async upsertEntry(

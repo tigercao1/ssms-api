@@ -12,6 +12,7 @@ import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
 import type { InstructorSnapshot } from './instructor-sync.types';
+import { LegacyRoster, LegacyRosterUnavailableError } from './legacy-roster';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 import { ShopifyUserErrorsError } from '../shopify/shopify.errors';
 
@@ -20,19 +21,29 @@ const OTHER_ID = '9b8a7c6d-0000-4000-8000-000000000001';
 function setupGoLive(snapshot: InstructorSnapshot = readySnapshotOf()) {
   const repo = new InMemorySyncRepository();
   repo.snapshots.set(snapshot.instructor.id, snapshot);
-  const goLive = goLiveFor(repo);
-  goLive.subjects.uploads.push(verifiedUpload('csia', 'regular', 3));
   const shopify = new FakeShopify();
   const gateway = new ShopifyInstructorGateway(shopify.client);
+  const legacy = new LegacyRoster(gateway, repo);
+  const goLive = goLiveFor(repo, {}, legacy);
+  goLive.subjects.uploads.push(verifiedUpload('csia', 'regular', 3));
   const service = new InstructorSyncService(
     repo,
     gateway,
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
     goLive.service,
+    legacy,
   );
   const { subjects, templates, assignments } = goLive;
-  return { repo, shopify, service, subjects, templates, assignments };
+  return {
+    repo,
+    shopify,
+    service,
+    subjects,
+    templates,
+    assignments,
+    goLive: goLive.service,
+  };
 }
 
 function setup(snapshot: InstructorSnapshot | null = snapshotOf()) {
@@ -48,6 +59,7 @@ function setup(snapshot: InstructorSnapshot | null = snapshotOf()) {
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
     readyWhenVisible(repo),
+    new LegacyRoster(gateway, repo),
   );
   return { repo, shopify, service };
 }
@@ -311,6 +323,179 @@ describe('InstructorSyncService', () => {
       expect(shopify.entry('eddie-chen')?.fields).toMatchObject({
         type: '双板 | 单板',
         certification: 'Ski Trainer Level 1, CASI Level 2',
+      });
+    });
+  });
+
+  describe('legacy our_team guard', () => {
+    const ssmsOps = (shopify: FakeShopify) =>
+      shopify.operations().filter((op) => op.startsWith('SsmsInstructor'));
+
+    it('never claims a legacy handle, drafts included, for an unpaired instructor', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { display_name_en: 'Aaron' } }),
+      );
+      shopify.addLegacyEntry('aaron', 'Aaron Wu', 'DRAFT');
+      shopify.addLegacyEntry('aaron-2', 'Aaron Li');
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-3');
+      expect(shopify.entry('aaron-3')?.status).toBe('ACTIVE');
+      expect(shopify.entry('aaron')).toBeUndefined();
+    });
+
+    it('keeps a paired legacy handle and syncs it exactly as before', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { display_name_en: 'Aaron' } }),
+      );
+      shopify.addLegacyEntry('aaron', 'Aaron');
+      await repo.saveState(INSTRUCTOR_ID, { shopify_handle: 'aaron' });
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(shopify.entry('aaron')?.status).toBe('ACTIVE');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron');
+      expect(ssmsOps(shopify)).toEqual([
+        'SsmsInstructorByHandle',
+        'SsmsInstructorUpsert',
+        'SsmsInstructorTranslations',
+      ]);
+    });
+
+    it('claims nothing and fails the run when the legacy list cannot be fetched', async () => {
+      const { repo, shopify, service } = setup();
+      shopify.legacyRosterError = new Error('Throttled');
+
+      await expect(service.sync(INSTRUCTOR_ID)).rejects.toBeInstanceOf(
+        LegacyRosterUnavailableError,
+      );
+
+      expect(repo.states.size).toBe(0);
+      expect(ssmsOps(shopify)).toEqual([]);
+
+      shopify.legacyRosterError = undefined;
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('eddie-chen');
+    });
+
+    it('fetches the legacy list once per cache window', async () => {
+      const { shopify, service } = setup();
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      try {
+        await service.sync(INSTRUCTOR_ID);
+        await service.sync(INSTRUCTOR_ID);
+        now.mockReturnValue(1_000_000 + 5 * 60_000);
+        await service.sync(INSTRUCTOR_ID);
+      } finally {
+        now.mockRestore();
+      }
+      expect(
+        shopify.operations().filter((op) => op === 'SsmsLegacyRoster'),
+      ).toHaveLength(2);
+    });
+
+    it('holds an unpaired exact name match as DRAFT and explains why', async () => {
+      const { repo, shopify, service, goLive } = setupGoLive();
+      shopify.addLegacyEntry('eddie', 'Eddie Chen');
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('held');
+
+      expect(ssmsOps(shopify)).toEqual([]);
+      expect(repo.states.size).toBe(0);
+      await expect(goLive.status(INSTRUCTOR_ID)).resolves.toMatchObject({
+        live: false,
+        ready: true,
+        hold: {
+          reason: 'legacy_pairing_decision',
+          legacyHandle: 'eddie',
+          legacyName: 'Eddie Chen',
+          message: 'needs legacy pairing decision: eddie',
+        },
+      });
+    });
+
+    it('sets a live unpaired entry back to DRAFT once a legacy entry matches its Chinese name', async () => {
+      const { repo, shopify, service, goLive } = setupGoLive();
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      try {
+        await service.sync(INSTRUCTOR_ID);
+        shopify.addLegacyEntry('ai-di', '陈艾迪');
+        now.mockReturnValue(1_000_000 + 5 * 60_000);
+
+        await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('held');
+      } finally {
+        now.mockRestore();
+      }
+
+      expect(shopify.entry('eddie-chen')?.status).toBe('DRAFT');
+      expect(repo.states.get(INSTRUCTOR_ID)?.last_status).toBe('draft');
+      await expect(goLive.status(INSTRUCTOR_ID)).resolves.toMatchObject({
+        live: false,
+        hold: { legacyHandle: 'ai-di' },
+      });
+    });
+
+    it('publishes once the match is dismissed as a different person', async () => {
+      const { repo, shopify, service, goLive } = setupGoLive();
+      shopify.addLegacyEntry('eddie', 'Eddie Chen');
+      await service.sync(INSTRUCTOR_ID);
+      await repo.saveState(INSTRUCTOR_ID, {
+        dismissed_legacy_handles: ['eddie'],
+      });
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('eddie-chen');
+      expect(shopify.entry('eddie-chen')?.status).toBe('ACTIVE');
+      await expect(goLive.status(INSTRUCTOR_ID)).resolves.toMatchObject({
+        live: true,
+        hold: null,
+      });
+    });
+
+    it('does not hold for a legacy entry already paired with someone else', async () => {
+      const { repo, shopify, service } = setupGoLive();
+      shopify.addLegacyEntry('eddie', 'Eddie Chen');
+      await repo.saveState(OTHER_ID, { shopify_handle: 'eddie' });
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('eddie-chen');
+    });
+
+    it('does not hold for a near but inexact name', async () => {
+      const { shopify, service } = setupGoLive();
+      shopify.addLegacyEntry('eddie', 'Eddy Chen');
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+    });
+
+    it('never holds a paired instructor whose name also matches another legacy entry', async () => {
+      const { repo, shopify, service, goLive } = setupGoLive();
+      shopify.addLegacyEntry('eddie', 'Eddie');
+      shopify.addLegacyEntry('eddie-chen-old', 'Eddie Chen');
+      await repo.saveState(INSTRUCTOR_ID, { shopify_handle: 'eddie' });
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(shopify.entry('eddie')?.status).toBe('ACTIVE');
+      expect(ssmsOps(shopify)).toEqual([
+        'SsmsInstructorByHandle',
+        'SsmsInstructorUpsert',
+        'SsmsInstructorTranslations',
+      ]);
+      await expect(goLive.status(INSTRUCTOR_ID)).resolves.toMatchObject({
+        hold: null,
+      });
+    });
+
+    it('reports no hold rather than failing the status call when the legacy list is unavailable', async () => {
+      const { shopify, goLive } = setupGoLive();
+      shopify.legacyRosterError = new Error('Throttled');
+
+      await expect(goLive.status(INSTRUCTOR_ID)).resolves.toMatchObject({
+        ready: true,
+        hold: null,
       });
     });
   });

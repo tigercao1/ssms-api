@@ -10,6 +10,7 @@ import {
 } from '../../test/helpers/shopify-sync-fakes';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
+import { LegacyRoster } from './legacy-roster';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
 import {
   SETTINGS_CACHE_MS,
@@ -49,6 +50,7 @@ function setup(
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
     readyWhenVisible(repo),
+    new LegacyRoster(gateway, repo),
   );
   const config = { get: (key: string) => env[key] } as ConfigService;
   const worker = new ShopifySyncWorker(

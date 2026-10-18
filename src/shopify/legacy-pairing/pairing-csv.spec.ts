@@ -93,16 +93,30 @@ describe('parseCsv', () => {
 });
 
 describe('parsePairingCsv', () => {
-  it('returns only rows confirmed with y, in any case', () => {
-    const pairs = parsePairingCsv(
+  it('confirms y rows and dismisses n rows, in any case, skipping undecided ones', () => {
+    const decisions = parsePairingCsv(
       csv(
         `${ID1},Vincent,,xiao-li,小李 Vincent,0.70, Y `,
-        `${ID2},Zed,,zed,Zed,1.00,n`,
+        `${ID2},Zed,,zed,Zed,1.00, N`,
         `${ID2},Zed,,zed2,Zed,1.00,`,
+        `${ID2},Zed,,,,,n`,
       ),
     );
-    expect(pairs).toEqual([
-      { line: 2, instructorId: ID1, legacyHandle: 'xiao-li' },
+    expect(decisions).toEqual({
+      confirmed: [{ line: 2, instructorId: ID1, legacyHandle: 'xiao-li' }],
+      dismissed: [{ line: 3, instructorId: ID2, legacyHandle: 'zed' }],
+    });
+  });
+
+  it('rejects a dismissed row with a bad id', () => {
+    expect(problemsOf(csv(`not-a-uuid,,,zed,,,n`))).toEqual([
+      'line 2: instructor_id "not-a-uuid" is not a uuid',
+    ]);
+  });
+
+  it('refuses the same pair both confirmed and dismissed', () => {
+    expect(problemsOf(csv(`${ID1},,,zed,,,y`, `${ID1},,,zed,,,n`))).toEqual([
+      `instructor_id ${ID1} is both confirmed and dismissed for legacy_handle "zed" (lines 2, 3)`,
     ]);
   });
 
@@ -111,7 +125,7 @@ describe('parsePairingCsv', () => {
       'confirm,legacy_handle,instructor_id,ssms_name_en,ssms_name_zh,legacy_name,score',
       `y,xiao-li,${ID1},,,,`,
     ].join('\n');
-    expect(parsePairingCsv(text)).toEqual([
+    expect(parsePairingCsv(text).confirmed).toEqual([
       { line: 2, instructorId: ID1, legacyHandle: 'xiao-li' },
     ]);
   });

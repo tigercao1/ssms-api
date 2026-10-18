@@ -196,6 +196,7 @@ describe('/me/insurance', () => {
         unpaidCents: 0,
         coverage: 'none',
         records: [],
+        requests: [],
       });
     });
 
@@ -307,6 +308,7 @@ describe('/me/insurance', () => {
         unpaidCents: 0,
         coverage: 'none',
         records: [],
+        requests: [],
       });
     });
 

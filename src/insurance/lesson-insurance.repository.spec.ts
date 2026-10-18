@@ -3,9 +3,11 @@ import { DatabaseError } from '../database/db-result';
 import { PGRST_RANGE_NOT_SATISFIABLE } from '../database/pagination';
 import {
   ADMIN_INSURANCE_RECORD_COLUMNS,
+  ADMIN_INSURANCE_REQUEST_COLUMNS,
   INSURANCE_INSTRUCTOR_COLUMNS,
   INSURANCE_PAGE_SIZE,
   INSURANCE_RECORD_COLUMNS,
+  INSURANCE_REQUEST_COLUMNS,
   INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS,
   SupabaseLessonInsuranceRepository,
 } from './lesson-insurance.repository';
@@ -255,6 +257,170 @@ describe('SupabaseLessonInsuranceRepository', () => {
     await expect(
       repo.updateIfStatus(ID, 'unpaid', { payment_status: 'paid' }),
     ).rejects.toThrow('update insurance record');
+  });
+
+  it('submits a request through one plpgsql call and keeps its error code', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      'rpc:lesson_insurance_submit_request': [
+        ok({ outcome: 'created', id: ID }),
+        ok(null),
+        fail,
+      ],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    const input = {
+      instructorId: ID,
+      seasonKey: null,
+      lessons: [
+        {
+          lessonDate: '2026-12-01',
+          durationHours: 1,
+          locationId: null,
+          locationOther: null,
+          students: [{ name: 'Ada', waiverConfirmed: true }],
+        },
+      ],
+      idempotencyKey: KEY,
+      actor: 'auth-1',
+    };
+    await expect(repo.submitRequest(input)).resolves.toEqual({
+      outcome: 'created',
+      id: ID,
+    });
+    expect(calls[0].ops).toEqual([
+      [
+        'args',
+        {
+          p_instructor_id: ID,
+          p_season_key: null,
+          p_lessons: input.lessons,
+          p_idempotency_key: KEY,
+          p_actor: 'auth-1',
+        },
+      ],
+    ]);
+    await expect(repo.submitRequest(input)).rejects.toThrow('no result');
+    await expect(repo.submitRequest(input)).rejects.toMatchObject({
+      constructor: DatabaseError,
+      code: '23503',
+    });
+  });
+
+  it('transitions a request through one plpgsql call', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      'rpc:lesson_insurance_request_transition': [
+        ok({ outcome: 'updated', from: 'unpaid' }),
+        ok(null),
+        fail,
+      ],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    const input = {
+      requestId: ID,
+      action: 'mark_paid' as const,
+      actor: 'admin-1',
+      paidOn: '2026-10-15',
+      note: 'e-transfer',
+      reason: null,
+    };
+    await expect(repo.transitionRequest(input)).resolves.toEqual({
+      outcome: 'updated',
+      from: 'unpaid',
+    });
+    expect(calls[0].ops).toEqual([
+      [
+        'args',
+        {
+          p_request_id: ID,
+          p_action: 'mark_paid',
+          p_actor: 'admin-1',
+          p_paid_on: '2026-10-15',
+          p_note: 'e-transfer',
+          p_reason: null,
+        },
+      ],
+    ]);
+    await expect(repo.transitionRequest(input)).rejects.toThrow('no result');
+    await expect(repo.transitionRequest(input)).rejects.toThrow(
+      'update insurance request',
+    );
+  });
+
+  it('finds a request with its lessons and instructor', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      lesson_insurance_requests: [ok({ id: ID }), fail],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(repo.findRequest(ID)).resolves.toEqual({ id: ID });
+    expect(calls[0].ops).toEqual([
+      ['select', ADMIN_INSURANCE_REQUEST_COLUMNS],
+      ['eq', 'id', ID],
+      ['maybeSingle'],
+    ]);
+    expect(ADMIN_INSURANCE_REQUEST_COLUMNS).toContain(
+      'lessons:lesson_insurance_records!lesson_insurance_records_request_id_fkey(',
+    );
+    expect(ADMIN_INSURANCE_REQUEST_COLUMNS).toContain(
+      'instructor:instructors!lesson_insurance_requests_instructor_id_fkey(',
+    );
+    await expect(repo.findRequest(ID)).rejects.toThrow(
+      'load insurance request',
+    );
+  });
+
+  it('reads every page of an instructor season of requests, newest first', async () => {
+    const full = Array.from({ length: INSURANCE_PAGE_SIZE }, (_, i) => ({ i }));
+    const { client, calls } = recordingPayrollSupabase({
+      lesson_insurance_requests: [ok(full), ok([])],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(repo.requestsFor(ID, '2026/27')).resolves.toHaveLength(
+      INSURANCE_PAGE_SIZE,
+    );
+    expect(calls[0].ops).toEqual([
+      ['select', INSURANCE_REQUEST_COLUMNS, undefined],
+      ['eq', 'season_key', '2026/27'],
+      ['eq', 'instructor_id', ID],
+      ['order', 'created_at', { ascending: false }],
+      ['order', 'id', { ascending: false }],
+      ['range', 0, INSURANCE_PAGE_SIZE - 1],
+    ]);
+  });
+
+  it('lists a filtered page of requests with the total', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      lesson_insurance_requests: [
+        { data: [{ id: ID }], error: null, count: 3 },
+        {
+          data: null,
+          error: { message: 'range', code: PGRST_RANGE_NOT_SATISFIABLE },
+        },
+        { data: null, error: null, count: 3 },
+        fail,
+      ],
+    });
+    const repo = new SupabaseLessonInsuranceRepository(client);
+    await expect(
+      repo.listRequests(
+        { seasonKey: '2026/27', paymentStatus: 'unpaid' },
+        { limit: 10, offset: 0 },
+      ),
+    ).resolves.toEqual({ rows: [{ id: ID }], total: 3 });
+    expect(calls[0].ops).toEqual([
+      ['select', ADMIN_INSURANCE_REQUEST_COLUMNS, { count: 'exact' }],
+      ['eq', 'season_key', '2026/27'],
+      ['eq', 'payment_status', 'unpaid'],
+      ['order', 'created_at', { ascending: false }],
+      ['order', 'id', { ascending: false }],
+      ['range', 0, 9],
+    ]);
+    await expect(
+      repo.listRequests({ seasonKey: '2026/27' }, { limit: 10, offset: 50 }),
+    ).resolves.toEqual({ rows: [], total: 3 });
+    expect(calls[2].target).toBe('lesson_insurance_requests');
+    await expect(
+      repo.listRequests({ seasonKey: '2026/27' }, { limit: 10, offset: 0 }),
+    ).rejects.toThrow('list insurance requests');
   });
 
   it('fails loudly on read errors', async () => {

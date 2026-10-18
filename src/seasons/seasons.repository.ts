@@ -10,6 +10,7 @@ export const SEASON_REFERENCES: readonly { table: string; column: string }[] = [
   { table: 'document_assignments', column: 'season' },
   { table: 'instructor_invites', column: 'season' },
   { table: 'lesson_insurance_records', column: 'season_key' },
+  { table: 'lesson_insurance_requests', column: 'season_key' },
 ];
 
 export interface SeasonRow {

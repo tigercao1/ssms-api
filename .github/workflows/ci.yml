@@ -129,6 +129,9 @@ jobs:
       - name: Lesson insurance checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/lesson_insurance_checks.sql
 
+      - name: Lesson insurance request checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/lesson_insurance_requests_checks.sql
+
       - name: Daily reminders checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/daily_reminders_checks.sql
 

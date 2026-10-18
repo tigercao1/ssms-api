@@ -53,11 +53,17 @@ function lockFor(
     : { message: PENDING_APPROVAL, reason: PENDING_APPROVAL_REASON };
 }
 
+export function isDocumentItemDone(
+  item: Pick<DocumentChecklistItem, 'required' | 'status'>,
+): boolean {
+  return !item.required || item.status === 'completed';
+}
+
 export function isOnboardingComplete(items: readonly ChecklistItem[]): boolean {
   return items.every((item) =>
     item.type === 'certification'
       ? isCertificationSatisfied(item.state)
-      : !item.required || item.status === 'completed',
+      : isDocumentItemDone(item),
   );
 }
 
@@ -263,6 +269,12 @@ export class MeDocumentsService {
       ...documents,
       ...toCertificationItems(certifications, uploads, today, false),
     ]);
+  }
+
+  async onboardingDocuments(
+    instructorId: string,
+  ): Promise<DocumentChecklistItem[]> {
+    return (await this.currentDocuments(instructorId)).documents;
   }
 
   private async currentDocuments(

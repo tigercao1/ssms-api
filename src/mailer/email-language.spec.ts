@@ -1,4 +1,8 @@
-import { isEmailLanguage, resolveEmailLanguage } from './email-language';
+import {
+  isEmailLanguage,
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from './email-language';
 
 describe('resolveEmailLanguage', () => {
   it('uses the instructor preferred_language when it is supported', () => {
@@ -20,5 +24,30 @@ describe('isEmailLanguage', () => {
     expect(isEmailLanguage('bilingual')).toBe(true);
     expect(isEmailLanguage('zh')).toBe(false);
     expect(isEmailLanguage(undefined)).toBe(false);
+  });
+});
+
+describe('withPortalLanguage', () => {
+  it('adds lang for en and zh-CN, keeping the query and fragment', () => {
+    expect(withPortalLanguage('https://app.ssnow.club/login', 'en')).toBe(
+      'https://app.ssnow.club/login?lang=en',
+    );
+    expect(
+      withPortalLanguage('https://app.ssnow.club/activate?t=abc#top', 'zh-CN'),
+    ).toBe('https://app.ssnow.club/activate?t=abc&lang=zh-CN#top');
+  });
+
+  it('replaces an existing lang', () => {
+    expect(
+      withPortalLanguage('https://app.ssnow.club/login?lang=en', 'zh-CN'),
+    ).toBe('https://app.ssnow.club/login?lang=zh-CN');
+  });
+
+  it('leaves bilingual links and unparseable URLs unchanged', () => {
+    expect(
+      withPortalLanguage('https://app.ssnow.club/login?lang=en', 'bilingual'),
+    ).toBe('https://app.ssnow.club/login?lang=en');
+    expect(withPortalLanguage('', 'en')).toBe('');
+    expect(withPortalLanguage('/login', 'en')).toBe('/login');
   });
 });

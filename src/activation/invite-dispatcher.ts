@@ -1,4 +1,7 @@
-import { resolveEmailLanguage } from '../mailer/email-language';
+import {
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from '../mailer/email-language';
 import type { MailerService } from '../mailer/mailer.service';
 import type { SendMode, SendOutcome } from '../mailer/mailer.types';
 import type { InviteRecipient } from './activation.types';
@@ -68,14 +71,18 @@ export class InviteDispatcher {
     mode: SendMode,
     idempotencyKey: string | undefined,
   ): Promise<SendOutcome> {
+    const language = resolveEmailLanguage(invite.preferred_language);
     return this.mailer.send({
       template,
       to: invite.email,
-      language: resolveEmailLanguage(invite.preferred_language),
+      language,
       vars: {
         displayName: invite.display_name_en || undefined,
         season: invite.season,
-        activateUrl: this.mailer.portalLink(activationPath(issued.token)),
+        activateUrl: withPortalLanguage(
+          this.mailer.portalLink(activationPath(issued.token)),
+          language,
+        ),
         validDays: INVITE_VALID_DAYS,
       },
       mode,

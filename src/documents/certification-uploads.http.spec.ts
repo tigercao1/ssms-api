@@ -1081,7 +1081,7 @@ describe('certification uploads over HTTP', () => {
             track: 'regular',
             level: 2,
             reason: 'Blurry photo',
-            uploadUrl: `${FAKE_PORTAL_URL}/onboarding`,
+            uploadUrl: `${FAKE_PORTAL_URL}/onboarding?lang=zh-CN`,
           },
           mode: 'background',
           instructorId: ctx.instructor.id,
@@ -1103,7 +1103,22 @@ describe('certification uploads over HTTP', () => {
       await flushBackground();
       expect(ctx.mailer.sent[0]).toMatchObject({
         language: 'bilingual',
-        vars: { level: null, reason: null },
+        vars: {
+          level: null,
+          reason: null,
+          uploadUrl: `${FAKE_PORTAL_URL}/onboarding`,
+        },
+      });
+    });
+
+    it('links an en instructor to the re-upload page with lang=en', async () => {
+      ctx.subjects.instructors.get(ctx.instructor.id)!.preferred_language =
+        'en';
+      await reject().expect(200);
+      await flushBackground();
+      expect(ctx.mailer.sent[0]).toMatchObject({
+        language: 'en',
+        vars: { uploadUrl: `${FAKE_PORTAL_URL}/onboarding?lang=en` },
       });
     });
 

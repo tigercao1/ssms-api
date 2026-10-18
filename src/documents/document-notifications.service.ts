@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { resolveEmailLanguage } from '../mailer/email-language';
+import {
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type {
   EmailDocumentTitle,
@@ -118,7 +121,7 @@ export class DocumentNotificationsService {
         document: emailTitle(template),
         sha256,
         onboardingUrl: instructor
-          ? this.mailer.portalLink(ONBOARDING_PATH)
+          ? this.onboardingUrlFor(recipient.language)
           : null,
       },
       mode: 'background',
@@ -174,8 +177,17 @@ export class DocumentNotificationsService {
     return {
       displayName: instructor.display_name_en,
       documents: templates.map(emailTitle),
-      onboardingUrl: this.mailer.portalLink(ONBOARDING_PATH),
+      onboardingUrl: this.onboardingUrlFor(
+        resolveEmailLanguage(instructor.preferred_language),
+      ),
     };
+  }
+
+  private onboardingUrlFor(language: EmailLanguage): string {
+    return withPortalLanguage(
+      this.mailer.portalLink(ONBOARDING_PATH),
+      language,
+    );
   }
 }
 

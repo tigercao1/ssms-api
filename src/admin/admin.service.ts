@@ -19,7 +19,10 @@ import { AuditService } from '../audit/audit.service';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { pageOffset } from '../database/pagination';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
-import { resolveEmailLanguage } from '../mailer/email-language';
+import {
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type { EmailTemplateVars } from '../mailer/mailer.types';
 import { AdminRepository } from './admin.repository';
@@ -117,6 +120,13 @@ export class AdminService {
         authUserId: row.auth_user_id,
       })
       .catch(() => undefined);
+  }
+
+  private loginUrlFor(row: AdminInstructorRow): string {
+    return withPortalLanguage(
+      this.mailer.portalLink('/login'),
+      resolveEmailLanguage(row.preferred_language),
+    );
   }
 
   /** T6.3 — list every instructor, optionally narrowed by status / active. */
@@ -218,7 +228,7 @@ export class AdminService {
       });
       if (!assigned?.created) {
         this.notifyInstructor(updated, 'approved', {
-          loginUrl: this.mailer.portalLink('/login'),
+          loginUrl: this.loginUrlFor(updated),
         });
       }
     } else {
@@ -265,7 +275,7 @@ export class AdminService {
       this.notifyInstructor(updated, 'deactivated', {});
     } else if (isActive && !current.is_active) {
       this.notifyInstructor(updated, 'reactivated', {
-        loginUrl: this.mailer.portalLink('/login'),
+        loginUrl: this.loginUrlFor(updated),
       });
       if (updated.approval_status === 'approved') {
         await this.onboarding.assignPublished(id);

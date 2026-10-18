@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
-import { resolveEmailLanguage } from '../mailer/email-language';
+import {
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import { CERTIFICATION_REUPLOAD_PATH } from './certification-expiry.service';
 import {
@@ -198,17 +201,21 @@ export class AdminCertificationUploadsService {
     const level = certifications.find(
       (c) => c.org === row.org && c.track === row.track,
     )?.level;
+    const language = resolveEmailLanguage(instructor.preferred_language);
     void this.mailer.send({
       template: 'certification.rejected',
       to: instructor.email,
-      language: resolveEmailLanguage(instructor.preferred_language),
+      language,
       vars: {
         displayName: instructor.display_name_en || undefined,
         org: row.org,
         track: row.track,
         level: level ?? null,
         reason: row.review_note,
-        uploadUrl: this.mailer.portalLink(CERTIFICATION_REUPLOAD_PATH),
+        uploadUrl: withPortalLanguage(
+          this.mailer.portalLink(CERTIFICATION_REUPLOAD_PATH),
+          language,
+        ),
       },
       mode: 'background',
       instructorId: instructor.id,

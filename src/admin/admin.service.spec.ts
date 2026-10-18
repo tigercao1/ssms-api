@@ -215,7 +215,7 @@ describe('AdminService', () => {
           instructorId: '11111111-1111-4111-8111-111111111111',
           vars: expect.objectContaining({
             displayName: 'Jane',
-            loginUrl: 'https://portal.example.com/login',
+            loginUrl: 'https://portal.example.com/login?lang=en',
           }) as unknown,
         }),
       );
@@ -223,6 +223,33 @@ describe('AdminService', () => {
         approved: true,
       });
     });
+
+    it.each([
+      ['en', 'en', 'https://portal.example.com/login?lang=en'],
+      ['zh-CN', 'zh-CN', 'https://portal.example.com/login?lang=zh-CN'],
+      ['fr', 'bilingual', 'https://portal.example.com/login'],
+    ])(
+      'links a %s approval email (%s) to the login page in its language',
+      async (preferred, language, loginUrl) => {
+        repo.findInstructorById.mockResolvedValue(makeRow());
+        repo.updateInstructor.mockResolvedValue(
+          makeRow({
+            approval_status: 'approved',
+            preferred_language: preferred as 'en',
+          }),
+        );
+
+        await service.setApprovalStatus('id', 'approved');
+
+        expect(mailer.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            template: 'approved',
+            language,
+            vars: expect.objectContaining({ loginUrl }) as unknown,
+          }),
+        );
+      },
+    );
 
     it('skips the plain approval email when documents were assigned', async () => {
       repo.findInstructorById.mockResolvedValue(makeRow());
@@ -466,7 +493,7 @@ describe('AdminService', () => {
           language: 'zh-CN',
           mode: 'background',
           vars: expect.objectContaining({
-            loginUrl: 'https://portal.example.com/login',
+            loginUrl: 'https://portal.example.com/login?lang=zh-CN',
           }) as unknown,
         }),
       );

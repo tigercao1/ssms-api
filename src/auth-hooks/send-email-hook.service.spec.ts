@@ -309,6 +309,88 @@ describe('SendEmailHookService', () => {
       },
     );
 
+    describe.each([
+      ['signup', 'confirmUrl'],
+      ['recovery', 'resetUrl'],
+      ['magiclink', 'signInUrl'],
+      ['email_change', 'confirmUrl'],
+    ])('%s link', (type, urlVar) => {
+      const redirectTarget = (request: SendEmailRequest) => {
+        const verify = new URL(
+          (request.vars as Record<string, string>)[urlVar],
+        );
+        expect(verify.searchParams.has('lang')).toBe(false);
+        return new URL(verify.searchParams.get('redirect_to') as string);
+      };
+
+      it.each(['en', 'zh-CN'])(
+        'sends a %s user to the portal with that lang, keeping its query',
+        async (pref) => {
+          const { service, sent } = setup({
+            row: { id: 'instr-1', preferred_language: pref as 'en' },
+          });
+          await service.handle(
+            payload(
+              {
+                email_action_type: type,
+                redirect_to: `${REDIRECT}?next=%2Fonboarding`,
+                token_hash_new: '',
+              },
+              { new_email: 'lin.new@example.com' },
+            ),
+          );
+          const target = redirectTarget(sent()[0]);
+          expect(`${target.origin}${target.pathname}`).toBe(REDIRECT);
+          expect(target.searchParams.get('next')).toBe('/onboarding');
+          expect(target.searchParams.get('lang')).toBe(pref);
+        },
+      );
+
+      it('leaves the portal target without lang for a bilingual email', async () => {
+        const { service, sent } = setup({ row: null });
+        await service.handle(
+          payload(
+            { email_action_type: type, token_hash_new: '' },
+            { new_email: 'lin.new@example.com' },
+          ),
+        );
+        expect(sent()[0].language).toBe('bilingual');
+        expect(redirectTarget(sent()[0]).href).toBe(REDIRECT);
+      });
+    });
+
+    it('carries lang on both secure email_change links', async () => {
+      const { service, sent } = setup({
+        row: { id: 'instr-1', preferred_language: 'zh-CN' },
+      });
+      await service.handle(
+        payload(
+          {
+            email_action_type: 'email_change',
+            token_hash: 'hash-for-new-address',
+            token_hash_new: 'hash-for-current-address',
+          },
+          { new_email: 'lin.new@example.com' },
+        ),
+      );
+      expect(sent().map((r) => r.vars)).toEqual([
+        expect.objectContaining({
+          confirmUrl: link(
+            'hash-for-current-address',
+            'email_change',
+            `${REDIRECT}?lang=zh-CN`,
+          ),
+        }),
+        expect.objectContaining({
+          confirmUrl: link(
+            'hash-for-new-address',
+            'email_change',
+            `${REDIRECT}?lang=zh-CN`,
+          ),
+        }),
+      ]);
+    });
+
     it('is bilingual when the user has no instructor row', async () => {
       const { service, sent } = setup({ row: null });
       await service.handle(payload({ email_action_type: 'signup' }));

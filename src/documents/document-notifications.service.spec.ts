@@ -68,7 +68,7 @@ describe('DocumentNotificationsService', () => {
             },
             { titleEn: 'Safety policy', titleZh: null, kind: 'read' },
           ],
-          onboardingUrl: `${FAKE_PORTAL_URL}/onboarding`,
+          onboardingUrl: `${FAKE_PORTAL_URL}/onboarding?lang=zh-CN`,
           approved: false,
         },
         mode: 'background',
@@ -145,6 +145,37 @@ describe('DocumentNotificationsService', () => {
     expect(mailer.sent).toHaveLength(2);
   });
 
+  describe.each([
+    ['en', `${FAKE_PORTAL_URL}/onboarding?lang=en`],
+    ['zh-CN', `${FAKE_PORTAL_URL}/onboarding?lang=zh-CN`],
+    [null, `${FAKE_PORTAL_URL}/onboarding`],
+  ] as const)('a %s instructor', (preferred, onboardingUrl) => {
+    it('gets the assigned, reminder and signed-copy emails linking to onboarding in their language', async () => {
+      const { mailer, subjects, assignments, service, template } = setup();
+      const instructor = subjects.seedInstructor({
+        preferred_language: preferred,
+      });
+      const row = assignments.seed({
+        template_id: template.id,
+        subject_id: instructor.id,
+      });
+
+      await service.sendAssigned(instructor, [template], '2026/27');
+      await service.sendReminder(instructor, [row]);
+      await service.sendCompleted(row, template, PDF, SHA);
+
+      expect(mailer.sent.map((r) => [r.template, r.language, r.vars])).toEqual(
+        ['documents.assigned', 'documents.reminder', 'documents.completed'].map(
+          (name) => [
+            name,
+            preferred ?? 'bilingual',
+            expect.objectContaining({ onboardingUrl }) as unknown,
+          ],
+        ),
+      );
+    });
+  });
+
   describe('sendCompleted', () => {
     it('emails an instructor the signed PDF, the SHA-256 and a portal link', async () => {
       const { mailer, subjects, assignments, service, template } = setup();
@@ -175,7 +206,7 @@ describe('DocumentNotificationsService', () => {
               kind: 'sign',
             },
             sha256: SHA,
-            onboardingUrl: `${FAKE_PORTAL_URL}/onboarding`,
+            onboardingUrl: `${FAKE_PORTAL_URL}/onboarding?lang=zh-CN`,
           },
           mode: 'background',
           instructorId: instructor.id,

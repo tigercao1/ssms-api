@@ -34,6 +34,9 @@ await this.mailer.send({
   or `bilingual` when there is no instructor row (en block, divider, zh-CN
   block; subject `"<en> / <zh>"`). Chinese copy brands the club as SSnow; the
   footer keeps "Serendipity Snow Club" in both languages.
+- Portal links in instructor emails go through
+  `withPortalLanguage(url, language)`, which adds `lang=en` or `lang=zh-CN`
+  so the portal opens in the email's language. Bilingual emails get no `lang`.
 
 ## Attachments
 

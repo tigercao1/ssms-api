@@ -17,3 +17,15 @@ export function resolveEmailLanguage(
 export function isEmailLanguage(value: unknown): value is EmailLanguage {
   return EMAIL_LANGUAGES.includes(value as EmailLanguage);
 }
+
+export function withPortalLanguage(
+  url: string,
+  language: EmailLanguage,
+): string {
+  if (language === 'bilingual' || !URL.canParse(url)) {
+    return url;
+  }
+  const target = new URL(url);
+  target.searchParams.set('lang', language);
+  return target.toString();
+}

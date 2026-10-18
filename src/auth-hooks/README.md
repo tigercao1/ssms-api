@@ -46,7 +46,9 @@ Supabase's SMTP templates.
 Verify links are
 `${SUPABASE_URL}/auth/v1/verify?token=<hash>&type=<email_action_type>&redirect_to=<redirect_to>`.
 Link emails carry no one-time code. The language is the user's instructor
-`preferred_language`, or bilingual when they have no instructor row.
+`preferred_language`, or bilingual when they have no instructor row. For an
+`en` or `zh-CN` email the `redirect_to` target gets a matching `lang` query
+parameter; bilingual emails leave it unchanged.
 
 ## Configuration
 

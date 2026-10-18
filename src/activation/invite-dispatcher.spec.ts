@@ -70,7 +70,7 @@ describe('InviteDispatcher', () => {
       vars: {
         displayName: 'Jane',
         season: '2026/27',
-        activateUrl: `https://portal.test/activate?t=${token}`,
+        activateUrl: `https://portal.test/activate?t=${token}&lang=zh-CN`,
         validDays: 30,
       },
       mode: 'sync',
@@ -95,6 +95,42 @@ describe('InviteDispatcher', () => {
       mode: 'background',
     });
   });
+
+  describe.each(['invite.season', 'invite.reminder'] as const)(
+    '%s activation link',
+    (template) => {
+      it.each([
+        ['en', 'en'],
+        ['zh-CN', 'zh-CN'],
+      ] as const)('carries lang=%s for a %s email', async (preferred, lang) => {
+        const { invites, mailer, dispatcher } = setup();
+        await dispatcher.dispatch(
+          invite({ preferred_language: preferred }),
+          template,
+          'background',
+        );
+        const url = new URL(mailer.send.mock.calls[0][0].vars.activateUrl);
+        expect(url.searchParams.get('lang')).toBe(lang);
+        expect(hashInviteToken(url.searchParams.get('t') as string)).toBe(
+          (invites.setToken.mock.calls[0] as [string, string])[1],
+        );
+      });
+
+      it('has no lang for a bilingual email', async () => {
+        const { mailer, dispatcher } = setup();
+        await dispatcher.dispatch(
+          invite({ preferred_language: null }),
+          template,
+          'background',
+        );
+        const request = mailer.send.mock.calls[0][0];
+        expect(request.language).toBe('bilingual');
+        expect(new URL(request.vars.activateUrl).searchParams.has('lang')).toBe(
+          false,
+        );
+      });
+    },
+  );
 
   it('passes an idempotency key through to the mailer', async () => {
     const { mailer, dispatcher } = setup();

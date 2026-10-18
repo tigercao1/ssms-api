@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InstructorsRepository } from '../instructors/instructors.repository';
-import { resolveEmailLanguage } from '../mailer/email-language';
+import {
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import {
   EmailDeliveryError,
@@ -67,8 +70,8 @@ export class SendEmailHookService {
    */
   async handle(payload: SendEmailHookPayload): Promise<void> {
     const actionType = payload.email_data.email_action_type;
-    const emails = this.plan(payload);
     const recipient = await this.recipientFor(payload.user.id);
+    const emails = this.plan(payload, recipient.language);
     try {
       await Promise.all(
         emails.map((email) =>
@@ -93,13 +96,20 @@ export class SendEmailHookService {
     }
   }
 
-  /** The emails a payload maps to, before language is resolved. */
-  plan(payload: SendEmailHookPayload): PlannedEmail[] {
+  /** The emails a payload maps to, with portal links in `language`. */
+  plan(
+    payload: SendEmailHookPayload,
+    language: EmailLanguage = 'bilingual',
+  ): PlannedEmail[] {
     const { user, email_data: data } = payload;
     const to = user.email;
     const type = data.email_action_type;
-    const link = (tokenHash: string) =>
-      this.verifyLink(tokenHash, type, data.redirect_to);
+    const link = (tokenHash: string, linkLanguage = language) =>
+      this.verifyLink(
+        tokenHash,
+        type,
+        withPortalLanguage(data.redirect_to, linkLanguage),
+      );
 
     let emails: PlannedEmail[];
     switch (type) {
@@ -141,7 +151,7 @@ export class SendEmailHookService {
         ];
         break;
       case 'email_change':
-        emails = this.planEmailChange(payload);
+        emails = this.planEmailChange(payload, language);
         break;
       case 'reauthentication':
         if (data.token === '') {
@@ -215,7 +225,11 @@ export class SendEmailHookService {
             template: 'auth.generic',
             to,
             language: 'bilingual',
-            vars: { actionUrl: data.token_hash ? link(data.token_hash) : null },
+            vars: {
+              actionUrl: data.token_hash
+                ? link(data.token_hash, 'bilingual')
+                : null,
+            },
           },
         ];
     }
@@ -228,11 +242,18 @@ export class SendEmailHookService {
     return emails;
   }
 
-  private planEmailChange(payload: SendEmailHookPayload): PlannedEmail[] {
+  private planEmailChange(
+    payload: SendEmailHookPayload,
+    language: EmailLanguage,
+  ): PlannedEmail[] {
     const { user, email_data: data } = payload;
     const newEmail = user.new_email;
     const link = (tokenHash: string) =>
-      this.verifyLink(tokenHash, 'email_change', data.redirect_to);
+      this.verifyLink(
+        tokenHash,
+        'email_change',
+        withPortalLanguage(data.redirect_to, language),
+      );
 
     if (data.token_hash_new !== '' && data.token_hash !== '') {
       return [

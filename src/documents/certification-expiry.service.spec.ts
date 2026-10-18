@@ -75,7 +75,7 @@ describe('CertificationExpiryService.run', () => {
           track: 'regular',
           level: 2,
           validUntil: row.valid_until,
-          uploadUrl: 'https://portal.example.com/onboarding',
+          uploadUrl: 'https://portal.example.com/onboarding?lang=en',
         },
         mode: 'background',
         instructorId: instructor.id,
@@ -186,13 +186,33 @@ describe('CertificationExpiryService.run', () => {
     expect(sent).toEqual([]);
   });
 
-  it('uses the instructor’s language', async () => {
-    const { service, seed, sent, uploads, instructor } = setup();
-    uploads.languages.set(instructor.id, 'zh-CN');
-    seed({ valid_until: addDays(TODAY, 1) });
-    await service.run(TODAY, NOW);
-    expect(sent[0].language).toBe('zh-CN');
-  });
+  it.each([
+    ['en', 'en', 'https://portal.example.com/onboarding?lang=en'],
+    ['zh-CN', 'zh-CN', 'https://portal.example.com/onboarding?lang=zh-CN'],
+    ['fr', 'bilingual', 'https://portal.example.com/onboarding'],
+  ])(
+    'sends a %s instructor the expiring and expired emails in %s, linking to %s',
+    async (preferred, language, uploadUrl) => {
+      const { service, seed, sent, uploads, instructor } = setup();
+      uploads.languages.set(instructor.id, preferred);
+      seed({ valid_until: addDays(TODAY, 1) });
+      seed({ org: 'casi', track: 'park', valid_until: addDays(TODAY, -1) });
+      await service.run(TODAY, NOW);
+      expect(sent).toHaveLength(2);
+      expect(sent).toEqual(
+        expect.arrayContaining(
+          ['certification.expiring', 'certification.expired'].map(
+            (template) =>
+              expect.objectContaining({
+                template,
+                language,
+                vars: expect.objectContaining({ uploadUrl }) as unknown,
+              }) as unknown,
+          ),
+        ),
+      );
+    },
+  );
 
   it('releases the claim when the email is not sent so the next run retries', async () => {
     const { service, seed, sent, control, subjects } = setup('failed');

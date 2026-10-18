@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { resolveEmailLanguage } from '../mailer/email-language';
+import {
+  resolveEmailLanguage,
+  withPortalLanguage,
+} from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import {
   CertificationUploadsRepository,
@@ -161,20 +164,24 @@ export class CertificationExpiryService {
   }
 
   private send({ upload, instructor, stage, level }: DueReminder) {
+    const language = resolveEmailLanguage(instructor.preferred_language);
     return this.mailer.send({
       template:
         stage === 'expiring'
           ? 'certification.expiring'
           : 'certification.expired',
       to: instructor.email,
-      language: resolveEmailLanguage(instructor.preferred_language),
+      language,
       vars: {
         displayName: instructor.display_name_en || undefined,
         org: upload.org,
         track: upload.track,
         level,
         validUntil: upload.valid_until,
-        uploadUrl: this.mailer.portalLink(CERTIFICATION_REUPLOAD_PATH),
+        uploadUrl: withPortalLanguage(
+          this.mailer.portalLink(CERTIFICATION_REUPLOAD_PATH),
+          language,
+        ),
       },
       mode: 'background',
       instructorId: instructor.id,

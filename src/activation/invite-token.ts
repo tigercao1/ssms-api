@@ -25,7 +25,6 @@ export function issueInviteToken(now: Date = new Date()): IssuedInviteToken {
   };
 }
 
-/** The expiry a token issued at `issuedAt` gets. */
 export function inviteExpiryFor(issuedAt: Date): Date {
   return new Date(issuedAt.getTime() + INVITE_VALID_MS);
 }

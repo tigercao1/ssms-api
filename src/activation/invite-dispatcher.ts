@@ -39,10 +39,6 @@ export class InviteDispatcher {
     return this.send(invite, issued, template, mode, idempotencyKey);
   }
 
-  /**
-   * Re-sends the season invite with a fresh token, unless the current token
-   * was issued less than {@link RESEND_COOLDOWN_MS} ago.
-   */
   async resend(
     invite: InviteRecipient,
     now: Date = new Date(),

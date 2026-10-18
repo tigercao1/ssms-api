@@ -64,10 +64,6 @@ export abstract class InvitesRepository {
     tokenHash: string,
     expiresAt: Date,
   ): Promise<void>;
-  /**
-   * Atomically replaces the token only when the current one is unset or
-   * expires by `currentExpiresBy`; false when it was left alone.
-   */
   abstract replaceTokenIfExpiringBy(
     id: string,
     tokenHash: string,

@@ -1,4 +1,5 @@
 import { InternalServerErrorException } from '@nestjs/common';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseInvitesRepository } from './invites.repository';
 import { FakeSupabase } from './supabase-fake.test-util';
 
@@ -155,6 +156,88 @@ describe('SupabaseInvitesRepository', () => {
     ]);
   });
 
+  describe('replaceTokenIfExpiringBy', () => {
+    const CUTOFF = new Date('2026-11-10T03:59:00Z');
+    const NEW_EXPIRY = new Date('2026-11-10T04:00:00Z');
+
+    function tableWith(...rows: Row[]) {
+      const table = new InvitesTable(
+        rows.map((row) => ({ ...RECORD, token_hash: 'old', ...row })),
+      );
+      return { table, repo: new SupabaseInvitesRepository(table.asClient()) };
+    }
+
+    it.each([
+      ['has never been issued', null],
+      ['was issued before the cutoff', '2026-11-10T03:58:59.000Z'],
+      ['was issued exactly at the cutoff', CUTOFF.toISOString()],
+    ])(
+      'replaces the token when the current one %s',
+      async (_label, expiresAt) => {
+        const { table, repo } = tableWith({ expires_at: expiresAt });
+
+        expect(
+          await repo.replaceTokenIfExpiringBy(
+            'inv-1',
+            'new',
+            NEW_EXPIRY,
+            CUTOFF,
+          ),
+        ).toBe(true);
+        expect(table.row('inv-1')).toMatchObject({
+          token_hash: 'new',
+          expires_at: NEW_EXPIRY.toISOString(),
+        });
+      },
+    );
+
+    it('keeps the current token when it was issued after the cutoff', async () => {
+      const recent = '2026-11-10T03:59:30.000Z';
+      const { table, repo } = tableWith({ expires_at: recent });
+
+      expect(
+        await repo.replaceTokenIfExpiringBy('inv-1', 'new', NEW_EXPIRY, CUTOFF),
+      ).toBe(false);
+      expect(table.row('inv-1')).toMatchObject({
+        token_hash: 'old',
+        expires_at: recent,
+      });
+    });
+
+    it('lets only the first of two back-to-back replacements win', async () => {
+      const { table, repo } = tableWith({ expires_at: null });
+
+      expect(
+        await repo.replaceTokenIfExpiringBy(
+          'inv-1',
+          'first',
+          NEW_EXPIRY,
+          CUTOFF,
+        ),
+      ).toBe(true);
+      expect(
+        await repo.replaceTokenIfExpiringBy(
+          'inv-1',
+          'second',
+          NEW_EXPIRY,
+          CUTOFF,
+        ),
+      ).toBe(false);
+      expect(table.row('inv-1')?.token_hash).toBe('first');
+    });
+
+    it('leaves other invites alone', async () => {
+      const { table, repo } = tableWith(
+        { id: 'inv-1', expires_at: null },
+        { id: 'inv-2', expires_at: null },
+      );
+
+      await repo.replaceTokenIfExpiringBy('inv-1', 'new', NEW_EXPIRY, CUTOFF);
+
+      expect(table.row('inv-2')?.token_hash).toBe('old');
+    });
+  });
+
   it('releases only its own claim on an undelivered invite', async () => {
     const { db, repo } = setup();
     await repo.releaseClaim('inv-1', 'send', NOW);
@@ -270,6 +353,11 @@ describe('SupabaseInvitesRepository', () => {
     ['markSent', (r: SupabaseInvitesRepository) => r.markSent('i', NOW)],
     ['claim', (r: SupabaseInvitesRepository) => r.claim('i', 'send', NOW)],
     [
+      'replaceTokenIfExpiringBy',
+      (r: SupabaseInvitesRepository) =>
+        r.replaceTokenIfExpiringBy('i', 'h', NOW, NOW),
+    ],
+    [
       'releaseClaim',
       (r: SupabaseInvitesRepository) => r.releaseClaim('i', 'send', NOW),
     ],
@@ -301,3 +389,90 @@ describe('SupabaseInvitesRepository', () => {
     );
   });
 });
+
+type Row = Record<string, string | null>;
+
+function compare(
+  actual: string | null | undefined,
+  op: string,
+  expected: string,
+): boolean {
+  if (op === 'is') {
+    return expected === 'null' ? actual === null : actual === expected;
+  }
+  if (op === 'eq') return actual === expected;
+  if (actual === null || actual === undefined) return false;
+  const diff = Date.parse(actual) - Date.parse(expected);
+  switch (op) {
+    case 'lt':
+      return diff < 0;
+    case 'lte':
+      return diff <= 0;
+    case 'gt':
+      return diff > 0;
+    case 'gte':
+      return diff >= 0;
+    default:
+      throw new Error(`unsupported operator ${op}`);
+  }
+}
+
+function parseCondition(condition: string): (row: Row) => boolean {
+  const [column, op, ...rest] = condition.split('.');
+  const expected = rest.join('.');
+  return (row) => compare(row[column], op, expected);
+}
+
+class InvitesTable {
+  private readonly rows: Row[];
+
+  constructor(rows: Row[]) {
+    this.rows = rows.map((row) => ({ ...row }));
+  }
+
+  row(id: string): Row | undefined {
+    return this.rows.find((row) => row.id === id);
+  }
+
+  asClient(): SupabaseClient {
+    return { from: () => this.builder() } as unknown as SupabaseClient;
+  }
+
+  private builder() {
+    const filters: Array<(row: Row) => boolean> = [];
+    let patch: Row = {};
+    let columns: string[] = [];
+    const run = () => {
+      const matched = this.rows.filter((row) => filters.every((f) => f(row)));
+      for (const row of matched) Object.assign(row, patch);
+      const data = matched.map((row) =>
+        Object.fromEntries(columns.map((c) => [c, row[c]])),
+      );
+      return Promise.resolve({ data, error: null });
+    };
+    const builder = {
+      update(values: Row) {
+        patch = values;
+        return builder;
+      },
+      eq(column: string, value: unknown) {
+        filters.push((row) => row[column] === value);
+        return builder;
+      },
+      is(column: string, value: null) {
+        filters.push((row) => row[column] === value);
+        return builder;
+      },
+      or(conditions: string) {
+        const any = conditions.split(',').map(parseCondition);
+        filters.push((row) => any.some((match) => match(row)));
+        return builder;
+      },
+      select(list: string) {
+        columns = list.split(',').map((c) => c.trim());
+        return run();
+      },
+    };
+    return builder;
+  }
+}

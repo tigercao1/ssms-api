@@ -1,6 +1,7 @@
 import type { SendEmailRequest, SendOutcome } from '../mailer/mailer.types';
+import { InMemoryInvitesRepository } from '../../test/helpers/reminders-fakes';
 import { InviteDispatcher } from './invite-dispatcher';
-import { hashInviteToken } from './invite-token';
+import { hashInviteToken, inviteExpiryFor } from './invite-token';
 import type { InviteRecipient } from './activation.types';
 import type { InvitesRepository } from './invites.repository';
 
@@ -116,5 +117,70 @@ describe('InviteDispatcher', () => {
       dispatcher.dispatch(invite(), 'invite.season', 'sync'),
     ).rejects.toThrow('db');
     expect(mailer.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('InviteDispatcher.resend', () => {
+  function setup(lastIssuedAt: Date | null) {
+    const invites = new InMemoryInvitesRepository();
+    const row = invites.seed({
+      email: 'jane@example.test',
+      sent_at: '2026-10-01T00:00:00Z',
+      expires_at: lastIssuedAt
+        ? inviteExpiryFor(lastIssuedAt).toISOString()
+        : null,
+    });
+    const mailer = {
+      send: jest
+        .fn<Promise<SendOutcome>, [SendEmailRequest<'invite.season'>]>()
+        .mockResolvedValue('sent'),
+      portalLink: jest.fn((p: string) => `https://portal.test${p}`),
+    };
+    const dispatcher = new InviteDispatcher(invites, mailer);
+    return { invites, row, mailer, dispatcher };
+  }
+
+  const secondsAgo = (s: number) => new Date(NOW.getTime() - s * 1000);
+
+  it('emails a fresh link once the last one is a minute old', async () => {
+    const { invites, row, mailer, dispatcher } = setup(secondsAgo(60));
+    await expect(dispatcher.resend(row, NOW)).resolves.toBe('sent');
+
+    const request = mailer.send.mock.calls[0][0];
+    const token = new URL(request.vars.activateUrl).searchParams.get(
+      't',
+    ) as string;
+    const stored = invites.rows.get(row.id);
+    expect(stored?.token_hash).toBe(hashInviteToken(token));
+    expect(stored?.expires_at).toBe('2026-11-10T04:00:00.000Z');
+    expect(request).toMatchObject({
+      template: 'invite.season',
+      to: 'jane@example.test',
+      mode: 'background',
+      idempotencyKey: `invite-${row.id}-resend-2026-10-11T04:00:00.000Z`,
+    });
+  });
+
+  it('emails an invite whose link has never been issued', async () => {
+    const { row, mailer, dispatcher } = setup(null);
+    await expect(dispatcher.resend(row, NOW)).resolves.toBe('sent');
+    expect(mailer.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the link alone and sends nothing within a minute of the last one', async () => {
+    const { invites, row, mailer, dispatcher } = setup(secondsAgo(59));
+    await expect(dispatcher.resend(row, NOW)).resolves.toBe('cooling_down');
+    expect(mailer.send).not.toHaveBeenCalled();
+    expect(invites.rows.get(row.id)).toEqual(row);
+  });
+
+  it('sends one email for two simultaneous resends', async () => {
+    const { row, mailer, dispatcher } = setup(secondsAgo(3600));
+    const outcomes = await Promise.all([
+      dispatcher.resend(row, NOW),
+      dispatcher.resend(row, NOW),
+    ]);
+    expect(outcomes.sort()).toEqual(['cooling_down', 'sent']);
+    expect(mailer.send).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,6 +7,11 @@ import {
   InvitesRepository,
 } from '../../src/activation/invites.repository';
 import {
+  RESEND_COOLDOWN_SECONDS,
+  type ResendClaim,
+  ResendCooldownRepository,
+} from '../../src/activation/resend-cooldown.repository';
+import {
   type DailyReminderRunOutcome,
   DailyReminderRunsRepository,
 } from '../../src/reminders/daily-reminder-runs.repository';
@@ -116,6 +121,26 @@ export class InMemoryInvitesRepository extends InvitesRepository {
     return Promise.resolve();
   }
 
+  replaceTokenIfExpiringBy(
+    id: string,
+    tokenHash: string,
+    expiresAt: Date,
+    currentExpiresBy: Date,
+  ): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (
+      !row ||
+      (row.expires_at !== null && new Date(row.expires_at) > currentExpiresBy)
+    ) {
+      return Promise.resolve(false);
+    }
+    this.patch(id, {
+      token_hash: tokenHash,
+      expires_at: expiresAt.toISOString(),
+    });
+    return Promise.resolve(true);
+  }
+
   claim(id: string, kind: DeliveryKind, at: Date): Promise<boolean> {
     const { claimed, done } = COLUMNS[kind];
     const row = this.rows.get(id);
@@ -184,6 +209,34 @@ export class InMemoryInvitesRepository extends InvitesRepository {
     if (row) {
       this.rows.set(id, { ...row, ...patch });
     }
+  }
+}
+
+export class InMemoryResendCooldownRepository extends ResendCooldownRepository {
+  readonly lastRequestedAt = new Map<string, number>();
+
+  claim(emailHash: string): Promise<ResendClaim> {
+    const now = Date.now();
+    const remaining = this.remainingSeconds(emailHash, now);
+    if (remaining > 0) {
+      return Promise.resolve({ accepted: false, retryAfterSeconds: remaining });
+    }
+    this.lastRequestedAt.set(emailHash, now);
+    return Promise.resolve({
+      accepted: true,
+      retryAfterSeconds: RESEND_COOLDOWN_SECONDS,
+    });
+  }
+
+  retryAfterSeconds(emailHash: string): Promise<number> {
+    return Promise.resolve(this.remainingSeconds(emailHash, Date.now()));
+  }
+
+  private remainingSeconds(emailHash: string, now: number): number {
+    const last = this.lastRequestedAt.get(emailHash);
+    if (last === undefined) return 0;
+    const remainingMs = last + RESEND_COOLDOWN_SECONDS * 1000 - now;
+    return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
   }
 }
 

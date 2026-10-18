@@ -5,18 +5,30 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
-import type { InviteRow, RedeemedInvite } from './activation.types';
+import type {
+  InviteRow,
+  RedeemedInvite,
+  ResendAccepted,
+} from './activation.types';
 import { ActivationAuth } from './activation-auth';
 import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken, isInviteExpired } from './invite-token';
 import { InvitesRepository } from './invites.repository';
+import { ResendCooldownRepository } from './resend-cooldown.repository';
 
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 
 /** Lowercased, trimmed email: the form invites are stored and matched in. */
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+export function hashEmail(email: string): string {
+  return createHash('sha256')
+    .update(normalizeEmail(email), 'utf8')
+    .digest('hex');
 }
 
 /**
@@ -33,10 +45,12 @@ export class ActivationService {
     private readonly auth: ActivationAuth,
     private readonly dispatcher: InviteDispatcher,
     private readonly onboarding: DocumentOnboardingService,
+    private readonly cooldowns: ResendCooldownRepository,
   ) {}
 
   /**
-   * Unknown token → 404. Expired → 410 with `{ email }`. An invite whose auth
+   * Unknown token → 404. Expired → 410 with `{ email, retryAfterSeconds }`,
+   * the seconds until that email may request a new link. An invite whose auth
    * user's email has changed since it was issued is treated as unknown.
    * Otherwise returns a one-time magic-link token hash for the invite email
    * and stamps `redeemed_at` the first time.
@@ -50,7 +64,13 @@ export class ActivationService {
     }
     const now = new Date();
     if (isInviteExpired(invite.expires_at, now)) {
-      throw new HttpException({ email: invite.email }, HttpStatus.GONE);
+      throw new HttpException(
+        {
+          email: invite.email,
+          retryAfterSeconds: await this.resendRetryAfter(invite.email),
+        },
+        HttpStatus.GONE,
+      );
     }
     const currentEmail = await this.auth.findEmail(invite.auth_user_id);
     if (!currentEmail) {
@@ -70,8 +90,9 @@ export class ActivationService {
   }
 
   /**
-   * Emails a fresh invite link when a sent invite exists for `email` and it is
-   * either not activated yet or expired. Silent in every other case.
+   * Emails a fresh invite link when a sent invite exists for `email`, it is
+   * either not activated yet or expired, and its last link went out at least
+   * a minute ago. Silent in every other case.
    */
   async resend(email: string): Promise<void> {
     const invite = await this.invites.findLatestByEmail(normalizeEmail(email));
@@ -85,15 +106,22 @@ export class ActivationService {
     ) {
       return;
     }
-    const outcome = await this.dispatcher.dispatch(
-      invite,
-      'invite.season',
-      'background',
-      now,
-    );
-    if (outcome !== 'sent') {
+    const outcome = await this.dispatcher.resend(invite, now);
+    if (outcome === 'cooling_down') {
+      this.logger.log(
+        `Invite resend ${invite.id} skipped: the last link went out under a minute ago`,
+      );
+    } else if (outcome !== 'sent') {
       this.logger.warn(`Invite resend ${invite.id} was ${outcome}`);
     }
+  }
+
+  async requestResend(email: string): Promise<ResendAccepted> {
+    const claim = await this.cooldowns.claim(hashEmail(email));
+    if (claim.accepted) {
+      this.resendInBackground(email);
+    }
+    return { status: 'accepted', retryAfterSeconds: claim.retryAfterSeconds };
   }
 
   /** Runs {@link resend} without letting the caller observe its timing or errors. */
@@ -114,6 +142,17 @@ export class ActivationService {
   async complete(authUserId: string): Promise<void> {
     await this.invites.markActivated(authUserId, new Date());
     await this.assignOnboardingDocuments(authUserId);
+  }
+
+  private async resendRetryAfter(email: string): Promise<number> {
+    try {
+      return await this.cooldowns.retryAfterSeconds(hashEmail(email));
+    } catch (err) {
+      this.logger.error(
+        `Could not load the resend cooldown: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
+    }
   }
 
   private async assignOnboardingDocuments(authUserId: string): Promise<void> {

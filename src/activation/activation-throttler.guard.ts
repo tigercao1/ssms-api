@@ -1,14 +1,18 @@
 import {
   type CanActivate,
   type ExecutionContext,
+  HttpException,
+  HttpStatus,
   Injectable,
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import {
   ThrottlerGuard,
+  type ThrottlerLimitDetail,
   type ThrottlerModuleOptions,
   ThrottlerStorageService,
+  throttlerMessage,
 } from '@nestjs/throttler';
 
 export const IP_THROTTLER = 'ip';
@@ -48,6 +52,20 @@ export const ACTIVATION_THROTTLE_OPTIONS: ThrottlerModuleOptions = {
 class FlyClientIpThrottlerGuard extends ThrottlerGuard {
   protected getTracker(req: Record<string, any>): Promise<string> {
     return Promise.resolve(clientIp(req as TrackedRequest));
+  }
+
+  protected throwThrottlingException(
+    _context: ExecutionContext,
+    detail: ThrottlerLimitDetail,
+  ): Promise<void> {
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: throttlerMessage,
+        retryAfterSeconds: detail.timeToBlockExpire,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
   }
 }
 

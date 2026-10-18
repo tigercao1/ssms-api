@@ -12,6 +12,10 @@ import {
   SupabaseInvitesRepository,
 } from './invites.repository';
 import { MeActivationController } from './me-activation.controller';
+import {
+  ResendCooldownRepository,
+  SupabaseResendCooldownRepository,
+} from './resend-cooldown.repository';
 
 /**
  * Season instructor invites: public redeem/resend under `/activation` and the
@@ -26,6 +30,10 @@ import { MeActivationController } from './me-activation.controller';
     ActivationService,
     { provide: InvitesRepository, useClass: SupabaseInvitesRepository },
     { provide: ActivationAuth, useClass: SupabaseActivationAuth },
+    {
+      provide: ResendCooldownRepository,
+      useClass: SupabaseResendCooldownRepository,
+    },
     {
       provide: InviteDispatcher,
       inject: [InvitesRepository, MailerService],

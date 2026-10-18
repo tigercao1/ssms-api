@@ -24,7 +24,6 @@ export interface SyncInstructorRow {
   display_order: number | null;
   approval_status: string;
   is_active: boolean;
-  published_at: string | null;
 }
 
 export interface SyncCertRow {

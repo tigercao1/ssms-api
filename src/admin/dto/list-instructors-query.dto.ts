@@ -44,15 +44,6 @@ export class ListInstructorsQueryDto {
   calendarConnected?: boolean;
 
   @IsOptional()
-  @Transform(({ value }: { value: unknown }) => {
-    if (value === true || value === 'true') return true;
-    if (value === false || value === 'false') return false;
-    return value;
-  })
-  @IsBoolean()
-  published?: boolean;
-
-  @IsOptional()
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim() : value,
   )

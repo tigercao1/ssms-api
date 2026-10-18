@@ -108,9 +108,7 @@ describe('go-live HTTP', () => {
 
     it('lists what is missing: profile, certification and outstanding documents', async () => {
       ctx = await build(
-        readySnapshotOf({
-          instructor: { profile_photo_url: null, published_at: null },
-        }),
+        readySnapshotOf({ instructor: { profile_photo_url: null } }),
       );
       ctx.subjects.uploads[0].verified_level = 2;
       const agreement = ctx.templates.seed({
@@ -148,7 +146,6 @@ describe('go-live HTTP', () => {
             titleEn: 'Instructor agreement',
             titleZh: '教练协议',
           },
-          { group: 'review' },
         ],
         certifications: [
           {
@@ -159,19 +156,6 @@ describe('go-live HTTP', () => {
             validUntil: '2099-12-31',
           },
         ],
-      });
-    });
-
-    it('lists only the review when an otherwise ready instructor is not published', async () => {
-      ctx = await build(
-        readySnapshotOf({ instructor: { published_at: null } }),
-      );
-
-      expect(await mine()).toMatchObject({
-        live: false,
-        ready: false,
-        hold: null,
-        missing: [{ group: 'review' }],
       });
     });
 

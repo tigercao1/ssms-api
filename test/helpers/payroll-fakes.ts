@@ -135,10 +135,12 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     authUserId: string,
     instructorId: string,
     approvalStatus: ApprovalStatus,
+    isActive = true,
   ): void {
     this.instructorUsers.set(authUserId, {
       id: instructorId,
       approval_status: approvalStatus,
+      is_active: isActive,
     });
   }
 

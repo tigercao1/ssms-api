@@ -159,6 +159,45 @@ describe('GET /me/lessons', () => {
         ['2025-12-29', 'paid', 1],
       ]);
     });
+
+    it.each(['approved', 'pending', 'rejected'] as const)(
+      'shows a deactivated %s instructor their past periods and no upcoming lessons',
+      async (status) => {
+        ctx = await build(status);
+        ctx.repo.addInstructorUser(INSTRUCTOR_USER_ID, ADA_ID, status, false);
+        ctx.repo.addRate({ hourlyRate: 90, from: '2025-01-01' });
+        ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        ctx.repo.addClass({ startsAt: '2026-01-15T15:00:00Z' });
+        ctx.repo.addClass({ startsAt: '2026-02-05T15:00:00Z' });
+        await finalize('2025-12-29');
+        const body = await mine();
+        expect(body).toMatchObject({
+          locked: true,
+          lockReason: 'deactivated',
+          upcoming: { lessons: [], projected: [], needsRateCount: 0 },
+        });
+        expect(
+          body.periods.map((p) => [p.startsOn, p.status, p.lessons.length]),
+        ).toEqual([
+          ['2026-01-12', 'awaiting', 1],
+          ['2025-12-29', 'paid', 1],
+        ]);
+      },
+    );
+
+    it('keeps the deactivated lock ahead of onboarding', async () => {
+      ctx = await build();
+      ctx.repo.addInstructorUser(INSTRUCTOR_USER_ID, ADA_ID, 'approved', false);
+      ctx.assignments.seed({
+        template_id: ctx.templates.seed({}).id,
+        subject_id: ADA_ID,
+        status: 'assigned',
+      });
+      await expect(mine()).resolves.toMatchObject({
+        locked: true,
+        lockReason: 'deactivated',
+      });
+    });
   });
 
   describe('onboarding', () => {

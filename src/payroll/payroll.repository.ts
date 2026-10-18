@@ -31,7 +31,7 @@ export const PAYROLL_CLASS_COLUMNS = [
   'participants:class_participants(customer:customers(first_name, last_name))',
 ].join(', ');
 
-export const INSTRUCTOR_APPROVAL_COLUMNS = 'id, approval_status';
+export const INSTRUCTOR_APPROVAL_COLUMNS = 'id, approval_status, is_active';
 export const INSTRUCTOR_CLASS_COLUMNS = [
   'id, instructor_id, lesson_type_id, starts_at, ends_at, status',
   'lesson_type:lesson_types(name_en, name_zh)',
@@ -115,6 +115,7 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 export interface InstructorApprovalRow {
   id: string;
   approval_status: ApprovalStatus;
+  is_active: boolean;
 }
 
 export interface ParticipantEmbed {

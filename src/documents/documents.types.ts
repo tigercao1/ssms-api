@@ -451,8 +451,7 @@ export type ChecklistLockReason =
   | 'deactivated';
 
 export type OnboardingLockReason =
-  | 'pending_approval'
-  | 'rejected'
+  | ChecklistLockReason
   | 'onboarding_incomplete';
 
 /** `GET /me/documents`; while `locked`, `items` is a preview and nothing is assigned. */

@@ -142,6 +142,7 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
       id,
       authUserId,
       approval_status: approval,
+      is_active: true,
       display_name_en: name,
       display_name_zh: nameZh,
       email: `${name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
@@ -155,14 +156,26 @@ export class InMemoryLessonInsuranceRepository extends LessonInsuranceRepository
       (i) => i.authUserId === authUserId,
     );
     return Promise.resolve(
-      found ? { id: found.id, approval_status: found.approval_status } : null,
+      found
+        ? {
+            id: found.id,
+            approval_status: found.approval_status,
+            is_active: found.is_active,
+          }
+        : null,
     );
   }
 
   instructorById(id: string): Promise<InsuranceInstructorRow | null> {
     const found = this.instructors.get(id);
     return Promise.resolve(
-      found ? { id: found.id, approval_status: found.approval_status } : null,
+      found
+        ? {
+            id: found.id,
+            approval_status: found.approval_status,
+            is_active: found.is_active,
+          }
+        : null,
     );
   }
 

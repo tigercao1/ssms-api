@@ -29,7 +29,7 @@ export const ADMIN_INSURANCE_REQUEST_COLUMNS = [
   INSURANCE_REQUEST_COLUMNS,
   'instructor:instructors!lesson_insurance_requests_instructor_id_fkey(display_name_en, display_name_zh, email)',
 ].join(', ');
-export const INSURANCE_INSTRUCTOR_COLUMNS = 'id, approval_status';
+export const INSURANCE_INSTRUCTOR_COLUMNS = 'id, approval_status, is_active';
 export const INSURANCE_SUMMARY_INSTRUCTOR_COLUMNS =
   'id, display_name_en, display_name_zh, email';
 
@@ -116,6 +116,7 @@ export interface AdminInsuranceRequestRow extends InsuranceRequestRow {
 export interface InsuranceInstructorRow {
   id: string;
   approval_status: InstructorApprovalStatus;
+  is_active: boolean;
 }
 
 export interface InsuranceSummaryInstructorRow {

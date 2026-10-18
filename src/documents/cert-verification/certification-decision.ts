@@ -7,22 +7,28 @@ import {
   MIN_NAME_SIMILARITY,
 } from './certification-policy';
 
+export interface ExtractedCertification {
+  text: string;
+  track: CertTrack | null;
+  level: number | null;
+  isPartial: boolean;
+  confidence: number;
+}
+
 export interface CertificationExtraction {
   documentType: CertDocumentType;
   issuer: string | null;
-  holderName: string | null;
   org: CertOrg | null;
-  track: CertTrack | null;
-  level: number | null;
-  isPartial: boolean | null;
-  validThrough: string | null;
+  holderName: string | null;
   memberNumber: string | null;
+  membershipCategory: string | null;
+  membershipSeason: string | null;
+  certifications: ExtractedCertification[];
+  validThrough: string | null;
+  recallYear: number | null;
   legible: boolean;
   tamperSigns: string[];
-  confidence: Record<
-    'holderName' | 'org' | 'track' | 'level' | 'validThrough',
-    number
-  >;
+  confidence: Record<'holderName' | 'org' | 'validThrough', number>;
   notes: string;
 }
 
@@ -43,6 +49,7 @@ export type CheckId =
   | 'org'
   | 'track'
   | 'level'
+  | 'recall_year'
   | 'valid_through_present'
   | 'valid_through_matches'
   | 'not_expired';
@@ -167,48 +174,65 @@ export function decide(
     );
   }
 
-  const field = <T>(
-    id: CheckId,
-    read: T | null,
-    want: T,
-    conf: number,
-    label: string,
-  ) => {
-    if (read === null) {
-      add(id, 'unsure', `No ${label} found`);
-    } else if (!confident(conf)) {
-      add(id, 'unsure', `${label} read as ${String(read)} with low confidence`);
-    } else {
-      add(
-        id,
-        read === want ? 'pass' : 'fail',
-        `${label} ${String(read)}, profile says ${String(want)}`,
-      );
-    }
-  };
-  field('org', x.org, declared.org, x.confidence.org, 'Organization');
-  field('track', x.track, declared.track, x.confidence.track, 'Track');
-
-  if (x.level === null) {
-    add('level', 'unsure', 'No level found');
-  } else if (!confident(x.confidence.level)) {
-    add('level', 'unsure', `Level read as ${x.level} with low confidence`);
-  } else if (x.level < declared.level) {
-    add(
-      'level',
-      'fail',
-      `Document shows level ${x.level}, profile claims ${declared.level}`,
-    );
-  } else if (x.level > declared.level) {
-    add(
-      'level',
-      'unsure',
-      `Document shows level ${x.level}, higher than profile level ${declared.level}`,
-    );
-  } else if ((x.isPartial ?? false) !== declared.isPartial) {
-    add('level', 'unsure', `Partial status differs from profile`);
+  if (x.org === null) {
+    add('org', 'unsure', 'No issuer found');
+  } else if (!confident(x.confidence.org)) {
+    add('org', 'unsure', `Issuer read as ${x.org} with low confidence`);
   } else {
-    add('level', 'pass', `Level ${x.level}`);
+    add(
+      'org',
+      x.org === declared.org ? 'pass' : 'fail',
+      `Card issued by ${x.org.toUpperCase()}, profile says ${declared.org.toUpperCase()}`,
+    );
+  }
+
+  const lines = x.certifications.filter((c) => c.track === declared.track);
+  const line = lines.sort((p, q) => (q.level ?? 0) - (p.level ?? 0))[0];
+  const printed = x.certifications.map((c) => c.text).join('; ') || 'none';
+  if (!line) {
+    const status: CheckStatus =
+      x.certifications.length > 0 &&
+      x.certifications.every((c) => c.track !== null && confident(c.confidence))
+        ? 'fail'
+        : 'unsure';
+    add(
+      'track',
+      status,
+      `No ${declared.track} certification on the card (printed: ${printed})`,
+    );
+  } else if (!confident(line.confidence) || line.level === null) {
+    add('track', 'pass', `"${line.text}"`);
+    add('level', 'unsure', `"${line.text}" read with low confidence`);
+  } else {
+    add('track', 'pass', `"${line.text}"`);
+    if (line.level < declared.level) {
+      add(
+        'level',
+        'fail',
+        `Card shows level ${line.level}, profile claims ${declared.level}`,
+      );
+    } else if (line.level > declared.level) {
+      add(
+        'level',
+        'unsure',
+        `Card shows level ${line.level}, higher than profile level ${declared.level}`,
+      );
+    } else if (line.isPartial !== declared.isPartial) {
+      add('level', 'unsure', 'Partial status differs from profile');
+    } else {
+      add('level', 'pass', `Level ${line.level}`);
+    }
+  }
+
+  if (x.recallYear !== null && declared.org === 'csia') {
+    const year = Number(today.slice(0, 4));
+    add(
+      'recall_year',
+      x.recallYear >= year ? 'pass' : 'unsure',
+      x.recallYear >= year
+        ? `Recall year ${x.recallYear}`
+        : `Recall year ${x.recallYear} has passed; check professional development is up to date`,
+    );
   }
 
   let suggestedValidUntil: string | null = null;

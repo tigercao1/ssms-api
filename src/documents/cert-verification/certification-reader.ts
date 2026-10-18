@@ -4,7 +4,10 @@ import {
   OpenRouterError,
   type Routing,
 } from '../../llm/openrouter.client';
-import type { CertificationExtraction } from './certification-decision';
+import type {
+  CertificationExtraction,
+  ExtractedCertification,
+} from './certification-decision';
 import {
   DOCUMENT_TYPES,
   EXTRACTION_SCHEMA,
@@ -88,18 +91,30 @@ export function parseExtraction(text: string): CertificationExtraction {
   const documentType = DOCUMENT_TYPES.includes(value.documentType as never)
     ? (value.documentType as CertificationExtraction['documentType'])
     : 'other';
+  const certifications = Array.isArray(value.certifications)
+    ? (value.certifications as Record<string, unknown>[]).map((c) => ({
+        text: typeof c.text === 'string' ? c.text.slice(0, 200) : '',
+        track: ['regular', 'park', 'carving'].includes(c.track as string)
+          ? (c.track as ExtractedCertification['track'])
+          : null,
+        level: Number.isInteger(c.level) ? (c.level as number) : null,
+        isPartial: c.isPartial === true,
+        confidence: num(c.confidence),
+      }))
+    : [];
   return {
     documentType,
     issuer: str(value.issuer),
-    holderName: str(value.holderName),
     org: value.org === 'csia' || value.org === 'casi' ? value.org : null,
-    track: ['regular', 'park', 'carving'].includes(value.track as string)
-      ? (value.track as CertificationExtraction['track'])
-      : null,
-    level: Number.isInteger(value.level) ? (value.level as number) : null,
-    isPartial: typeof value.isPartial === 'boolean' ? value.isPartial : null,
-    validThrough: str(value.validThrough),
+    holderName: str(value.holderName),
     memberNumber: str(value.memberNumber),
+    membershipCategory: str(value.membershipCategory),
+    membershipSeason: str(value.membershipSeason),
+    certifications,
+    validThrough: str(value.validThrough),
+    recallYear: Number.isInteger(value.recallYear)
+      ? (value.recallYear as number)
+      : null,
     legible: value.legible === true,
     tamperSigns: Array.isArray(value.tamperSigns)
       ? value.tamperSigns.filter((s): s is string => typeof s === 'string')
@@ -107,8 +122,6 @@ export function parseExtraction(text: string): CertificationExtraction {
     confidence: {
       holderName: num(conf.holderName),
       org: num(conf.org),
-      track: num(conf.track),
-      level: num(conf.level),
       validThrough: num(conf.validThrough),
     },
     notes: typeof value.notes === 'string' ? value.notes.slice(0, 500) : '',

@@ -1,8 +1,12 @@
 import {
   FakeShopify,
+  goLiveFor,
   INSTRUCTOR_ID,
   InMemorySyncRepository,
+  readySnapshotOf,
+  readyWhenVisible,
   snapshotOf,
+  verifiedUpload,
 } from '../../test/helpers/shopify-sync-fakes';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
@@ -12,6 +16,24 @@ import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 import { ShopifyUserErrorsError } from '../shopify/shopify.errors';
 
 const OTHER_ID = '9b8a7c6d-0000-4000-8000-000000000001';
+
+function setupGoLive(snapshot: InstructorSnapshot = readySnapshotOf()) {
+  const repo = new InMemorySyncRepository();
+  repo.snapshots.set(snapshot.instructor.id, snapshot);
+  const goLive = goLiveFor(repo);
+  goLive.subjects.uploads.push(verifiedUpload('csia', 'regular', 3));
+  const shopify = new FakeShopify();
+  const gateway = new ShopifyInstructorGateway(shopify.client);
+  const service = new InstructorSyncService(
+    repo,
+    gateway,
+    new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
+    new InstructorTranslationsSync(gateway),
+    goLive.service,
+  );
+  const { subjects, templates, assignments } = goLive;
+  return { repo, shopify, service, subjects, templates, assignments };
+}
 
 function setup(snapshot: InstructorSnapshot | null = snapshotOf()) {
   const repo = new InMemorySyncRepository();
@@ -25,6 +47,7 @@ function setup(snapshot: InstructorSnapshot | null = snapshotOf()) {
     gateway,
     new InstructorPhotoSync(repo, gateway, { sleep: () => Promise.resolve() }),
     new InstructorTranslationsSync(gateway),
+    readyWhenVisible(repo),
   );
   return { repo, shopify, service };
 }
@@ -222,6 +245,73 @@ describe('InstructorSyncService', () => {
       await expect(service.sync(OTHER_ID)).resolves.toBe('skipped');
       expect(shopify.calls).toHaveLength(0);
       expect(repo.states.size).toBe(0);
+    });
+  });
+
+  describe('go-live gate', () => {
+    it('publishes an instructor who is ready to go live', async () => {
+      const { shopify, service } = setupGoLive();
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(shopify.entry('eddie-chen')).toMatchObject({
+        status: 'ACTIVE',
+        fields: { type: '双板', certification: 'CSIA Level 3' },
+      });
+    });
+
+    it('creates nothing for an approved instructor who is not ready', async () => {
+      const { repo, shopify, service } = setupGoLive(
+        readySnapshotOf({ languages: [] }),
+      );
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('skipped');
+
+      expect(shopify.calls).toHaveLength(0);
+      expect(repo.states.size).toBe(0);
+    });
+
+    it('sets a live entry to DRAFT once a required document is outstanding', async () => {
+      const { repo, shopify, service, templates, assignments } = setupGoLive();
+      await service.sync(INSTRUCTOR_ID);
+      const template = templates.seed({ status: 'live' });
+      assignments.seed({ template_id: template.id, subject_id: INSTRUCTOR_ID });
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('draft');
+
+      expect(shopify.entry('eddie-chen')?.status).toBe('DRAFT');
+      expect(repo.states.get(INSTRUCTOR_ID)?.last_status).toBe('draft');
+    });
+
+    it('sets a live entry to DRAFT when its only proof expires', async () => {
+      const { shopify, service, subjects } = setupGoLive();
+      await service.sync(INSTRUCTOR_ID);
+      subjects.uploads[0].valid_until = '2020-01-01';
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('draft');
+      expect(shopify.entry('eddie-chen')?.status).toBe('DRAFT');
+    });
+
+    it('sends only verified certifications to Shopify', async () => {
+      const { shopify, service, subjects } = setupGoLive(
+        readySnapshotOf({
+          certifications: [
+            { org: 'csia', track: 'regular', level: 4, is_partial: false },
+            { org: 'casi', track: 'regular', level: 2, is_partial: false },
+          ],
+          trainers: [{ discipline: 'ski', trainer_level: 1 }],
+        }),
+      );
+      subjects.uploads.length = 0;
+      subjects.uploads.push(verifiedUpload('casi', 'regular', 2));
+      subjects.uploads.push(verifiedUpload('csia', 'regular', 3));
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(shopify.entry('eddie-chen')?.fields).toMatchObject({
+        type: '双板 | 单板',
+        certification: 'Ski Trainer Level 1, CASI Level 2',
+      });
     });
   });
 });

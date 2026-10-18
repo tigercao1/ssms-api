@@ -12,6 +12,7 @@ import {
   ShopifySyncSettings,
 } from './shopify-sync-settings.service';
 import { MAX_SYNC_ATTEMPTS } from './shopify-sync.worker';
+import { storefrontBaseUrl } from './storefront-url';
 
 export const DEFAULT_STOREFRONT_PREVIEW_BASE_URL =
   'https://ssnow.club/pages/our-team-preview/';
@@ -177,10 +178,11 @@ export class ShopifySyncAdminService {
   }
 
   private previewBaseUrl(): string {
-    const base =
-      this.config.get<string>('SHOPIFY_STOREFRONT_PREVIEW_BASE_URL')?.trim() ||
-      DEFAULT_STOREFRONT_PREVIEW_BASE_URL;
-    return base.endsWith('/') ? base : `${base}/`;
+    return storefrontBaseUrl(
+      this.config,
+      'SHOPIFY_STOREFRONT_PREVIEW_BASE_URL',
+      DEFAULT_STOREFRONT_PREVIEW_BASE_URL,
+    );
   }
 }
 

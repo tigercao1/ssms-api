@@ -1,3 +1,6 @@
+import type { ConfigService } from '@nestjs/config';
+import { MeDocumentsService } from '../../src/documents/me-documents.service';
+import { GoLiveService } from '../../src/shopify-sync/go-live.service';
 import { InstructorSyncRepository } from '../../src/shopify-sync/instructor-sync.repository';
 import type {
   InstructorShopifyState,
@@ -15,6 +18,13 @@ import {
 } from '../../src/shopify-sync/shopify-sync-settings.repository';
 import type { ShopifyAdminClient } from '../../src/shopify/shopify-admin.client';
 import type { ShopifyUserError } from '../../src/shopify/shopify.errors';
+import {
+  certificationUploadRow,
+  InMemoryDocumentAssignmentsRepository,
+  InMemoryDocumentSubjectsRepository,
+  InMemoryDocumentTemplatesRepository,
+} from './documents-fakes';
+import { seasonsRepo, seasonsService } from './seasons-fakes';
 
 export const INSTRUCTOR_ID = '3f1c2b7a-9d4e-4c1a-8b2f-6a7e5d4c3b2a';
 
@@ -57,6 +67,84 @@ export function snapshotOf(
     trainers: [],
     ...rest,
   };
+}
+
+export function readySnapshotOf(
+  overrides: Parameters<typeof snapshotOf>[0] = {},
+): InstructorSnapshot {
+  const { instructor, ...rest } = overrides;
+  return snapshotOf({
+    locations: [{ name: 'Blue Mountain', name_zh: null }],
+    languages: [{ name: 'English', name_zh: '英语' }],
+    courseLevels: [{ name: 'Beginner', name_zh: '新手' }],
+    certifications: [
+      { org: 'csia', track: 'regular', level: 3, is_partial: false },
+    ],
+    ...rest,
+    instructor: {
+      profile_photo_url: `https://abc.supabase.co/storage/v1/object/public/instructor-public/${INSTRUCTOR_ID}/avatar.jpg`,
+      ...instructor,
+    },
+  });
+}
+
+export function verifiedUpload(
+  org: 'csia' | 'casi',
+  track: 'regular' | 'park' | 'carving',
+  level: number,
+  instructorId = INSTRUCTOR_ID,
+) {
+  return certificationUploadRow({
+    instructor_id: instructorId,
+    org,
+    track,
+    review_status: 'approved',
+    valid_until: '2099-12-31',
+    verified_level: level,
+  });
+}
+
+export function goLiveFor(
+  repo: InstructorSyncRepository,
+  env: Record<string, string | undefined> = {},
+) {
+  const templates = new InMemoryDocumentTemplatesRepository();
+  const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
+  const documents = new MeDocumentsService(
+    subjects,
+    assignments,
+    templates,
+    seasonsService(seasonsRepo('2025-26', '2026-27')),
+  );
+  const config = { get: (k: string) => env[k] } as unknown as ConfigService;
+  const service = new GoLiveService(repo, subjects, documents, config);
+  return { service, subjects, templates, assignments, documents, config };
+}
+
+export function readyWhenVisible(
+  repo: InstructorSyncRepository,
+): GoLiveService {
+  return {
+    assess: async (instructorId: string) => {
+      const snapshot = await repo.loadSnapshot(instructorId);
+      if (!snapshot) {
+        return null;
+      }
+      const { approval_status, is_active } = snapshot.instructor;
+      return {
+        readiness: {
+          ready: approval_status === 'approved' && is_active,
+          missing: [],
+          certifications: [],
+        },
+        publishable: snapshot,
+      };
+    },
+  } as unknown as GoLiveService;
 }
 
 export class InMemorySyncRepository extends InstructorSyncRepository {

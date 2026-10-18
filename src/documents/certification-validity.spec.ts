@@ -82,10 +82,10 @@ describe('certificationState', () => {
     );
   });
 
-  it('treats valid, expiring and pending as satisfied', () => {
+  it('treats only approved, unexpired proof as satisfied', () => {
     expect(isCertificationSatisfied('valid')).toBe(true);
     expect(isCertificationSatisfied('expiring')).toBe(true);
-    expect(isCertificationSatisfied('pending')).toBe(true);
+    expect(isCertificationSatisfied('pending')).toBe(false);
     expect(isCertificationSatisfied('expired')).toBe(false);
     expect(isCertificationSatisfied('missing')).toBe(false);
     expect(isCertificationSatisfied('rejected')).toBe(false);

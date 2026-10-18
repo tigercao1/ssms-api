@@ -17,6 +17,7 @@ import {
   UNVERIFIED_AUTH,
 } from '../../test/helpers/insurance-fakes';
 import {
+  certificationUploadRow,
   InMemoryDocumentAssignmentsRepository,
   InMemoryDocumentSubjectsRepository,
   InMemoryDocumentTemplatesRepository,
@@ -392,6 +393,23 @@ describe('/me/insurance', () => {
       ctx.subjects.certifications.set(ADA_INSTRUCTOR, [
         { org: 'csia', track: 'regular', level: 2 },
       ]);
+      await expect(overview()).resolves.toMatchObject({
+        locked: true,
+        lockReason: 'onboarding_incomplete',
+      });
+    });
+
+    it('locks an instructor whose certification is awaiting review', async () => {
+      ctx.subjects.certifications.set(ADA_INSTRUCTOR, [
+        { org: 'csia', track: 'regular', level: 2 },
+      ]);
+      ctx.subjects.uploads.push(
+        certificationUploadRow({
+          instructor_id: ADA_INSTRUCTOR,
+          review_status: 'pending',
+          valid_until: '2027-04-30',
+        }),
+      );
       await expect(overview()).resolves.toMatchObject({
         locked: true,
         lockReason: 'onboarding_incomplete',

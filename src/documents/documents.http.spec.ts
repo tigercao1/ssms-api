@@ -1434,7 +1434,6 @@ describe('documents HTTP', () => {
           instructor_id: me.id,
           org: 'casi',
           track: 'regular',
-          review_status: 'pending',
         }),
         certificationUploadRow({
           instructor_id: me.id,
@@ -1465,6 +1464,7 @@ describe('documents HTTP', () => {
       ['missing', []],
       ['expired', [{ valid_until: addDays(today, -1) }]],
       ['rejected', [{ review_status: 'rejected' as const }]],
+      ['awaiting review', [{ review_status: 'pending' as const }]],
     ])(
       'is not complete while a certification is %s',
       async (_name, uploads) => {

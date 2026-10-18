@@ -2,7 +2,6 @@ import {
   type CertificationExtraction,
   type DeclaredCertification,
   decide,
-  nameSimilarity,
 } from './certification-decision';
 
 const TODAY = '2026-10-18';
@@ -43,7 +42,7 @@ function csiaCard(
 }
 
 const csiaProfile: DeclaredCertification = {
-  names: ['Mei Lin Chen', 'Mei Chen'],
+  legalName: { firstName: 'Mei Lin', lastName: 'Chen' },
   org: 'csia',
   track: 'regular',
   level: 2,
@@ -229,7 +228,11 @@ describe('decide on the real card layouts', () => {
   it('treats last season’s CSIA card as expired', () => {
     const result = decide(
       csia2023('Jiayi Liu', 2, 2026),
-      { ...csiaProfile, names: ['Jiayi Liu'], validUntil: '2024-09-30' },
+      {
+        ...csiaProfile,
+        legalName: { firstName: 'Jiayi', lastName: 'Liu' },
+        validUntil: '2024-09-30',
+      },
       TODAY,
     );
     expect(result.verdict).toBe('likely_invalid');
@@ -239,7 +242,11 @@ describe('decide on the real card layouts', () => {
   it('verifies the same CSIA card on a day it was valid', () => {
     const result = decide(
       csia2023('Jiayi Liu', 2, 2026),
-      { ...csiaProfile, names: ['Jiayi Liu'], validUntil: '2024-09-30' },
+      {
+        ...csiaProfile,
+        legalName: { firstName: 'Jiayi', lastName: 'Liu' },
+        validUntil: '2024-09-30',
+      },
       '2024-01-15',
     );
     expect(result.verdict).toBe('verified');
@@ -266,7 +273,7 @@ describe('decide on the real card layouts', () => {
     validThrough: '2025-05-31',
   });
   const casiProfile = {
-    names: ['Hongfeng He'],
+    legalName: { firstName: 'Hongfeng', lastName: 'He' },
     org: 'casi' as const,
     isPartial: false,
     validUntil: '2025-05-31',
@@ -313,16 +320,5 @@ describe('decide on the real card layouts', () => {
     );
     expect(result.verdict).toBe('likely_invalid');
     expect(statusOf(result, 'track')).toBe('fail');
-  });
-});
-
-describe('nameSimilarity', () => {
-  it('ignores order, case, punctuation and accents', () => {
-    expect(nameSimilarity('CHEN, Mei Lin', 'Mei Lin Chen')).toBe(1);
-    expect(nameSimilarity('Zoë Tremblay', 'zoe tremblay')).toBe(1);
-  });
-
-  it('scores unrelated names low', () => {
-    expect(nameSimilarity('John Smith', 'Mei Lin Chen')).toBeLessThan(0.5);
   });
 });

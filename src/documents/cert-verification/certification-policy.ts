@@ -1,6 +1,6 @@
 import type { CertOrg, CertTrack } from '../documents.types';
 
-export const CERT_POLICY_VERSION = 'cert-policy-v3';
+export const CERT_POLICY_VERSION = 'cert-policy-v4';
 
 export const ISSUERS: Record<CertOrg, string[]> = {
   csia: [
@@ -25,8 +25,6 @@ export const TRACK_WORDING: Record<CertTrack, string> = {
 };
 
 export const MIN_FIELD_CONFIDENCE = 0.85;
-export const MIN_NAME_SIMILARITY = 0.85;
-
 export const MEMBER_NUMBER_FORMAT: Record<CertOrg, RegExp> = {
   csia: /^\d{5,7}$/,
   casi: /^\d{5,7}$/,
@@ -138,6 +136,7 @@ export function buildExtractionInstruction(): string {
     tracks,
     'Known card layouts:',
     ...CARD_LAYOUTS.map((l) => `- ${l}`),
+    '"holderName" is the member name exactly as printed, including its order and any middle names.',
     'List every certification line in "certifications", one entry each, with the text exactly as printed.',
     '"validThrough" is the membership expiry ("Valid until", "Exp:") as YYYY-MM-DD. Never use the season, the recall year or "Member Since" as validThrough.',
     '"memberNumber" is the membership number: on CSIA cards the number printed under the name, on CASI cards the value after "Member Number". Digits only, exactly as printed.',

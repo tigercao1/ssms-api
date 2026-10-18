@@ -5,8 +5,8 @@ import {
   type CertDocumentType,
   MIN_FIELD_CONFIDENCE,
   MEMBER_NUMBER_FORMAT,
-  MIN_NAME_SIMILARITY,
 } from './certification-policy';
+import { type LegalName, matchLegalName } from './legal-name-match';
 
 export interface ExtractedCertification {
   text: string;
@@ -37,7 +37,7 @@ export interface CertificationExtraction {
 }
 
 export interface DeclaredCertification {
-  names: string[];
+  legalName: LegalName;
   org: CertOrg;
   track: CertTrack;
   level: number;
@@ -91,50 +91,6 @@ const HARD_FAILS: readonly CheckId[] = [
   'member_number',
 ];
 
-export function normalizeName(name: string): string[] {
-  return name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .sort();
-}
-
-export function nameSimilarity(a: string, b: string): number {
-  const ta = normalizeName(a);
-  const tb = normalizeName(b);
-  if (ta.length === 0 || tb.length === 0) {
-    return 0;
-  }
-  const joinedA = ta.join('');
-  const joinedB = tb.join('');
-  if (joinedA === joinedB) {
-    return 1;
-  }
-  const distance = levenshtein(joinedA, joinedB);
-  return 1 - distance / Math.max(joinedA.length, joinedB.length);
-}
-
-function levenshtein(a: string, b: string): number {
-  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let diag = prev[0];
-    prev[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const temp = prev[j];
-      prev[j] = Math.min(
-        prev[j] + 1,
-        prev[j - 1] + 1,
-        diag + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-      diag = temp;
-    }
-  }
-  return prev[b.length];
-}
-
 function confident(value: number): boolean {
   return value >= MIN_FIELD_CONFIDENCE;
 }
@@ -166,22 +122,16 @@ export function decide(
   );
 
   if (x.holderName === null) {
-    add('holder_name', 'unsure', 'No name found on the document');
+    add('holder_name', 'unsure', 'No name found on the card');
   } else {
-    const best = Math.max(
-      0,
-      ...declared.names.map((n) => nameSimilarity(n, x.holderName!)),
-    );
-    const status: CheckStatus =
-      best >= MIN_NAME_SIMILARITY && confident(x.confidence.holderName)
-        ? 'pass'
-        : best < 0.5 && confident(x.confidence.holderName)
-          ? 'fail'
-          : 'unsure';
+    const match = matchLegalName(x.holderName, declared.legalName);
+    const lowConfidence = !confident(x.confidence.holderName);
     add(
       'holder_name',
-      status,
-      `"${x.holderName}" vs profile, similarity ${best.toFixed(2)}`,
+      lowConfidence && match.status !== 'unsure' ? 'unsure' : match.status,
+      lowConfidence
+        ? `${match.detail} (name read with low confidence)`
+        : match.detail,
     );
   }
 

@@ -20,7 +20,7 @@ interface Case {
 }
 
 const TODAY = '2026-10-18';
-const NAMES = ['Mei Lin Chen', 'Mei Chen'];
+const LEGAL_NAME = { firstName: 'Mei Lin', lastName: 'Chen' };
 
 async function main() {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
@@ -69,7 +69,7 @@ async function main() {
         });
         const decision = decide(
           reading.extraction,
-          { names: NAMES, isPartial: false, ...c.declared },
+          { legalName: LEGAL_NAME, isPartial: false, ...c.declared },
           TODAY,
         );
         rows.push({

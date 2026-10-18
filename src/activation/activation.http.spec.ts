@@ -269,6 +269,29 @@ describe('Activation HTTP', () => {
       expect(retryAfterSeconds).toBeLessThanOrEqual(3_600);
       await resend('other@example.test', '5.5.5.9').expect(202);
     });
+
+    it('429 with the hourly wait and no email when an expired link on a used-up IP reports ready', async () => {
+      for (let i = 0; i < 3; i++) {
+        await resend(`shared${i}@example.test`, '6.6.6.6').expect(202);
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      dispatcher.resend.mockClear();
+
+      const expired = await redeem(EXPIRED_TOKEN, '6.6.6.6').expect(410);
+      expect(expired.body).toEqual({
+        email: 'jane@example.test',
+        retryAfterSeconds: 0,
+      });
+
+      const limited = await resend('jane@example.test', '6.6.6.6').expect(429);
+      const { retryAfterSeconds } = limited.body as {
+        retryAfterSeconds: number;
+      };
+      expect(retryAfterSeconds).toBeGreaterThan(3_500);
+      expect(retryAfterSeconds).toBeLessThanOrEqual(3_600);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(dispatcher.resend).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST /me/activation/complete', () => {

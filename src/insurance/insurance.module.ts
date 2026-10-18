@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { DocumentsModule } from '../documents/documents.module';
 import { SeasonsModule } from '../seasons/seasons.module';
 import { AdminInsuranceController } from './admin-insurance.controller';
 import { AdminInsuranceService } from './admin-insurance.service';
@@ -10,7 +11,7 @@ import { MeInsuranceController } from './me-insurance.controller';
 import { MeInsuranceService } from './me-insurance.service';
 
 @Module({
-  imports: [SeasonsModule],
+  imports: [DocumentsModule, SeasonsModule],
   controllers: [MeInsuranceController, AdminInsuranceController],
   providers: [
     {

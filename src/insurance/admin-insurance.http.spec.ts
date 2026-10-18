@@ -14,6 +14,11 @@ import {
   NOW,
   startInsuranceApp,
 } from '../../test/helpers/insurance-fakes';
+import {
+  InMemoryDocumentAssignmentsRepository,
+  InMemoryDocumentSubjectsRepository,
+  InMemoryDocumentTemplatesRepository,
+} from '../../test/helpers/documents-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import {
   InMemorySeasonsRepository,
@@ -22,6 +27,10 @@ import {
   seasonsProviders,
 } from '../../test/helpers/seasons-fakes';
 import { AuditService } from '../audit/audit.service';
+import { DocumentAssignmentsRepository } from '../documents/document-assignments.repository';
+import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
+import { DocumentTemplatesRepository } from '../documents/document-templates.repository';
+import { MeDocumentsService } from '../documents/me-documents.service';
 import { AdminInsuranceController } from './admin-insurance.controller';
 import {
   ALREADY_COVERED,
@@ -68,6 +77,12 @@ async function build(
   repo.addInstructor(BO_USER, BO_INSTRUCTOR, 'Bo Zhang');
   repo.addInstructor(CAROL_USER, CAROL_INSTRUCTOR, 'Carol King');
   const audit = recordingAudit();
+  const templates = new InMemoryDocumentTemplatesRepository();
+  const subjects = new InMemoryDocumentSubjectsRepository();
+  const assignments = new InMemoryDocumentAssignmentsRepository(
+    templates,
+    subjects,
+  );
   const app = await startInsuranceApp(
     Test.createTestingModule({
       controllers: [MeInsuranceController, AdminInsuranceController],
@@ -75,6 +90,10 @@ async function build(
         ...seasonsProviders(seasons, now),
         MeInsuranceService,
         AdminInsuranceService,
+        MeDocumentsService,
+        { provide: DocumentTemplatesRepository, useValue: templates },
+        { provide: DocumentAssignmentsRepository, useValue: assignments },
+        { provide: DocumentSubjectsRepository, useValue: subjects },
         { provide: LessonInsuranceRepository, useValue: repo },
         { provide: AuditService, useValue: audit },
         { provide: ConfigService, useValue: { get: () => undefined } },

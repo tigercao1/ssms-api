@@ -5,7 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { hasCode, PG_FOREIGN_KEY_VIOLATION } from '../database/db-result';
-import { INSTRUCTOR_PROFILE_NOT_FOUND } from '../documents/me-documents.service';
+import type { OnboardingLockReason } from '../documents/documents.types';
+import {
+  INSTRUCTOR_PROFILE_NOT_FOUND,
+  MeDocumentsService,
+} from '../documents/me-documents.service';
 import type { SeasonRow } from '../seasons/seasons.repository';
 import { SeasonsService } from '../seasons/seasons.service';
 import type { RegisterLessonDto } from './dto/insurance.dto';
@@ -23,7 +27,7 @@ import {
   type RegisterInput,
 } from './lesson-insurance.repository';
 
-export type InsuranceLockReason = 'pending_approval' | 'rejected';
+export type InsuranceLockReason = OnboardingLockReason;
 
 export const WAIVER_UNCONFIRMED = '请确认每位学生的 waiver 已签署';
 export const NO_SEASON_FOR_DATE = 'No season covers this date';
@@ -33,6 +37,14 @@ export const INSURANCE_PENDING =
   'Your profile is being reviewed; lesson insurance opens once an admin approves you';
 export const INSURANCE_REJECTED =
   'Your profile was not approved, so lesson insurance is not available';
+export const INSURANCE_ONBOARDING_INCOMPLETE =
+  'Finish your onboarding documents and certifications to open lesson insurance';
+
+const LOCK_MESSAGES: Record<InsuranceLockReason, string> = {
+  pending_approval: INSURANCE_PENDING,
+  rejected: INSURANCE_REJECTED,
+  onboarding_incomplete: INSURANCE_ONBOARDING_INCOMPLETE,
+};
 
 export interface MyInsuranceSeason {
   key: string;
@@ -57,17 +69,6 @@ export interface RegisterResult {
   record: InsuranceRecord;
 }
 
-function lockFor(
-  instructor: InsuranceInstructorRow,
-): InsuranceLockReason | null {
-  if (instructor.approval_status === 'approved') {
-    return null;
-  }
-  return instructor.approval_status === 'rejected'
-    ? 'rejected'
-    : 'pending_approval';
-}
-
 function toSeason(row: SeasonRow | null): MyInsuranceSeason | null {
   return row
     ? { key: row.key, startsOn: row.starts_on, endsOn: row.ends_on }
@@ -79,6 +80,7 @@ export class MeInsuranceService {
   constructor(
     private readonly repo: LessonInsuranceRepository,
     private readonly seasons: SeasonsService,
+    private readonly documents: MeDocumentsService,
   ) {}
 
   async overview(authUserId: string, seasonKey?: string): Promise<MyInsurance> {
@@ -86,7 +88,7 @@ export class MeInsuranceService {
     const season = seasonKey
       ? await this.seasons.assertKnown(seasonKey)
       : await this.seasons.current();
-    const lockReason = lockFor(instructor);
+    const lockReason = await this.lockFor(instructor);
     const rows =
       lockReason === null && season
         ? await this.repo.recordsFor(instructor.id, season.key)
@@ -182,13 +184,16 @@ export class MeInsuranceService {
     authUserId: string,
   ): Promise<InsuranceInstructorRow> {
     const instructor = await this.instructorFor(authUserId);
-    const reason = lockFor(instructor);
+    const reason = await this.lockFor(instructor);
     if (reason) {
-      throw new ForbiddenException({
-        message: reason === 'rejected' ? INSURANCE_REJECTED : INSURANCE_PENDING,
-        reason,
-      });
+      throw new ForbiddenException({ message: LOCK_MESSAGES[reason], reason });
     }
     return instructor;
+  }
+
+  private lockFor(
+    instructor: InsuranceInstructorRow,
+  ): Promise<InsuranceLockReason | null> {
+    return this.documents.onboardingLockFor(instructor, this.seasons.today());
   }
 }

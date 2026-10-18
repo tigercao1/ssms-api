@@ -5,6 +5,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { torontoToday } from '../documents/certification-validity';
+import type { OnboardingLockReason } from '../documents/documents.types';
 import {
   INSTRUCTOR_PROFILE_NOT_FOUND,
   MeDocumentsService,
@@ -21,8 +22,6 @@ import {
 } from './payroll-lines';
 import { localDate, localTime, periodContaining } from './payroll-time';
 import {
-  type ApprovalStatus,
-  type InstructorApprovalRow,
   type InstructorClassRow,
   type InstructorLineRow,
   type ParticipantEmbed,
@@ -31,10 +30,7 @@ import {
 } from './payroll.repository';
 import { PAYROLL_CLOCK, storedLine, toPayable } from './payroll.service';
 
-export type LockReason =
-  | 'pending_approval'
-  | 'rejected'
-  | 'onboarding_incomplete';
+export type LockReason = OnboardingLockReason;
 export type MyLessonStatus = 'scheduled' | 'completed' | 'no_show';
 
 export interface MyLesson {
@@ -146,13 +142,6 @@ function studentsFromNames(names: readonly string[]): string[] {
     .filter((name): name is string => name !== null);
 }
 
-function lockFor(status: ApprovalStatus): LockReason | null {
-  if (status === 'approved') {
-    return null;
-  }
-  return status === 'rejected' ? 'rejected' : 'pending_approval';
-}
-
 function toLesson(
   line: ClassLine,
   details: LessonDetails,
@@ -256,7 +245,10 @@ export class MeLessonsService {
     if (!instructor) {
       throw new NotFoundException(INSTRUCTOR_PROFILE_NOT_FOUND);
     }
-    const lockReason = await this.lockReasonFor(instructor);
+    const lockReason = await this.documents.onboardingLockFor(
+      instructor,
+      torontoToday(this.now()),
+    );
     if (
       lockReason === 'pending_approval' ||
       lockReason === 'onboarding_incomplete'
@@ -394,19 +386,5 @@ export class MeLessonsService {
       upcoming,
       periods,
     };
-  }
-
-  private async lockReasonFor(
-    instructor: InstructorApprovalRow,
-  ): Promise<LockReason | null> {
-    const approvalLock = lockFor(instructor.approval_status);
-    if (approvalLock !== null) {
-      return approvalLock;
-    }
-    const complete = await this.documents.onboardingComplete(
-      instructor.id,
-      torontoToday(this.now()),
-    );
-    return complete ? null : 'onboarding_incomplete';
   }
 }

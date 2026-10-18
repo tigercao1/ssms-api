@@ -119,7 +119,8 @@ export class MediaService {
       );
     }
     const path = this.photoPath(instructorId, contentType, slot);
-    const publicUrl = this.storage.getPublicUrl(this.bucket, path);
+    const objectUrl = this.storage.getPublicUrl(this.bucket, path);
+    const publicUrl = `${objectUrl}?v=${Date.now()}`;
     if (slot !== 1) {
       return this.instructors.setAdditionalPhoto(instructorId, slot, publicUrl);
     }

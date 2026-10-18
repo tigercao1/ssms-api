@@ -33,6 +33,12 @@ import { STORAGE_CLIENT, type StorageClient } from './storage-client';
 const INSTRUCTOR_ID = '3f1c2b7a-9d4e-4c1a-8b2f-6a7e5d4c3b2a';
 const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
 const PUBLIC_BASE = 'https://storage.test/object/public/instructor-public';
+const versionedUrl = (file: string): unknown =>
+  expect.stringMatching(
+    new RegExp(
+      `^${PUBLIC_BASE}/${INSTRUCTOR_ID}/${file.replace('.', '\\.')}\\?v=\\d+$`,
+    ),
+  );
 
 class FakeJwtGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -231,7 +237,7 @@ describe.each([
 
     const confirmed = await confirm({ contentType: 'image/jpeg' }).expect(201);
     expect(confirmed.body).toMatchObject({
-      profilePhotoUrl: `${PUBLIC_BASE}/${INSTRUCTOR_ID}/avatar.jpg`,
+      profilePhotoUrl: versionedUrl('avatar.jpg'),
       photo2Url: null,
       photo3Url: null,
     });
@@ -252,12 +258,34 @@ describe.each([
       );
 
       const confirmed = await confirm({ contentType, slot }).expect(201);
-      expect((confirmed.body as Record<string, unknown>)[field]).toBe(
-        `${PUBLIC_BASE}/${INSTRUCTOR_ID}/${file}`,
+      expect((confirmed.body as Record<string, unknown>)[field]).toEqual(
+        versionedUrl(file),
       );
       expect((confirmed.body as InstructorProfile).profilePhotoUrl).toBeNull();
       expect(ctx.repo.versions[slot as 2 | 3]).toBe(1);
       expect(ctx.repo.versions[1]).toBe(0);
+    },
+  );
+
+  it.each([
+    [1, 'profilePhotoUrl'],
+    [2, 'photo2Url'],
+    [3, 'photo3Url'],
+  ])(
+    'gives a replaced slot %i photo a new URL for the same object',
+    async (slot, field) => {
+      const first = await confirm({ contentType: 'image/png', slot }).expect(
+        201,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const second = await confirm({ contentType: 'image/png', slot }).expect(
+        201,
+      );
+
+      const firstUrl = (first.body as Record<string, string>)[field];
+      const secondUrl = (second.body as Record<string, string>)[field];
+      expect(secondUrl).not.toBe(firstUrl);
+      expect(new URL(secondUrl).pathname).toBe(new URL(firstUrl).pathname);
     },
   );
 
@@ -315,6 +343,76 @@ describe.each([
     await http().delete(`${base}/2`).expect(401);
   });
 });
+
+describe.each([
+  [
+    'instructor',
+    MediaController,
+    Object,
+    '/me/instructor/photo',
+    'Bearer jwt-instructor',
+  ],
+  [
+    'admin',
+    AdminMediaController,
+    String,
+    `/admin/instructors/${INSTRUCTOR_ID}/photo`,
+    'Bearer jwt-admin',
+  ],
+])(
+  'DELETE via the %s route with tsc-emitted param metadata',
+  (_label, controller, firstParamType, base, auth) => {
+    let ctx: Awaited<ReturnType<typeof build>>;
+    let original: unknown;
+
+    beforeEach(async () => {
+      original = Reflect.getMetadata(
+        'design:paramtypes',
+        controller.prototype,
+        'remove',
+      );
+      Reflect.defineMetadata(
+        'design:paramtypes',
+        [firstParamType, Number],
+        controller.prototype,
+        'remove',
+      );
+      ctx = await build();
+    });
+    afterEach(async () => {
+      await ctx.app.close();
+      Reflect.defineMetadata(
+        'design:paramtypes',
+        original,
+        controller.prototype,
+        'remove',
+      );
+    });
+
+    it.each([
+      ['1', 'profilePhotoUrl'],
+      ['2', 'photo2Url'],
+      ['3', 'photo3Url'],
+    ])('clears slot %s', async (slot, field) => {
+      ctx.repo.row.profile_photo_url = 'https://cdn.test/a.jpg';
+      ctx.repo.row.photo_2_url = 'https://cdn.test/2.jpg';
+      ctx.repo.row.photo_3_url = 'https://cdn.test/3.jpg';
+
+      const res = await request(ctx.url)
+        .delete(`${base}/${slot}`)
+        .set('Authorization', auth)
+        .expect(200);
+      expect((res.body as Record<string, unknown>)[field]).toBeNull();
+    });
+
+    it.each(['0', '4', 'two'])('rejects slot %s with 400', async (slot) => {
+      await request(ctx.url)
+        .delete(`${base}/${slot}`)
+        .set('Authorization', auth)
+        .expect(400);
+    });
+  },
+);
 
 describe('admin photo slot routes', () => {
   let ctx: Awaited<ReturnType<typeof build>>;

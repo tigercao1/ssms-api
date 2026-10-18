@@ -31,7 +31,12 @@ function csiaCard(
     recallYear: 2028,
     legible: true,
     tamperSigns: [],
-    confidence: { holderName: 0.97, org: 0.99, validThrough: 0.96 },
+    confidence: {
+      holderName: 0.97,
+      org: 0.99,
+      memberNumber: 0.97,
+      validThrough: 0.96,
+    },
     notes: '',
     ...overrides,
   };
@@ -141,10 +146,54 @@ describe('decide', () => {
     );
   });
 
-  it('sends a passed CSIA recall year to review', () => {
-    const result = decide(csiaCard({ recallYear: 2025 }), csiaProfile, TODAY);
+  it('sends a card with no member number to review', () => {
+    expect(
+      decide(csiaCard({ memberNumber: null }), csiaProfile, TODAY).verdict,
+    ).toBe('needs_review');
+  });
+
+  it('flags a member number that differs from the one the instructor entered', () => {
+    const result = decide(
+      csiaCard(),
+      { ...csiaProfile, memberNumber: '260001' },
+      TODAY,
+    );
+    expect(result.verdict).toBe('likely_invalid');
+    expect(statusOf(result, 'member_number')).toBe('fail');
+  });
+
+  it('flags a member number already used on another instructor’s approved card', () => {
+    const result = decide(
+      csiaCard(),
+      { ...csiaProfile, memberNumberUsedByOthers: true },
+      TODAY,
+    );
+    expect(result.verdict).toBe('likely_invalid');
+  });
+
+  it('sends a member number that changed since the last approved card to review', () => {
+    const result = decide(
+      csiaCard(),
+      { ...csiaProfile, previousMemberNumbers: ['111111'] },
+      TODAY,
+    );
     expect(result.verdict).toBe('needs_review');
-    expect(statusOf(result, 'recall_year')).toBe('unsure');
+  });
+
+  it('passes the same member number as the last approved card', () => {
+    expect(
+      decide(
+        csiaCard(),
+        { ...csiaProfile, previousMemberNumbers: ['260000'] },
+        TODAY,
+      ).verdict,
+    ).toBe('verified');
+  });
+
+  it('ignores the recall year', () => {
+    expect(
+      decide(csiaCard({ recallYear: 2020 }), csiaProfile, TODAY).verdict,
+    ).toBe('verified');
   });
 });
 
@@ -152,7 +201,7 @@ describe('decide on the real card layouts', () => {
   const csia2023 = (name: string, level: number, recallYear: number) =>
     csiaCard({
       holderName: name,
-      memberNumber: '000000',
+      memberNumber: '265390',
       membershipSeason: '2023/2024',
       certifications: [
         {
@@ -177,7 +226,7 @@ describe('decide on the real card layouts', () => {
       ...overrides,
     });
 
-  it('treats last season’s CSIA card as expired, even with a later recall year', () => {
+  it('treats last season’s CSIA card as expired', () => {
     const result = decide(
       csia2023('Jiayi Liu', 2, 2026),
       { ...csiaProfile, names: ['Jiayi Liu'], validUntil: '2024-09-30' },
@@ -185,7 +234,6 @@ describe('decide on the real card layouts', () => {
     );
     expect(result.verdict).toBe('likely_invalid');
     expect(statusOf(result, 'not_expired')).toBe('fail');
-    expect(statusOf(result, 'recall_year')).toBe('pass');
   });
 
   it('verifies the same CSIA card on a day it was valid', () => {

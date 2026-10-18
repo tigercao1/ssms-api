@@ -1,6 +1,6 @@
 import type { CertOrg, CertTrack } from '../documents.types';
 
-export const CERT_POLICY_VERSION = 'cert-policy-v2';
+export const CERT_POLICY_VERSION = 'cert-policy-v3';
 
 export const ISSUERS: Record<CertOrg, string[]> = {
   csia: [
@@ -26,6 +26,11 @@ export const TRACK_WORDING: Record<CertTrack, string> = {
 
 export const MIN_FIELD_CONFIDENCE = 0.85;
 export const MIN_NAME_SIMILARITY = 0.85;
+
+export const MEMBER_NUMBER_FORMAT: Record<CertOrg, RegExp> = {
+  csia: /^\d{5,7}$/,
+  casi: /^\d{5,7}$/,
+};
 
 export const DOCUMENT_TYPES = [
   'membership_card',
@@ -100,10 +105,11 @@ export const EXTRACTION_SCHEMA = {
     confidence: {
       type: 'object',
       additionalProperties: false,
-      required: ['holderName', 'org', 'validThrough'],
+      required: ['holderName', 'org', 'memberNumber', 'validThrough'],
       properties: {
         holderName: confidenceNumber,
         org: confidenceNumber,
+        memberNumber: confidenceNumber,
         validThrough: confidenceNumber,
       },
     },
@@ -134,7 +140,8 @@ export function buildExtractionInstruction(): string {
     ...CARD_LAYOUTS.map((l) => `- ${l}`),
     'List every certification line in "certifications", one entry each, with the text exactly as printed.',
     '"validThrough" is the membership expiry ("Valid until", "Exp:") as YYYY-MM-DD. Never use the season, the recall year or "Member Since" as validThrough.',
-    '"recallYear" is the CSIA "Recall Year" (professional-development deadline), or null.',
+    '"memberNumber" is the membership number: on CSIA cards the number printed under the name, on CASI cards the value after "Member Number". Digits only, exactly as printed.',
+    '"recallYear" is the CSIA "Recall Year", or null. It is recorded only so it is never mistaken for the expiry.',
     'Set "legible" to false if any needed text is cut off, blurred or too small to read with certainty.',
     'List in "tamperSigns" anything that suggests editing: mismatched fonts, misaligned or overwritten text. Empty array if none.',
     'Confidence values are 0 to 1: how sure you are that the value is exactly what is printed. Use 0 for null values.',

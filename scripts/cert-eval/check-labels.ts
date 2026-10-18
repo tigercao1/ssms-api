@@ -22,7 +22,7 @@ for (const l of labels) {
     recallYear: l.truth.recallYear,
     legible: true,
     tamperSigns: [],
-    confidence: { holderName: 1, org: 1, validThrough: 1 },
+    confidence: { holderName: 1, org: 1, memberNumber: 1, validThrough: 1 },
     notes: '',
   } as any;
   for (const r of l.runs) {

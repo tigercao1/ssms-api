@@ -122,6 +122,7 @@ export function parseExtraction(text: string): CertificationExtraction {
     confidence: {
       holderName: num(conf.holderName),
       org: num(conf.org),
+      memberNumber: num(conf.memberNumber),
       validThrough: num(conf.validThrough),
     },
     notes: typeof value.notes === 'string' ? value.notes.slice(0, 500) : '',

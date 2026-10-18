@@ -4,6 +4,7 @@ import {
   CERT_POLICY_VERSION,
   type CertDocumentType,
   MIN_FIELD_CONFIDENCE,
+  MEMBER_NUMBER_FORMAT,
   MIN_NAME_SIMILARITY,
 } from './certification-policy';
 
@@ -28,7 +29,10 @@ export interface CertificationExtraction {
   recallYear: number | null;
   legible: boolean;
   tamperSigns: string[];
-  confidence: Record<'holderName' | 'org' | 'validThrough', number>;
+  confidence: Record<
+    'holderName' | 'org' | 'memberNumber' | 'validThrough',
+    number
+  >;
   notes: string;
 }
 
@@ -39,6 +43,12 @@ export interface DeclaredCertification {
   level: number;
   isPartial: boolean;
   validUntil: string;
+  /** Member number the instructor typed at upload, if the form asks for it. */
+  memberNumber?: string | null;
+  /** Member numbers on this instructor's earlier approved uploads for the same org. */
+  previousMemberNumbers?: string[];
+  /** Whether another instructor already has an approved upload with this org and member number. */
+  memberNumberUsedByOthers?: boolean;
 }
 
 export type CheckId =
@@ -49,7 +59,7 @@ export type CheckId =
   | 'org'
   | 'track'
   | 'level'
-  | 'recall_year'
+  | 'member_number'
   | 'valid_through_present'
   | 'valid_through_matches'
   | 'not_expired';
@@ -78,6 +88,7 @@ const HARD_FAILS: readonly CheckId[] = [
   'level',
   'not_expired',
   'holder_name',
+  'member_number',
 ];
 
 export function normalizeName(name: string): string[] {
@@ -224,15 +235,47 @@ export function decide(
     }
   }
 
-  if (x.recallYear !== null && declared.org === 'csia') {
-    const year = Number(today.slice(0, 4));
+  const number = x.memberNumber?.replace(/\s+/g, '') ?? null;
+  if (number === null) {
+    add('member_number', 'unsure', 'No member number found');
+  } else if (!confident(x.confidence.memberNumber)) {
     add(
-      'recall_year',
-      x.recallYear >= year ? 'pass' : 'unsure',
-      x.recallYear >= year
-        ? `Recall year ${x.recallYear}`
-        : `Recall year ${x.recallYear} has passed; check professional development is up to date`,
+      'member_number',
+      'unsure',
+      `Member number read as ${number} with low confidence`,
     );
+  } else if (!MEMBER_NUMBER_FORMAT[declared.org].test(number)) {
+    add(
+      'member_number',
+      'unsure',
+      `Member number ${number} does not look like a ${declared.org.toUpperCase()} number`,
+    );
+  } else if (declared.memberNumberUsedByOthers) {
+    add(
+      'member_number',
+      'fail',
+      `Member number ${number} is already on another instructor's approved card`,
+    );
+  } else if (
+    declared.memberNumber &&
+    declared.memberNumber.replace(/\s+/g, '') !== number
+  ) {
+    add(
+      'member_number',
+      'fail',
+      `Card shows ${number}, instructor entered ${declared.memberNumber}`,
+    );
+  } else if (
+    declared.previousMemberNumbers?.length &&
+    !declared.previousMemberNumbers.includes(number)
+  ) {
+    add(
+      'member_number',
+      'unsure',
+      `Card shows ${number}, earlier approved card had ${declared.previousMemberNumbers.join(', ')}`,
+    );
+  } else {
+    add('member_number', 'pass', `Member number ${number}`);
   }
 
   let suggestedValidUntil: string | null = null;

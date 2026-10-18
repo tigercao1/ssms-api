@@ -336,13 +336,24 @@ describe('InstructorSyncService', () => {
         snapshotOf({ instructor: { display_name_en: 'Aaron' } }),
       );
       shopify.addLegacyEntry('aaron', 'Aaron Wu', 'DRAFT');
-      shopify.addLegacyEntry('aaron-2', 'Aaron Li');
 
       await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
 
-      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-3');
-      expect(shopify.entry('aaron-3')?.status).toBe('ACTIVE');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-2');
+      expect(shopify.entry('aaron-2')?.status).toBe('ACTIVE');
       expect(shopify.entry('aaron')).toBeUndefined();
+    });
+
+    it('keeps adding suffixes past legacy handles that look like suffixes', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { display_name_en: 'Aaron' } }),
+      );
+      shopify.addLegacyEntry('aaron', 'Aaron Wu');
+      shopify.addLegacyEntry('aaron-2', 'Aaron Li');
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-3');
     });
 
     it('keeps a paired legacy handle and syncs it exactly as before', async () => {

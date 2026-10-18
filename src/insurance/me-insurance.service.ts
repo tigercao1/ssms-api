@@ -48,12 +48,15 @@ export const INSURANCE_PENDING =
   'Your profile is being reviewed; lesson insurance opens once an admin approves you';
 export const INSURANCE_REJECTED =
   'Your profile was not approved, so lesson insurance is not available';
+export const INSURANCE_DEACTIVATED =
+  'Your account is inactive, so lesson insurance is not available';
 export const INSURANCE_ONBOARDING_INCOMPLETE =
   'Finish your onboarding documents and certifications to open lesson insurance';
 
 const LOCK_MESSAGES: Record<InsuranceLockReason, string> = {
   pending_approval: INSURANCE_PENDING,
   rejected: INSURANCE_REJECTED,
+  deactivated: INSURANCE_DEACTIVATED,
   onboarding_incomplete: INSURANCE_ONBOARDING_INCOMPLETE,
 };
 

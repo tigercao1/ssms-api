@@ -40,6 +40,7 @@ import type { InsuranceRecord } from './insurance.presenters';
 import { LessonInsuranceRepository } from './lesson-insurance.repository';
 import { MeInsuranceController } from './me-insurance.controller';
 import {
+  INSURANCE_DEACTIVATED,
   INSURANCE_ONBOARDING_INCOMPLETE,
   INSURANCE_PENDING,
   INSURANCE_REJECTED,
@@ -442,6 +443,76 @@ describe('/me/insurance', () => {
           lockReason: reason,
         });
         await register(lessonBody).expect(403, { message, reason });
+      },
+    );
+  });
+
+  describe('deactivated', () => {
+    const deactivated = {
+      message: INSURANCE_DEACTIVATED,
+      reason: 'deactivated',
+    };
+    const lessonBody = {
+      lessonDate: '2026-12-01',
+      durationHours: 1,
+      students: students(1),
+    };
+    const deactivate = () => {
+      ctx.repo.instructors.get(ADA_INSTRUCTOR)!.is_active = false;
+    };
+
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    it('locks an approved, onboarded instructor and reads no records', async () => {
+      await lesson('2026-12-01', 1, 1);
+      deactivate();
+      const records = jest.spyOn(ctx.repo, 'recordsFor');
+      const requests = jest.spyOn(ctx.repo, 'requestsFor');
+      await expect(overview()).resolves.toMatchObject({
+        locked: true,
+        lockReason: 'deactivated',
+        owedCents: 0,
+        records: [],
+        requests: [],
+      });
+      expect(records).not.toHaveBeenCalled();
+      expect(requests).not.toHaveBeenCalled();
+    });
+
+    it('cannot register a lesson', async () => {
+      deactivate();
+      await register(lessonBody).expect(403, deactivated);
+      expect(ctx.repo.registerCalls).toHaveLength(0);
+    });
+
+    it('cannot submit an insurance request', async () => {
+      deactivate();
+      await http()
+        .post('/me/insurance/requests')
+        .set('Authorization', ADA_AUTH)
+        .send({ idempotencyKey: randomUUID(), lessons: [lessonBody] })
+        .expect(403, deactivated);
+      expect(ctx.repo.requests.size).toBe(0);
+    });
+
+    it.each(['pending', 'rejected'] as const)(
+      'reports a deactivated %s instructor with onboarding left as deactivated',
+      async (approval) => {
+        ctx.repo.instructors.get(ADA_INSTRUCTOR)!.approval_status = approval;
+        deactivate();
+        ctx.assignments.seed({
+          template_id: ctx.templates.seed({}).id,
+          subject_id: ADA_INSTRUCTOR,
+          status: 'assigned',
+          season: SEASON_2026.key,
+        });
+        await expect(overview()).resolves.toMatchObject({
+          locked: true,
+          lockReason: 'deactivated',
+        });
+        await register(lessonBody).expect(403, deactivated);
       },
     );
   });

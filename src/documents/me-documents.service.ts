@@ -41,7 +41,7 @@ export const DEACTIVATED =
 export const DEACTIVATED_REASON: ChecklistLockReason = 'deactivated';
 
 function lockFor(
-  instructor: DocumentInstructorRow,
+  instructor: Pick<DocumentInstructorRow, 'approval_status' | 'is_active'>,
 ): { message: string; reason: ChecklistLockReason } | null {
   if (!instructor.is_active) {
     return { message: DEACTIVATED, reason: DEACTIVATED_REASON };
@@ -273,14 +273,12 @@ export class MeDocumentsService {
   }
 
   async onboardingLockFor(
-    instructor: { id: string; approval_status: string },
+    instructor: { id: string; approval_status: string; is_active: boolean },
     today = torontoToday(),
   ): Promise<OnboardingLockReason | null> {
-    if (instructor.approval_status === 'rejected') {
-      return 'rejected';
-    }
-    if (instructor.approval_status !== 'approved') {
-      return 'pending_approval';
+    const approvalLock = lockFor(instructor);
+    if (approvalLock) {
+      return approvalLock.reason;
     }
     const complete = await this.onboardingComplete(instructor.id, today);
     return complete ? null : 'onboarding_incomplete';

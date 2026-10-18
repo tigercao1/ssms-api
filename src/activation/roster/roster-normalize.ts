@@ -74,6 +74,9 @@ export const LOCATION_KEYS: Record<string, string> = {
   tremblant: 'teaching_location.tremblant',
   'mont tremblant': 'teaching_location.tremblant',
   'glen eden': 'teaching_location.glen_eden',
+  ge: 'teaching_location.glen_eden',
+  lakeridge: 'teaching_location.lakeridge',
+  'lake ridge': 'teaching_location.lakeridge',
 };
 
 export const ALLOWED_LOCATION_KEYS: readonly string[] = [
@@ -85,6 +88,7 @@ const CANONICAL_LOCATIONS = new Set([
   'blue mountain',
   'tremblant',
   'glen eden',
+  'lakeridge',
 ]);
 
 type GenericComponent = 'ski' | 'teaching' | 'riding' | 'instructor_training';

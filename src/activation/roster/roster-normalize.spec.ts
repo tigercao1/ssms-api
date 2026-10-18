@@ -407,7 +407,7 @@ describe('normalizeLocations', () => {
       unresolved: ['Shanghai'],
       normalized: true,
     });
-    expect(ALLOWED_LOCATION_KEYS).toHaveLength(4);
+    expect(ALLOWED_LOCATION_KEYS).toHaveLength(5);
   });
 
   it('does not flag canonical values for review', () => {
@@ -423,6 +423,9 @@ describe('normalizeLocations', () => {
     ['Mt. St. Louis Moonstone', 'teaching_location.moonstone'],
     ['Mont-Tremblant', 'teaching_location.tremblant'],
     ['Blue Mountain (weekends only)', 'teaching_location.blue_mountain'],
+    ['GE', 'teaching_location.glen_eden'],
+    ['Lakeridge (Weekdays only)', 'teaching_location.lakeridge'],
+    ['Lake Ridge', 'teaching_location.lakeridge'],
   ])('maps %s', (value, key) => {
     expect(normalizeLocations(value)).toEqual({
       keys: [key],
@@ -433,7 +436,6 @@ describe('normalizeLocations', () => {
 
   it.each([
     'Mostly West Coast this year :) I may comeback to BM',
-    'Lakeridge (Weekdays only)',
     'Ottawa Region',
     'Shanghai ',
   ])('leaves %s unresolved', (value) => {

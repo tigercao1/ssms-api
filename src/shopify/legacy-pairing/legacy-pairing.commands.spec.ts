@@ -121,6 +121,7 @@ function seedDb(stateRows: Row[] = []): FakeDb {
         },
       ],
       instructor_shopify_state: stateRows,
+      instructor_sync_queue: [],
     },
     writes: [],
   };
@@ -516,8 +517,137 @@ describe('runApply', () => {
       '/r.csv': reviewed(`${ID1},,,x,,,`),
     });
     await expect(runApply(deps, '/r.csv', true)).resolves.toBe(0);
-    expect(logs).toEqual(['No rows with confirm=y; nothing to do.']);
+    expect(logs).toEqual([
+      'No rows with confirm=y or confirm=n; nothing to do.',
+    ]);
     expect(db.writes).toEqual([]);
+  });
+
+  describe('confirm=n (not the same person)', () => {
+    const dismissRow = (
+      id: string,
+      handle: string | null,
+      dismissed: string[],
+    ) => ({ ...stateRow(id, handle), dismissed_legacy_handles: dismissed });
+
+    it('prints the dismissal but writes nothing without --write', async () => {
+      const db = seedDb([dismissRow(ID2, null, [])]);
+      const { deps, logs } = makeDeps(db, {
+        '/r.csv': reviewed(`${ID1},,,aaron,,,n`),
+      });
+      await expect(runApply(deps, '/r.csv', false)).resolves.toBe(0);
+      expect(db.writes).toEqual([]);
+      expect(logs).toEqual([
+        `WOULD DISMISS ${ID1} [Vincent Li / 李文森] legacy_handle=aaron (not the same person)`,
+        'Dry run: 1 row(s). Re-run with --write to apply.',
+      ]);
+    });
+
+    it('records the dismissed handle alongside earlier ones and queues a sync', async () => {
+      const db = seedDb([dismissRow(ID1, 'vincent-li', ['zed'])]);
+      const { deps, logs } = makeDeps(db, {
+        '/r.csv': reviewed(`${ID1},,,aaron,,,n`, `${ID1},,,zed,,,n`),
+      });
+      await expect(runApply(deps, '/r.csv', true)).resolves.toBe(2);
+      expect(db.writes).toEqual([
+        {
+          table: 'instructor_shopify_state',
+          onConflict: 'instructor_id',
+          rows: [
+            { instructor_id: ID1, dismissed_legacy_handles: ['aaron', 'zed'] },
+          ],
+        },
+        {
+          table: 'instructor_sync_queue',
+          onConflict: 'instructor_id',
+          rows: [
+            {
+              instructor_id: ID1,
+              enqueued_at: NOW.toISOString(),
+              attempts: 0,
+            },
+          ],
+        },
+      ]);
+      expect(db.tables.instructor_shopify_state).toEqual([
+        dismissRow(ID1, 'vincent-li', ['aaron', 'zed']),
+      ]);
+      expect(logs).toContain('Queued a Shopify sync for 1 instructor(s).');
+      expect(logs).toContain('Updated 2 row(s).');
+    });
+
+    it('pairs and dismisses in one file without touching the pairing write', async () => {
+      const db = seedDb([dismissRow(ID2, null, [])]);
+      const { deps } = makeDeps(db, {
+        '/r.csv': reviewed(`${ID1},,,xiao-li,,,y`, `${ID2},,,sarah,,,n`),
+      });
+      await expect(runApply(deps, '/r.csv', true)).resolves.toBe(2);
+      expect(db.writes.map((w) => [w.table, w.rows])).toEqual([
+        [
+          'instructor_shopify_state',
+          [{ instructor_id: ID1, shopify_handle: 'xiao-li' }],
+        ],
+        [
+          'instructor_shopify_state',
+          [{ instructor_id: ID2, dismissed_legacy_handles: ['sarah'] }],
+        ],
+        [
+          'instructor_sync_queue',
+          [
+            {
+              instructor_id: ID2,
+              enqueued_at: NOW.toISOString(),
+              attempts: 0,
+            },
+          ],
+        ],
+      ]);
+    });
+
+    it('refuses to dismiss the handle an instructor is paired with', async () => {
+      const db = seedDb([dismissRow(ID1, 'xiao-li', [])]);
+      const { deps } = makeDeps(db, {
+        '/r.csv': reviewed(`${ID1},,,xiao-li,,,n`),
+      });
+      await expect(runApply(deps, '/r.csv', true)).rejects.toThrow(
+        `Cannot dismiss the legacy handle an instructor is paired with: xiao-li -> ${ID1} (line 2)`,
+      );
+      expect(db.writes).toEqual([]);
+    });
+
+    it('fails clearly when the dismissed_legacy_handles column is missing', async () => {
+      const db = seedDb([stateRow(ID2, null)]);
+      const { deps } = makeDeps(db, {
+        '/r.csv': reviewed(`${ID1},,,aaron,,,n`),
+      });
+      await expect(runApply(deps, '/r.csv', true)).rejects.toThrow(
+        /dismissed_legacy_handles does not exist.*migration 303/,
+      );
+      expect(db.writes).toEqual([]);
+    });
+
+    it('reports write errors', async () => {
+      const files = { '/r.csv': reviewed(`${ID1},,,aaron,,,n`) };
+      const upsertFails = seedDb([dismissRow(ID2, null, [])]);
+      upsertFails.failOn = {
+        table: 'instructor_shopify_state',
+        op: 'upsert',
+        error: { message: 'conflict' },
+      };
+      await expect(
+        runApply(makeDeps(upsertFails, files).deps, '/r.csv', true),
+      ).rejects.toThrow('Failed to upsert instructor_shopify_state: conflict');
+
+      const queueFails = seedDb([dismissRow(ID2, null, [])]);
+      queueFails.failOn = {
+        table: 'instructor_sync_queue',
+        op: 'upsert',
+        error: { message: 'down' },
+      };
+      await expect(
+        runApply(makeDeps(queueFails, files).deps, '/r.csv', true),
+      ).rejects.toThrow('Failed to queue a Shopify sync: down');
+    });
   });
 
   it('reports database errors', async () => {

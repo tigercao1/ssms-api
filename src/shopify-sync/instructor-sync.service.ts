@@ -8,13 +8,14 @@ import { baseHandle, handleCandidate } from './instructor-handle';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncRepository } from './instructor-sync.repository';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
+import { LegacyRoster } from './legacy-roster';
 import type {
   InstructorShopifyState,
   InstructorSnapshot,
 } from './instructor-sync.types';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
 
-export type SyncOutcome = 'active' | 'draft' | 'skipped';
+export type SyncOutcome = 'active' | 'draft' | 'held' | 'skipped';
 
 export interface ReconcileResult {
   enqueued: number;
@@ -32,6 +33,7 @@ export class InstructorSyncService {
     private readonly photos: InstructorPhotoSync,
     private readonly translations: InstructorTranslationsSync,
     private readonly goLive: GoLiveService,
+    private readonly legacy: LegacyRoster,
   ) {}
 
   async sync(instructorId: string): Promise<SyncOutcome> {
@@ -41,6 +43,10 @@ export class InstructorSyncService {
     ]);
     if (!assessment?.readiness.ready) {
       return this.hide(instructorId, state);
+    }
+    if (await this.legacy.holdFor(assessment.publishable.instructor, state)) {
+      await this.hide(instructorId, state);
+      return 'held';
     }
     return this.publish(assessment.publishable, state);
   }
@@ -119,8 +125,12 @@ export class InstructorSyncService {
     displayNameEn: string,
   ): Promise<string> {
     const base = baseHandle(instructorId, displayNameEn);
+    const legacyHandles = await this.legacy.handles();
     for (let attempt = 1; attempt <= MAX_HANDLE_ATTEMPTS; attempt++) {
       const candidate = handleCandidate(base, attempt);
+      if (legacyHandles.has(candidate)) {
+        continue;
+      }
       if (await this.repo.isHandleStoredByOther(candidate, instructorId)) {
         continue;
       }

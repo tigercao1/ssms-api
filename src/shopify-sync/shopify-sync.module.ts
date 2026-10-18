@@ -15,6 +15,7 @@ import {
 } from './instructor-sync.repository';
 import { InstructorSyncService } from './instructor-sync.service';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
+import { LegacyRoster } from './legacy-roster';
 import { ReconcileAuthGuard } from './reconcile-auth.guard';
 import { ShopifySyncAdminController } from './shopify-sync-admin.controller';
 import { ShopifySyncAdminService } from './shopify-sync-admin.service';
@@ -49,6 +50,7 @@ import { ShopifySyncWorker } from './shopify-sync.worker';
     ShopifyInstructorGateway,
     InstructorPhotoSync,
     InstructorTranslationsSync,
+    LegacyRoster,
     GoLiveService,
     InstructorSyncService,
     ShopifySyncWorker,

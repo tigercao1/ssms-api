@@ -1,17 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { torontoToday } from '../documents/certification-validity';
 import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
 import { MeDocumentsService } from '../documents/me-documents.service';
 import {
   type GoLiveDocument,
+  type GoLiveHold,
   goLiveReadiness,
   type GoLiveReadiness,
   type GoLiveStatus,
   verifiedCertifications,
 } from './go-live';
 import { InstructorSyncRepository } from './instructor-sync.repository';
-import { type InstructorSnapshot, isVisible } from './instructor-sync.types';
+import {
+  type InstructorShopifyState,
+  type InstructorSnapshot,
+  isVisible,
+} from './instructor-sync.types';
+import { LegacyRoster } from './legacy-roster';
 import { storefrontBaseUrl } from './storefront-url';
 
 export const DEFAULT_STOREFRONT_LIVE_BASE_URL =
@@ -24,11 +30,14 @@ export interface GoLiveAssessment {
 
 @Injectable()
 export class GoLiveService {
+  private readonly logger = new Logger(GoLiveService.name);
+
   constructor(
     private readonly repo: InstructorSyncRepository,
     private readonly subjects: DocumentSubjectsRepository,
     private readonly documents: MeDocumentsService,
     private readonly config: ConfigService,
+    private readonly legacy: LegacyRoster,
   ) {}
 
   async assess(
@@ -85,7 +94,24 @@ export class GoLiveService {
       liveUrl: live && handle ? `${this.liveBaseUrl()}${handle}` : null,
       missing: assessment.readiness.missing,
       certifications: assessment.readiness.certifications,
+      hold: assessment.readiness.ready
+        ? await this.hold(assessment.publishable, state)
+        : null,
     };
+  }
+
+  private async hold(
+    snapshot: InstructorSnapshot,
+    state: InstructorShopifyState | null,
+  ): Promise<GoLiveHold | null> {
+    try {
+      return await this.legacy.holdFor(snapshot.instructor, state);
+    } catch (err) {
+      this.logger.warn(
+        `Could not check legacy pairing for ${snapshot.instructor.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   }
 
   private liveBaseUrl(): string {

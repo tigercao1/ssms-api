@@ -12,6 +12,7 @@ import {
   storageObject,
 } from './instructor-photo.sync';
 import { InstructorSyncService } from './instructor-sync.service';
+import { LegacyRoster } from './legacy-roster';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
 import type { SyncInstructorRow } from './instructor-sync.types';
 import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
@@ -38,6 +39,7 @@ function setup(instructor: Partial<SyncInstructorRow> = {}) {
     }),
     new InstructorTranslationsSync(gateway),
     readyWhenVisible(repo),
+    new LegacyRoster(gateway, repo),
   );
   const setInstructor = (overrides: Partial<SyncInstructorRow>) =>
     repo.snapshots.set(
@@ -356,7 +358,10 @@ describe('extra photo slots', () => {
   it('never writes to the legacy our_team type', async () => {
     const { shopify, service } = setup(withAllPhotos);
     await service.sync(INSTRUCTOR_ID);
-    expect(JSON.stringify(shopify.calls)).not.toContain('our_team');
+    const writes = shopify.calls.filter(
+      (c) => c.operation !== 'SsmsLegacyRoster',
+    );
+    expect(JSON.stringify(writes)).not.toContain('our_team');
   });
 });
 

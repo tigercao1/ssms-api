@@ -10,6 +10,8 @@ import type {
   SyncInstructorRow,
   SyncQueueRow,
 } from '../../src/shopify-sync/instructor-sync.types';
+import { LegacyRoster } from '../../src/shopify-sync/legacy-roster';
+import type { ShopifyInstructorGateway } from '../../src/shopify-sync/shopify-instructor.gateway';
 import {
   type ShopifySyncHeartbeat,
   type ShopifySyncSettingsRow,
@@ -104,9 +106,19 @@ export function verifiedUpload(
   });
 }
 
+export function noLegacyRoster(repo: InstructorSyncRepository): LegacyRoster {
+  return new LegacyRoster(
+    {
+      listLegacyEntries: () => Promise.resolve([]),
+    } as unknown as ShopifyInstructorGateway,
+    repo,
+  );
+}
+
 export function goLiveFor(
   repo: InstructorSyncRepository,
   env: Record<string, string | undefined> = {},
+  legacy: LegacyRoster = noLegacyRoster(repo),
 ) {
   const templates = new InMemoryDocumentTemplatesRepository();
   const subjects = new InMemoryDocumentSubjectsRepository();
@@ -121,7 +133,7 @@ export function goLiveFor(
     seasonsService(seasonsRepo('2025-26', '2026-27')),
   );
   const config = { get: (k: string) => env[k] } as unknown as ConfigService;
-  const service = new GoLiveService(repo, subjects, documents, config);
+  const service = new GoLiveService(repo, subjects, documents, config, legacy);
   return { service, subjects, templates, assignments, documents, config };
 }
 
@@ -181,6 +193,7 @@ export class InMemorySyncRepository extends InstructorSyncRepository {
       synced_photo_3_version: null,
       last_synced_at: null,
       last_status: null,
+      dismissed_legacy_handles: [],
     };
     this.states.set(instructorId, { ...current, ...patch });
     return Promise.resolve();
@@ -395,8 +408,27 @@ export class FakeShopify {
   fileStatuses = ['UPLOADED', 'PROCESSING', 'READY'];
   calls: GraphqlCall[] = [];
   userErrors = new Map<string, ShopifyUserError[]>();
+  legacyRosterError?: Error;
   private nextId = 1;
   private readonly handlers: Record<string, Handler> = {
+    SsmsLegacyRoster: (v) => {
+      if (this.legacyRosterError) {
+        throw this.legacyRosterError;
+      }
+      const nodes = [...this.entries.values()]
+        .filter((e) => e.type === v.type)
+        .map((e) => ({
+          handle: e.handle,
+          displayName: e.fields.name ?? null,
+          name: e.fields.name === undefined ? null : { value: e.fields.name },
+        }));
+      return {
+        metaobjects: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes,
+        },
+      };
+    },
     SsmsInstructorByHandle: (v) => {
       const entry = this.entryAt(v.handle.type, v.handle.handle);
       return {
@@ -608,6 +640,18 @@ export class FakeShopify {
       status: 'ACTIVE',
     };
     this.entries.set(`ssms_instructor/${handle}`, entry);
+    return entry;
+  }
+
+  addLegacyEntry(handle: string, name: string, status = 'ACTIVE'): FakeEntry {
+    const entry: FakeEntry = {
+      id: `gid://shopify/Metaobject/${this.nextId++}`,
+      handle,
+      type: 'our_team',
+      fields: { name },
+      status,
+    };
+    this.entries.set(`our_team/${handle}`, entry);
     return entry;
   }
 

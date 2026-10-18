@@ -43,11 +43,27 @@ describe('withPortalLanguage', () => {
     ).toBe('https://app.ssnow.club/login?lang=zh-CN');
   });
 
-  it('leaves bilingual links and unparseable URLs unchanged', () => {
+  it('removes lang for bilingual, keeping the other params and fragment', () => {
     expect(
       withPortalLanguage('https://app.ssnow.club/login?lang=en', 'bilingual'),
-    ).toBe('https://app.ssnow.club/login?lang=en');
+    ).toBe('https://app.ssnow.club/login');
+    expect(
+      withPortalLanguage(
+        'https://app.ssnow.club/activate?t=abc&lang=zh-CN&next=%2Fhome#top',
+        'bilingual',
+      ),
+    ).toBe('https://app.ssnow.club/activate?t=abc&next=%2Fhome#top');
+    expect(
+      withPortalLanguage('https://app.ssnow.club/login?t=abc', 'bilingual'),
+    ).toBe('https://app.ssnow.club/login?t=abc');
+  });
+
+  it('leaves unparseable URLs unchanged', () => {
     expect(withPortalLanguage('', 'en')).toBe('');
     expect(withPortalLanguage('/login', 'en')).toBe('/login');
+    expect(withPortalLanguage('', 'bilingual')).toBe('');
+    expect(withPortalLanguage('/login?lang=en', 'bilingual')).toBe(
+      '/login?lang=en',
+    );
   });
 });

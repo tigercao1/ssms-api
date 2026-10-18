@@ -22,10 +22,17 @@ export function withPortalLanguage(
   url: string,
   language: EmailLanguage,
 ): string {
-  if (language === 'bilingual' || !URL.canParse(url)) {
+  if (!URL.canParse(url)) {
     return url;
   }
   const target = new URL(url);
-  target.searchParams.set('lang', language);
+  if (language === 'bilingual') {
+    if (!target.searchParams.has('lang')) {
+      return url;
+    }
+    target.searchParams.delete('lang');
+  } else {
+    target.searchParams.set('lang', language);
+  }
   return target.toString();
 }

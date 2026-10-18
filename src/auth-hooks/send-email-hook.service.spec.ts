@@ -357,6 +357,25 @@ describe('SendEmailHookService', () => {
         expect(sent()[0].language).toBe('bilingual');
         expect(redirectTarget(sent()[0]).href).toBe(REDIRECT);
       });
+
+      it('drops an incoming lang from the portal target for a bilingual email', async () => {
+        const { service, sent } = setup({ row: null });
+        await service.handle(
+          payload(
+            {
+              email_action_type: type,
+              redirect_to: `${REDIRECT}?lang=en&next=%2Fonboarding`,
+              token_hash_new: '',
+            },
+            { new_email: 'lin.new@example.com' },
+          ),
+        );
+        expect(sent()[0].language).toBe('bilingual');
+        const target = redirectTarget(sent()[0]);
+        expect(`${target.origin}${target.pathname}`).toBe(REDIRECT);
+        expect(target.searchParams.has('lang')).toBe(false);
+        expect(target.searchParams.get('next')).toBe('/onboarding');
+      });
     });
 
     it('carries lang on both secure email_change links', async () => {

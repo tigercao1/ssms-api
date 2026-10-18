@@ -36,7 +36,8 @@ await this.mailer.send({
   footer keeps "Serendipity Snow Club" in both languages.
 - Portal links in instructor emails go through
   `withPortalLanguage(url, language)`, which adds `lang=en` or `lang=zh-CN`
-  so the portal opens in the email's language. Bilingual emails get no `lang`.
+  so the portal opens in the email's language. Bilingual emails get no `lang`;
+  any `lang` already on the URL is removed.
 
 ## Attachments
 

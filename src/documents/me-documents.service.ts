@@ -53,7 +53,6 @@ function lockFor(
     : { message: PENDING_APPROVAL, reason: PENDING_APPROVAL_REASON };
 }
 
-/** Whether a document item no longer blocks onboarding: optional, or completed. */
 export function isDocumentItemDone(
   item: Pick<DocumentChecklistItem, 'required' | 'status'>,
 ): boolean {
@@ -272,7 +271,6 @@ export class MeDocumentsService {
     ]);
   }
 
-  /** The document items of the instructor's current-season checklist, without certifications. */
   async onboardingDocuments(
     instructorId: string,
   ): Promise<DocumentChecklistItem[]> {

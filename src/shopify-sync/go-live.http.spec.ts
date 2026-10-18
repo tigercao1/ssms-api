@@ -173,6 +173,34 @@ describe('go-live HTTP', () => {
       });
     });
 
+    it.each([
+      ['pending', { approval_status: 'pending' as const }],
+      ['rejected', { approval_status: 'rejected' as const }],
+      ['inactive', { is_active: false }],
+    ])(
+      'is not live for a %s instructor whose Shopify entry is still active',
+      async (_label, instructor) => {
+        ctx = await build(readySnapshotOf({ instructor }));
+        await ctx.repo.saveState(INSTRUCTOR_ID, {
+          shopify_handle: 'eddie-chen',
+          last_status: 'active',
+        });
+
+        expect(await mine()).toEqual({
+          live: false,
+          ready: false,
+          liveUrl: null,
+          missing: [],
+          certifications: [expect.objectContaining({ status: 'verified' })],
+        });
+        const admin = await http()
+          .get(`/admin/instructors/${INSTRUCTOR_ID}/go-live`)
+          .set('Authorization', ADMIN_AUTH)
+          .expect(200);
+        expect(admin.body).toMatchObject({ live: false, liveUrl: null });
+      },
+    );
+
     it('is 404 without an instructor profile', async () => {
       ctx = await build();
       await http()

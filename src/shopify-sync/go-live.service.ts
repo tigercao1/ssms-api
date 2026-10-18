@@ -17,13 +17,11 @@ import { storefrontBaseUrl } from './storefront-url';
 export const DEFAULT_STOREFRONT_LIVE_BASE_URL =
   'https://ssnow.club/pages/our-team/';
 
-/** An instructor's go-live readiness and the snapshot to publish when ready. */
 export interface GoLiveAssessment {
   readiness: GoLiveReadiness;
   publishable: InstructorSnapshot;
 }
 
-/** Loads the go-live inputs of an instructor and applies {@link goLiveReadiness}. */
 @Injectable()
 export class GoLiveService {
   constructor(
@@ -33,10 +31,6 @@ export class GoLiveService {
     private readonly config: ConfigService,
   ) {}
 
-  /**
-   * Readiness of the instructor, `null` when there is no such instructor.
-   * `publishable` is the snapshot with only the verified certifications.
-   */
   async assess(
     instructorId: string,
     today = torontoToday(),
@@ -68,13 +62,11 @@ export class GoLiveService {
     };
   }
 
-  /** {@link status} of the caller's own instructor row; 404 without one. */
   async mine(authUserId: string): Promise<GoLiveStatus> {
     const instructor = await this.documents.instructorFor(authUserId);
     return this.status(instructor.id);
   }
 
-  /** Readiness plus whether the storefront entry is live; 404 for an unknown instructor. */
   async status(instructorId: string): Promise<GoLiveStatus> {
     const [assessment, state] = await Promise.all([
       this.assess(instructorId),
@@ -83,7 +75,9 @@ export class GoLiveService {
     if (!assessment) {
       throw new NotFoundException(`Instructor ${instructorId} not found`);
     }
-    const live = state?.last_status === 'active';
+    const live =
+      isVisible(assessment.publishable.instructor) &&
+      state?.last_status === 'active';
     const handle = state?.shopify_handle ?? null;
     return {
       live,

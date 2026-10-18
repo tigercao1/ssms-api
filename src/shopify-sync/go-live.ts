@@ -48,7 +48,6 @@ export interface GoLiveCertification {
   validUntil: string | null;
 }
 
-/** The fields of a certification upload the go-live rule reads. */
 export type GoLiveUpload = Pick<
   CertificationUploadRow,
   | 'org'
@@ -59,13 +58,11 @@ export type GoLiveUpload = Pick<
   | 'inserted_at'
 >;
 
-/** A current-season onboarding document item that has an assignment. */
 export type GoLiveDocument = Pick<
   DocumentChecklistItem,
   'titleEn' | 'titleZh' | 'required' | 'status'
 > & { assignmentId: string };
 
-/** Everything the go-live rule reads about one instructor. */
 export interface GoLiveSnapshot extends InstructorSnapshot {
   certificationUploads: GoLiveUpload[];
   documents: GoLiveDocument[];
@@ -77,7 +74,6 @@ export interface GoLiveReadiness {
   certifications: GoLiveCertification[];
 }
 
-/** `GET /me/go-live` and `GET /admin/instructors/:id/go-live`. */
 export interface GoLiveStatus extends GoLiveReadiness {
   live: boolean;
   liveUrl: string | null;
@@ -152,14 +148,6 @@ function missingProfileFields(snapshot: GoLiveSnapshot): GoLiveProfileField[] {
   return checks.filter(([, present]) => !present).map(([field]) => field);
 }
 
-/**
- * Whether an instructor may be live on the storefront. An approved, active
- * instructor is ready when the required profile fields are filled, at least
- * one certification is `verified` and every required current-season document
- * is completed; `missing` lists what is not. Anyone else is not ready and has
- * nothing `missing`. `certifications` always carries every declared
- * certification with the status of its current upload.
- */
 export function goLiveReadiness(
   snapshot: GoLiveSnapshot,
   today: string,
@@ -192,7 +180,6 @@ export function goLiveReadiness(
   return { ready: missing.length === 0, missing, certifications };
 }
 
-/** The declared certifications whose current upload makes them `verified`. */
 export function verifiedCertifications(
   snapshot: GoLiveSnapshot,
   today: string,

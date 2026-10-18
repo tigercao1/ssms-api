@@ -13,7 +13,6 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { GoLiveStatus } from './go-live';
 import { GoLiveService } from './go-live.service';
 
-/** `/me/go-live`: what the calling instructor still needs before going live. */
 @Controller('me/go-live')
 @UseGuards(SupabaseAuthGuard, EmailVerifiedGuard)
 export class MeGoLiveController {
@@ -25,7 +24,6 @@ export class MeGoLiveController {
   }
 }
 
-/** `/admin/instructors/:id/go-live`: the same check for any instructor. */
 @Controller('admin/instructors')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')

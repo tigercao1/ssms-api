@@ -71,10 +71,8 @@ export class AdminCertificationUploadsService {
 
   /**
    * Sets the review outcome (and optionally the note and a corrected
-   * `validUntil`), stamping `reviewed_by`/`reviewed_at`. Approving records the
-   * instructor's declared level for the `(org, track)` as `verified_level`;
-   * rejecting clears it. Changing `validUntil` clears `expiry_reminder_sent_at`
-   * so the expiry emails follow the new date.
+   * `validUntil`), stamping `reviewed_by`/`reviewed_at`. Changing `validUntil`
+   * clears `expiry_reminder_sent_at` so the expiry emails follow the new date.
    * Rejecting deletes the file (best effort, audited) and emails the
    * instructor; a rejected upload cannot move to another status (409).
    */

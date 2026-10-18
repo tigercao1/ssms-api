@@ -69,7 +69,6 @@ export function snapshotOf(
   };
 }
 
-/** A snapshot that passes every go-live profile check, with one CSIA Level 3 certification. */
 export function readySnapshotOf(
   overrides: Parameters<typeof snapshotOf>[0] = {},
 ): InstructorSnapshot {
@@ -89,7 +88,6 @@ export function readySnapshotOf(
   });
 }
 
-/** An approved upload for `(org, track)` verified at `level`, valid well into the future. */
 export function verifiedUpload(
   org: 'csia' | 'casi',
   track: 'regular' | 'park' | 'carving',
@@ -106,11 +104,6 @@ export function verifiedUpload(
   });
 }
 
-/**
- * A real {@link GoLiveService} over `repo` and in-memory documents state:
- * `subjects` holds instructors and certification uploads, `assignments` the
- * onboarding documents (season 2026-27 is current).
- */
 export function goLiveFor(
   repo: InstructorSyncRepository,
   env: Record<string, string | undefined> = {},
@@ -132,10 +125,6 @@ export function goLiveFor(
   return { service, subjects, templates, assignments, documents, config };
 }
 
-/**
- * A {@link GoLiveService} stand-in for tests of the Shopify mechanics: every
- * approved, active instructor is ready and keeps all their certifications.
- */
 export function readyWhenVisible(
   repo: InstructorSyncRepository,
 ): GoLiveService {

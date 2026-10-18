@@ -8,6 +8,10 @@ primary_region = 'iad'
 
 [build]
 
+[processes]
+  app = 'node dist/main'
+  worker = 'node dist/main'
+
 [env]
   NODE_OPTIONS = '--max-old-space-size=320'
 

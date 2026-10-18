@@ -14,6 +14,7 @@ import {
   ShopifySyncSettings,
 } from './shopify-sync-settings.service';
 import type { SyncQueueRow } from './instructor-sync.types';
+import { runsBackgroundWorkers } from '../config/process-group';
 
 export const SYNC_POLL_INTERVAL_MS = 5_000;
 export const SYNC_BATCH_SIZE = 10;
@@ -56,6 +57,10 @@ export class ShopifySyncWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (!runsBackgroundWorkers(this.config)) {
+      this.logger.log(`Shopify sync runs in the worker process group`);
+      return;
+    }
     const mode = this.mode();
     if (!mode.enabled) {
       this.logger.log(`Shopify sync disabled: ${mode.reason}`);

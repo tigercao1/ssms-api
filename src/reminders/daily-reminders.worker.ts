@@ -23,6 +23,7 @@ import {
   DailyReminderRunsRepository,
   type ReminderPartOutcome,
 } from './daily-reminder-runs.repository';
+import { runsBackgroundWorkers } from '../config/process-group';
 
 export const REMINDERS_ENABLED_KEY = 'REMINDERS_SCHEDULE_ENABLED';
 export const REMINDERS_HOUR_KEY = 'REMINDERS_HOUR_TORONTO';
@@ -93,6 +94,10 @@ export class DailyRemindersWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (!runsBackgroundWorkers(this.config)) {
+      this.logger.log(`Daily reminders runs in the worker process group`);
+      return;
+    }
     if (!remindersScheduleEnabled(this.config)) {
       this.logger.log(
         `Daily reminders disabled: ${REMINDERS_ENABLED_KEY} is not "true"`,

@@ -8,14 +8,16 @@ import {
   calendarSyncBackoffMs,
 } from './calendar-sync.worker';
 
-function worker(flag: string | undefined) {
+function worker(flag: string | undefined, processGroup?: string) {
   const repo = new InMemoryBookingRepository();
   const sync = {
     isConnected: jest.fn(() => Promise.resolve(true)),
     syncClass: jest.fn(() => Promise.resolve(null)),
     processDeletions: jest.fn(() => Promise.resolve(null)),
   };
-  const config = { get: () => flag } as unknown as ConfigService;
+  const config = {
+    get: (key: string) => (key === 'FLY_PROCESS_GROUP' ? processGroup : flag),
+  } as unknown as ConfigService;
   const clock = { now: () => Date.parse('2026-12-10T17:00:00.000Z') };
   return {
     repo,
@@ -43,6 +45,15 @@ describe('CalendarSyncWorker', () => {
   it('never schedules itself unless the flag is "true"', async () => {
     jest.useFakeTimers();
     const { worker: w, sync } = worker(undefined);
+    w.onModuleInit();
+    jest.advanceTimersByTime(5 * CALENDAR_SYNC_INTERVAL_MS);
+    expect(sync.isConnected).not.toHaveBeenCalled();
+    await w.onModuleDestroy();
+  });
+
+  it('does not poll in the web process group', async () => {
+    jest.useFakeTimers();
+    const { worker: w, sync } = worker('true', 'app');
     w.onModuleInit();
     jest.advanceTimersByTime(5 * CALENDAR_SYNC_INTERVAL_MS);
     expect(sync.isConnected).not.toHaveBeenCalled();

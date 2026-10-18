@@ -24,6 +24,8 @@ import type { InviteRecipient, InviteRow } from './activation.types';
 import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
 import { InvitesRepository } from './invites.repository';
+import { ResendCooldownRepository } from './resend-cooldown.repository';
+import { InMemoryResendCooldownRepository } from '../../test/helpers/reminders-fakes';
 
 const TOKEN = 'b'.repeat(43);
 const EXPIRED_TOKEN = 'c'.repeat(43);
@@ -98,9 +100,11 @@ describe('Activation HTTP', () => {
     magicLinkTokenHash: jest.fn().mockResolvedValue('otp-hash'),
   };
   const dispatcher = { resend: jest.fn().mockResolvedValue('sent') };
+  let cooldowns: InMemoryResendCooldownRepository;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    cooldowns = new InMemoryResendCooldownRepository();
     const moduleRef = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
@@ -115,6 +119,8 @@ describe('Activation HTTP', () => {
       .useValue(auth)
       .overrideProvider(InviteDispatcher)
       .useValue(dispatcher)
+      .overrideProvider(ResendCooldownRepository)
+      .useValue(cooldowns)
       .overrideProvider(DocumentOnboardingService)
       .useValue(onboarding)
       .overrideGuard(SupabaseAuthGuard)
@@ -161,9 +167,21 @@ describe('Activation HTTP', () => {
       );
     });
 
-    it('410 { email } for an expired invite', async () => {
+    it('410 { email, retryAfterSeconds: 0 } for an expired invite', async () => {
       const res = await redeem(EXPIRED_TOKEN).expect(410);
-      expect(res.body).toEqual({ email: 'jane@example.test' });
+      expect(res.body).toEqual({
+        email: 'jane@example.test',
+        retryAfterSeconds: 0,
+      });
+    });
+
+    it('410 with the running resend wait when that email just asked for a link', async () => {
+      await resend('jane@example.test').expect(202);
+      const res = await redeem(EXPIRED_TOKEN).expect(410);
+      expect(res.body).toEqual({
+        email: 'jane@example.test',
+        retryAfterSeconds: 60,
+      });
     });
 
     it('404 without a token when the account email changed after the invite', async () => {
@@ -198,7 +216,7 @@ describe('Activation HTTP', () => {
       const unknown = await resend('nobody@example.test', '3.3.3.2').expect(
         202,
       );
-      expect(known.body).toEqual({ status: 'accepted' });
+      expect(known.body).toEqual({ status: 'accepted', retryAfterSeconds: 60 });
       expect(unknown.body).toEqual(known.body);
       await new Promise((resolve) => setImmediate(resolve));
       expect(dispatcher.resend).toHaveBeenCalledTimes(1);
@@ -208,10 +226,24 @@ describe('Activation HTTP', () => {
       );
     });
 
-    it('202 with the same body while the last link is still cooling down', async () => {
+    it('202 with the seconds left, and no second send, inside the minute', async () => {
+      await resend('jane@example.test', '3.3.3.3').expect(202);
+      const res = await resend('JANE@example.test', '3.3.3.4').expect(202);
+      expect(res.body).toEqual({
+        status: 'accepted',
+        retryAfterSeconds: expect.any(Number) as number,
+      });
+      const { retryAfterSeconds } = res.body as { retryAfterSeconds: number };
+      expect(retryAfterSeconds).toBeGreaterThan(0);
+      expect(retryAfterSeconds).toBeLessThanOrEqual(60);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(dispatcher.resend).toHaveBeenCalledTimes(1);
+    });
+
+    it('202 with the same body when the last invite link is still cooling down', async () => {
       dispatcher.resend.mockResolvedValueOnce('cooling_down');
-      const res = await resend('jane@example.test', '3.3.3.3').expect(202);
-      expect(res.body).toEqual({ status: 'accepted' });
+      const res = await resend('jane@example.test', '3.3.3.5').expect(202);
+      expect(res.body).toEqual({ status: 'accepted', retryAfterSeconds: 60 });
     });
 
     it('400 for a malformed email', async () => {
@@ -229,7 +261,12 @@ describe('Activation HTTP', () => {
       for (let i = 0; i < 3; i++) {
         await resend('same@example.test', `5.5.5.${i}`).expect(202);
       }
-      await resend('SAME@example.test', '5.5.5.9').expect(429);
+      const limited = await resend('SAME@example.test', '5.5.5.9').expect(429);
+      const { retryAfterSeconds } = limited.body as {
+        retryAfterSeconds: number;
+      };
+      expect(retryAfterSeconds).toBeGreaterThan(3_500);
+      expect(retryAfterSeconds).toBeLessThanOrEqual(3_600);
       await resend('other@example.test', '5.5.5.9').expect(202);
     });
   });

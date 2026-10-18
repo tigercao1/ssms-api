@@ -10,12 +10,11 @@ import {
   issueInviteToken,
 } from './invite-token';
 import { InvitesRepository } from './invites.repository';
+import { RESEND_COOLDOWN_SECONDS } from './resend-cooldown.repository';
 
 export type InviteTemplate = 'invite.season' | 'invite.reminder';
 export type InviteMailer = Pick<MailerService, 'send' | 'portalLink'>;
 export type ResendOutcome = SendOutcome | 'cooling_down';
-
-export const RESEND_COOLDOWN_MS = 60_000;
 
 /**
  * Issues a fresh invite token (replacing any earlier one, new 30-day expiry),
@@ -48,7 +47,7 @@ export class InviteDispatcher {
       invite.id,
       issued.tokenHash,
       issued.expiresAt,
-      inviteExpiryFor(new Date(now.getTime() - RESEND_COOLDOWN_MS)),
+      inviteExpiryFor(new Date(now.getTime() - RESEND_COOLDOWN_SECONDS * 1000)),
     );
     if (!replaced) {
       return 'cooling_down';

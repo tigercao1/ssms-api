@@ -6,8 +6,15 @@ import {
 } from '@nestjs/common';
 import type { ActivationAuth } from './activation-auth';
 import type { InviteRecipient, InviteRow } from './activation.types';
-import { ActivationService, normalizeEmail } from './activation.service';
-import { InMemoryInvitesRepository } from '../../test/helpers/reminders-fakes';
+import {
+  ActivationService,
+  hashEmail,
+  normalizeEmail,
+} from './activation.service';
+import {
+  InMemoryInvitesRepository,
+  InMemoryResendCooldownRepository,
+} from '../../test/helpers/reminders-fakes';
 import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
 import type { InvitesRepository } from './invites.repository';
@@ -57,13 +64,15 @@ function setup() {
     assignPublished: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
     assignPublishedForAuthUser: jest.fn().mockResolvedValue(null),
   };
+  const cooldowns = new InMemoryResendCooldownRepository();
   const service = new ActivationService(
     invites as unknown as InvitesRepository,
     auth,
     dispatcher as unknown as InviteDispatcher,
     onboarding as unknown as DocumentOnboardingService,
+    cooldowns,
   );
-  return { service, invites, auth, dispatcher, onboarding };
+  return { service, invites, auth, dispatcher, onboarding, cooldowns };
 }
 
 beforeEach(() => {
@@ -142,19 +151,54 @@ describe('ActivationService.redeem', () => {
     expect(invites.findByTokenHash).not.toHaveBeenCalled();
   });
 
-  it('410s an expired invite with its email', async () => {
-    const { service, invites, auth } = setup();
-    invites.findByTokenHash.mockResolvedValue(
-      row({ expires_at: '2026-10-11T03:59:59Z' }),
-    );
+  const expiredRedeem = async (service: ActivationService) => {
     const err = (await service
       .redeem(TOKEN)
       .catch((e: unknown) => e)) as HttpException;
     expect(err).toBeInstanceOf(HttpException);
     expect(err.getStatus()).toBe(410);
-    expect(err.getResponse()).toEqual({ email: 'jane@example.test' });
+    return err.getResponse();
+  };
+
+  it('410s an expired invite with its email and no resend wait', async () => {
+    const { service, invites, auth } = setup();
+    invites.findByTokenHash.mockResolvedValue(
+      row({ expires_at: '2026-10-11T03:59:59Z' }),
+    );
+    await expect(expiredRedeem(service)).resolves.toEqual({
+      email: 'jane@example.test',
+      retryAfterSeconds: 0,
+    });
     expect(auth.magicLinkTokenHash).not.toHaveBeenCalled();
     expect(invites.markRedeemed).not.toHaveBeenCalled();
+  });
+
+  it('410s with the seconds left before that email may ask for a new link', async () => {
+    const { service, invites } = setup();
+    invites.findByTokenHash.mockResolvedValue(
+      row({ expires_at: '2026-10-11T03:59:59Z' }),
+    );
+    await service.requestResend('Jane@Example.test');
+    jest.advanceTimersByTime(15_000);
+    await expect(expiredRedeem(service)).resolves.toEqual({
+      email: 'jane@example.test',
+      retryAfterSeconds: 45,
+    });
+  });
+
+  it('still 410s, with no wait, when the cooldown cannot be read', async () => {
+    const { service, invites, cooldowns } = setup();
+    jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    jest
+      .spyOn(cooldowns, 'retryAfterSeconds')
+      .mockRejectedValueOnce(new Error('db down'));
+    invites.findByTokenHash.mockResolvedValue(
+      row({ expires_at: '2026-10-11T03:59:59Z' }),
+    );
+    await expect(expiredRedeem(service)).resolves.toEqual({
+      email: 'jane@example.test',
+      retryAfterSeconds: 0,
+    });
   });
 
   it('404s when the auth user is gone', async () => {
@@ -237,26 +281,103 @@ describe('ActivationService.resend', () => {
   });
 });
 
-describe('ActivationService.resend cooldown', () => {
-  function setup() {
-    const invites = new InMemoryInvitesRepository();
-    invites.seed({
-      email: 'jane@example.test',
-      sent_at: '2026-10-01T00:00:00Z',
-      expires_at: '2026-10-05T00:00:00Z',
+function setupWithInvite() {
+  const invites = new InMemoryInvitesRepository();
+  invites.seed({
+    email: 'jane@example.test',
+    sent_at: '2026-10-01T00:00:00Z',
+    expires_at: '2026-10-05T00:00:00Z',
+  });
+  const mailer = {
+    send: jest.fn().mockResolvedValue('sent'),
+    portalLink: (p: string) => `https://portal.test${p}`,
+  };
+  const cooldowns = new InMemoryResendCooldownRepository();
+  const service = new ActivationService(
+    invites,
+    {} as ActivationAuth,
+    new InviteDispatcher(invites, mailer),
+    {} as DocumentOnboardingService,
+    cooldowns,
+  );
+  return { service, mailer, cooldowns };
+}
+
+describe('ActivationService.requestResend', () => {
+  const settle = () => jest.advanceTimersByTimeAsync(0);
+
+  it('answers an invited and an uninvited email the same way', async () => {
+    const { service, mailer } = setupWithInvite();
+    const invited = await service.requestResend('jane@example.test');
+    const uninvited = await service.requestResend('nobody@example.test');
+    expect(invited).toEqual({ status: 'accepted', retryAfterSeconds: 60 });
+    expect(uninvited).toEqual(invited);
+    await settle();
+    expect(mailer.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts down inside the window without extending it, then accepts again', async () => {
+    const { service, mailer } = setupWithInvite();
+    await expect(service.requestResend('jane@example.test')).resolves.toEqual({
+      status: 'accepted',
+      retryAfterSeconds: 60,
     });
-    const mailer = {
-      send: jest.fn().mockResolvedValue('sent'),
-      portalLink: (p: string) => `https://portal.test${p}`,
-    };
-    const service = new ActivationService(
-      invites,
-      {} as ActivationAuth,
-      new InviteDispatcher(invites, mailer),
-      {} as DocumentOnboardingService,
+    await settle();
+    jest.advanceTimersByTime(1_000);
+    await expect(
+      service.requestResend('jane@example.test'),
+    ).resolves.toMatchObject({ retryAfterSeconds: 59 });
+    jest.advanceTimersByTime(29_500);
+    await expect(
+      service.requestResend('jane@example.test'),
+    ).resolves.toMatchObject({ retryAfterSeconds: 30 });
+    await settle();
+    expect(mailer.send).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(29_500);
+    await expect(service.requestResend('jane@example.test')).resolves.toEqual({
+      status: 'accepted',
+      retryAfterSeconds: 60,
+    });
+    await settle();
+    expect(mailer.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares one window across case and whitespace variants of an email', async () => {
+    const { service } = setupWithInvite();
+    await service.requestResend('jane@example.test');
+    jest.advanceTimersByTime(10_000);
+    await expect(
+      service.requestResend('  JANE@Example.TEST '),
+    ).resolves.toMatchObject({ retryAfterSeconds: 50 });
+  });
+
+  it('sends once for a burst of simultaneous requests', async () => {
+    const { service, mailer } = setupWithInvite();
+    const answers = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        service.requestResend('jane@example.test'),
+      ),
     );
-    return { service, mailer };
-  }
+    expect(answers.map((a) => a.retryAfterSeconds)).toEqual([
+      60, 60, 60, 60, 60,
+    ]);
+    await settle();
+    expect(mailer.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps only a sha256 of the normalised email', async () => {
+    const { service, cooldowns } = setupWithInvite();
+    await service.requestResend(' Jane@Example.test ');
+    expect([...cooldowns.lastRequestedAt.keys()]).toEqual([
+      hashEmail('jane@example.test'),
+    ]);
+    expect(hashEmail('jane@example.test')).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('ActivationService.resend cooldown', () => {
+  const setup = setupWithInvite;
 
   it('emails once for a burst of resends, and again a minute later', async () => {
     const { service, mailer } = setup();

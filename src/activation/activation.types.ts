@@ -28,12 +28,11 @@ export interface RedeemedInvite {
   tokenHash: string;
 }
 
-/** `POST /activation/resend` response, identical for every request. */
+/** `POST /activation/resend` response, the same shape for every email. */
 export interface ResendAccepted {
   status: 'accepted';
+  retryAfterSeconds: number;
 }
-
-export const RESEND_ACCEPTED: ResendAccepted = { status: 'accepted' };
 
 /** Fields the roster import sets on a new invite row. */
 export interface NewInvite {

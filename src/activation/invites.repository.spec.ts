@@ -155,6 +155,29 @@ describe('SupabaseInvitesRepository', () => {
     ]);
   });
 
+  it('replaces the token only when the current one is unset or expires by the cutoff', async () => {
+    const { db, repo } = setup(
+      { data: [{ id: 'inv-1' }], error: null },
+      { data: [], error: null },
+    );
+    const cutoff = new Date('2026-11-10T03:59:00Z');
+    expect(
+      await repo.replaceTokenIfExpiringBy('inv-1', 'a'.repeat(64), NOW, cutoff),
+    ).toBe(true);
+    expect(
+      await repo.replaceTokenIfExpiringBy('inv-1', 'b'.repeat(64), NOW, cutoff),
+    ).toBe(false);
+    expect(db.ops(0)).toEqual([
+      [
+        'update',
+        [{ token_hash: 'a'.repeat(64), expires_at: NOW.toISOString() }],
+      ],
+      ['eq', ['id', 'inv-1']],
+      ['or', ['expires_at.is.null,expires_at.lte.2026-11-10T03:59:00.000Z']],
+      ['select', ['id']],
+    ]);
+  });
+
   it('releases only its own claim on an undelivered invite', async () => {
     const { db, repo } = setup();
     await repo.releaseClaim('inv-1', 'send', NOW);
@@ -269,6 +292,11 @@ describe('SupabaseInvitesRepository', () => {
     ],
     ['markSent', (r: SupabaseInvitesRepository) => r.markSent('i', NOW)],
     ['claim', (r: SupabaseInvitesRepository) => r.claim('i', 'send', NOW)],
+    [
+      'replaceTokenIfExpiringBy',
+      (r: SupabaseInvitesRepository) =>
+        r.replaceTokenIfExpiringBy('i', 'h', NOW, NOW),
+    ],
     [
       'releaseClaim',
       (r: SupabaseInvitesRepository) => r.releaseClaim('i', 'send', NOW),

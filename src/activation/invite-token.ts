@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 export const INVITE_VALID_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const INVITE_VALID_MS = INVITE_VALID_DAYS * DAY_MS;
 
 export interface IssuedInviteToken {
   token: string;
@@ -20,8 +21,13 @@ export function issueInviteToken(now: Date = new Date()): IssuedInviteToken {
   return {
     token,
     tokenHash: hashInviteToken(token),
-    expiresAt: new Date(now.getTime() + INVITE_VALID_DAYS * DAY_MS),
+    expiresAt: inviteExpiryFor(now),
   };
+}
+
+/** The expiry a token issued at `issuedAt` gets. */
+export function inviteExpiryFor(issuedAt: Date): Date {
+  return new Date(issuedAt.getTime() + INVITE_VALID_MS);
 }
 
 /** True when the invite has no expiry yet (never sent) or it has passed. */

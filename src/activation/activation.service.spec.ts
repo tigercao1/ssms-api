@@ -4,9 +4,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { ActivationAuth } from './activation-auth';
 import type { InviteRecipient, InviteRow } from './activation.types';
 import { ActivationService, normalizeEmail } from './activation.service';
-import type { InviteDispatcher } from './invite-dispatcher';
+import { InMemoryInvitesRepository } from '../../test/helpers/reminders-fakes';
+import { InviteDispatcher } from './invite-dispatcher';
 import { hashInviteToken } from './invite-token';
 import type { InvitesRepository } from './invites.repository';
 import type { DocumentOnboardingService } from '../documents/document-onboarding.service';
@@ -50,7 +52,7 @@ function setup() {
     findEmail: jest.fn().mockResolvedValue('Jane@Example.test'),
     magicLinkTokenHash: jest.fn().mockResolvedValue('hashed-otp'),
   };
-  const dispatcher = { dispatch: jest.fn().mockResolvedValue('sent') };
+  const dispatcher = { resend: jest.fn().mockResolvedValue('sent') };
   const onboarding = {
     assignPublished: jest.fn().mockResolvedValue({ created: 1, skipped: 0 }),
     assignPublishedForAuthUser: jest.fn().mockResolvedValue(null),
@@ -188,19 +190,14 @@ describe('ActivationService.resend', () => {
     invites.findLatestByEmail.mockResolvedValue(invite);
     await service.resend(' Jane@Example.TEST ');
     expect(invites.findLatestByEmail).toHaveBeenCalledWith('jane@example.test');
-    expect(dispatcher.dispatch).toHaveBeenCalledWith(
-      invite,
-      'invite.season',
-      'background',
-      NOW,
-    );
+    expect(dispatcher.resend).toHaveBeenCalledWith(invite, NOW);
   });
 
   it('re-issues a valid invite whose account is not activated yet', async () => {
     const { service, invites, dispatcher } = setup();
     invites.findLatestByEmail.mockResolvedValue(row());
     await service.resend('jane@example.test');
-    expect(dispatcher.dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatcher.resend).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -214,15 +211,20 @@ describe('ActivationService.resend', () => {
     const { service, invites, dispatcher } = setup();
     invites.findLatestByEmail.mockResolvedValue(invite);
     await service.resend('jane@example.test');
-    expect(dispatcher.dispatch).not.toHaveBeenCalled();
+    expect(dispatcher.resend).not.toHaveBeenCalled();
   });
 
-  it('logs a send that did not go out', async () => {
-    const { service, invites, dispatcher } = setup();
-    invites.findLatestByEmail.mockResolvedValue(row());
-    dispatcher.dispatch.mockResolvedValue('skipped');
-    await expect(service.resend('jane@example.test')).resolves.toBeUndefined();
-  });
+  it.each(['skipped', 'cooling_down'])(
+    'resolves quietly when the resend was %s',
+    async (outcome) => {
+      const { service, invites, dispatcher } = setup();
+      invites.findLatestByEmail.mockResolvedValue(row());
+      dispatcher.resend.mockResolvedValue(outcome);
+      await expect(
+        service.resend('jane@example.test'),
+      ).resolves.toBeUndefined();
+    },
+  );
 
   it('resendInBackground swallows errors', async () => {
     const { service, invites } = setup();
@@ -232,6 +234,44 @@ describe('ActivationService.resend', () => {
     service.resendInBackground('jane@example.test');
     await jest.runAllTimersAsync();
     expect(invites.findLatestByEmail).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ActivationService.resend cooldown', () => {
+  function setup() {
+    const invites = new InMemoryInvitesRepository();
+    invites.seed({
+      email: 'jane@example.test',
+      sent_at: '2026-10-01T00:00:00Z',
+      expires_at: '2026-10-05T00:00:00Z',
+    });
+    const mailer = {
+      send: jest.fn().mockResolvedValue('sent'),
+      portalLink: (p: string) => `https://portal.test${p}`,
+    };
+    const service = new ActivationService(
+      invites,
+      {} as ActivationAuth,
+      new InviteDispatcher(invites, mailer),
+      {} as DocumentOnboardingService,
+    );
+    return { service, mailer };
+  }
+
+  it('emails once for a burst of resends, and again a minute later', async () => {
+    const { service, mailer } = setup();
+    await Promise.all([
+      service.resend('jane@example.test'),
+      service.resend('Jane@Example.test'),
+    ]);
+    await service.resend('jane@example.test');
+    jest.advanceTimersByTime(59_000);
+    await service.resend('jane@example.test');
+    expect(mailer.send).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(1_000);
+    await service.resend('jane@example.test');
+    expect(mailer.send).toHaveBeenCalledTimes(2);
   });
 });
 

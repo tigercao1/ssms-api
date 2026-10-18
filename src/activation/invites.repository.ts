@@ -64,6 +64,16 @@ export abstract class InvitesRepository {
     tokenHash: string,
     expiresAt: Date,
   ): Promise<void>;
+  /**
+   * Atomically replaces the token only when the current one is unset or
+   * expires by `currentExpiresBy`; false when it was left alone.
+   */
+  abstract replaceTokenIfExpiringBy(
+    id: string,
+    tokenHash: string,
+    expiresAt: Date,
+    currentExpiresBy: Date,
+  ): Promise<boolean>;
   /** Atomically claims an undelivered, unclaimed invite; false when another run holds it. */
   abstract claim(id: string, kind: DeliveryKind, at: Date): Promise<boolean>;
   /** Drops the claim taken at `claimedAt` if the email was never marked delivered. */
@@ -183,6 +193,24 @@ export class SupabaseInvitesRepository extends InvitesRepository {
       token_hash: tokenHash,
       expires_at: expiresAt.toISOString(),
     });
+  }
+
+  async replaceTokenIfExpiringBy(
+    id: string,
+    tokenHash: string,
+    expiresAt: Date,
+    currentExpiresBy: Date,
+  ): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .update({ token_hash: tokenHash, expires_at: expiresAt.toISOString() })
+      .eq('id', id)
+      .or(`expires_at.is.null,expires_at.lte.${currentExpiresBy.toISOString()}`)
+      .select('id');
+    if (error) {
+      throw failure('update invite', error.message);
+    }
+    return ((data ?? []) as unknown[]).length > 0;
   }
 
   async claim(id: string, kind: DeliveryKind, at: Date): Promise<boolean> {

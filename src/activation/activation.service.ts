@@ -70,8 +70,9 @@ export class ActivationService {
   }
 
   /**
-   * Emails a fresh invite link when a sent invite exists for `email` and it is
-   * either not activated yet or expired. Silent in every other case.
+   * Emails a fresh invite link when a sent invite exists for `email`, it is
+   * either not activated yet or expired, and its last link went out at least
+   * a minute ago. Silent in every other case.
    */
   async resend(email: string): Promise<void> {
     const invite = await this.invites.findLatestByEmail(normalizeEmail(email));
@@ -85,13 +86,12 @@ export class ActivationService {
     ) {
       return;
     }
-    const outcome = await this.dispatcher.dispatch(
-      invite,
-      'invite.season',
-      'background',
-      now,
-    );
-    if (outcome !== 'sent') {
+    const outcome = await this.dispatcher.resend(invite, now);
+    if (outcome === 'cooling_down') {
+      this.logger.log(
+        `Invite resend ${invite.id} skipped: the last link went out under a minute ago`,
+      );
+    } else if (outcome !== 'sent') {
       this.logger.warn(`Invite resend ${invite.id} was ${outcome}`);
     }
   }

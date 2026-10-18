@@ -116,6 +116,26 @@ export class InMemoryInvitesRepository extends InvitesRepository {
     return Promise.resolve();
   }
 
+  replaceTokenIfExpiringBy(
+    id: string,
+    tokenHash: string,
+    expiresAt: Date,
+    currentExpiresBy: Date,
+  ): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (
+      !row ||
+      (row.expires_at !== null && new Date(row.expires_at) > currentExpiresBy)
+    ) {
+      return Promise.resolve(false);
+    }
+    this.patch(id, {
+      token_hash: tokenHash,
+      expires_at: expiresAt.toISOString(),
+    });
+    return Promise.resolve(true);
+  }
+
   claim(id: string, kind: DeliveryKind, at: Date): Promise<boolean> {
     const { claimed, done } = COLUMNS[kind];
     const row = this.rows.get(id);

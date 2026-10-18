@@ -97,7 +97,7 @@ describe('Activation HTTP', () => {
     findEmail: jest.fn().mockResolvedValue('jane@example.test'),
     magicLinkTokenHash: jest.fn().mockResolvedValue('otp-hash'),
   };
-  const dispatcher = { dispatch: jest.fn().mockResolvedValue('sent') };
+  const dispatcher = { resend: jest.fn().mockResolvedValue('sent') };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -201,13 +201,17 @@ describe('Activation HTTP', () => {
       expect(known.body).toEqual({ status: 'accepted' });
       expect(unknown.body).toEqual(known.body);
       await new Promise((resolve) => setImmediate(resolve));
-      expect(dispatcher.dispatch).toHaveBeenCalledTimes(1);
-      expect(dispatcher.dispatch).toHaveBeenCalledWith(
+      expect(dispatcher.resend).toHaveBeenCalledTimes(1);
+      expect(dispatcher.resend).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'inv-1' }),
-        'invite.season',
-        'background',
         expect.any(Date),
       );
+    });
+
+    it('202 with the same body while the last link is still cooling down', async () => {
+      dispatcher.resend.mockResolvedValueOnce('cooling_down');
+      const res = await resend('jane@example.test', '3.3.3.3').expect(202);
+      expect(res.body).toEqual({ status: 'accepted' });
     });
 
     it('400 for a malformed email', async () => {

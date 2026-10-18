@@ -47,6 +47,10 @@ const MISSING_HANDLE_COLUMN =
   'instructor_shopify_state.shopify_handle does not exist in this database. ' +
   'Apply migration 256 (feat/shopify-sync-worker) before running apply.';
 
+const MISSING_DISMISSED_COLUMN =
+  'instructor_shopify_state.dismissed_legacy_handles does not exist in this database. ' +
+  'Apply migration 303 before recording confirm=n rows.';
+
 function realPathOfNearestExisting(target: string): string {
   const missing: string[] = [];
   let current = path.resolve(target);
@@ -163,6 +167,23 @@ function isMissingColumn(error: { code?: string; message: string }): boolean {
   return error.code === '42703' || /shopify_handle/.test(error.message);
 }
 
+interface StateRow {
+  instructor_id: string;
+  shopify_handle: string | null;
+  dismissed_legacy_handles?: string[] | null;
+}
+
+function dismissedColumnError(
+  error: { code?: string; message: string },
+  fallback: string,
+): PairingCommandError {
+  return new PairingCommandError(
+    error.code === '42703' || /dismissed_legacy_handles/.test(error.message)
+      ? MISSING_DISMISSED_COLUMN
+      : `${fallback}: ${error.message}`,
+  );
+}
+
 export async function runApply(
   deps: PairingDeps,
   csvFile: string | undefined,
@@ -180,7 +201,9 @@ export async function runApply(
       'Refusing to write to PROD without SSMS_CONFIRM_PROD=yes.',
     );
   }
-  const pairs = parsePairingCsv(await deps.readFile(csvFile));
+  const { confirmed: pairs, dismissed } = parsePairingCsv(
+    await deps.readFile(csvFile),
+  );
   const supabase = deps.supabase();
 
   const probe = await supabase
@@ -195,12 +218,13 @@ export async function runApply(
     );
   }
 
-  if (pairs.length === 0) {
-    deps.log('No rows with confirm=y; nothing to do.');
+  if (pairs.length === 0 && dismissed.length === 0) {
+    deps.log('No rows with confirm=y or confirm=n; nothing to do.');
     return 0;
   }
 
-  const ids = pairs.map((p) => p.instructorId);
+  const decisions = [...pairs, ...dismissed].sort((a, b) => a.line - b.line);
+  const ids = [...new Set(decisions.map((p) => p.instructorId))];
   const handles = pairs.map((p) => p.legacyHandle);
 
   const known = await supabase
@@ -215,89 +239,164 @@ export async function runApply(
   const instructors = new Map(
     ((known.data ?? []) as InstructorRow[]).map((i) => [i.id, i]),
   );
-  const unknown = pairs.filter((p) => !instructors.has(p.instructorId));
+  const unknown = decisions.filter((p) => !instructors.has(p.instructorId));
   if (unknown.length > 0) {
     throw new PairingCommandError(
       `Unknown instructor id(s): ${unknown.map((p) => `${p.instructorId} (line ${p.line})`).join(', ')}`,
     );
   }
 
-  const taken = await supabase
-    .from('instructor_shopify_state')
-    .select('instructor_id, shopify_handle')
-    .in('shopify_handle', handles);
-  if (taken.error) {
-    throw new PairingCommandError(
-      `Failed to read instructor_shopify_state: ${taken.error.message}`,
+  if (pairs.length > 0) {
+    const taken = await supabase
+      .from('instructor_shopify_state')
+      .select('instructor_id, shopify_handle')
+      .in('shopify_handle', handles);
+    if (taken.error) {
+      throw new PairingCommandError(
+        `Failed to read instructor_shopify_state: ${taken.error.message}`,
+      );
+    }
+    const owners = new Map(
+      (
+        (taken.data ?? []) as {
+          instructor_id: string;
+          shopify_handle: string;
+        }[]
+      ).map((r) => [r.shopify_handle, r.instructor_id]),
     );
-  }
-  const owners = new Map(
-    (
-      (taken.data ?? []) as { instructor_id: string; shopify_handle: string }[]
-    ).map((r) => [r.shopify_handle, r.instructor_id]),
-  );
-  const conflicts = pairs.filter((p) => {
-    const owner = owners.get(p.legacyHandle);
-    return owner !== undefined && owner !== p.instructorId;
-  });
-  if (conflicts.length > 0) {
-    throw new PairingCommandError(
-      `Handle(s) already paired with another instructor: ${conflicts
-        .map((p) => `${p.legacyHandle} -> ${owners.get(p.legacyHandle)}`)
-        .join(', ')}`,
-    );
+    const conflicts = pairs.filter((p) => {
+      const owner = owners.get(p.legacyHandle);
+      return owner !== undefined && owner !== p.instructorId;
+    });
+    if (conflicts.length > 0) {
+      throw new PairingCommandError(
+        `Handle(s) already paired with another instructor: ${conflicts
+          .map((p) => `${p.legacyHandle} -> ${owners.get(p.legacyHandle)}`)
+          .join(', ')}`,
+      );
+    }
   }
 
   const current = await supabase
     .from('instructor_shopify_state')
-    .select('instructor_id, shopify_handle')
+    .select(
+      dismissed.length > 0
+        ? 'instructor_id, shopify_handle, dismissed_legacy_handles'
+        : 'instructor_id, shopify_handle',
+    )
     .in('instructor_id', ids);
   if (current.error) {
+    if (dismissed.length > 0) {
+      throw dismissedColumnError(
+        current.error,
+        'Failed to read instructor_shopify_state',
+      );
+    }
     throw new PairingCommandError(
       `Failed to read instructor_shopify_state: ${current.error.message}`,
     );
   }
   const existing = new Map(
-    (
-      (current.data ?? []) as {
-        instructor_id: string;
-        shopify_handle: string | null;
-      }[]
-    ).map((r) => [r.instructor_id, r.shopify_handle]),
+    ((current.data ?? []) as unknown as StateRow[]).map((r) => [
+      r.instructor_id,
+      r,
+    ]),
   );
 
-  for (const pair of pairs) {
-    const instructor = instructors.get(pair.instructorId)!;
-    const name = [instructor.display_name_en, instructor.display_name_zh]
-      .filter(Boolean)
-      .join(' / ');
-    const previous = existing.get(pair.instructorId) ?? '(none)';
-    deps.log(
-      `${write ? 'SET' : 'WOULD SET'} ${pair.instructorId} [${name}] shopify_handle=${pair.legacyHandle} (was ${previous})`,
+  const dismissingPairing = dismissed.filter(
+    (d) =>
+      existing.get(d.instructorId)?.shopify_handle === d.legacyHandle &&
+      !pairs.some((p) => p.instructorId === d.instructorId),
+  );
+  if (dismissingPairing.length > 0) {
+    throw new PairingCommandError(
+      `Cannot dismiss the legacy handle an instructor is paired with: ${dismissingPairing
+        .map((d) => `${d.legacyHandle} -> ${d.instructorId} (line ${d.line})`)
+        .join(', ')}`,
     );
   }
 
+  const nameOf = (id: string) => {
+    const instructor = instructors.get(id)!;
+    return [instructor.display_name_en, instructor.display_name_zh]
+      .filter(Boolean)
+      .join(' / ');
+  };
+  for (const pair of pairs) {
+    const previous =
+      existing.get(pair.instructorId)?.shopify_handle ?? '(none)';
+    deps.log(
+      `${write ? 'SET' : 'WOULD SET'} ${pair.instructorId} [${nameOf(pair.instructorId)}] shopify_handle=${pair.legacyHandle} (was ${previous})`,
+    );
+  }
+  for (const pair of dismissed) {
+    deps.log(
+      `${write ? 'DISMISS' : 'WOULD DISMISS'} ${pair.instructorId} [${nameOf(pair.instructorId)}] legacy_handle=${pair.legacyHandle} (not the same person)`,
+    );
+  }
+
+  const total = pairs.length + dismissed.length;
   if (!write) {
-    deps.log(`Dry run: ${pairs.length} row(s). Re-run with --write to apply.`);
+    deps.log(`Dry run: ${total} row(s). Re-run with --write to apply.`);
     return 0;
   }
 
-  const { error } = await supabase.from('instructor_shopify_state').upsert(
-    pairs.map((p) => ({
-      instructor_id: p.instructorId,
-      shopify_handle: p.legacyHandle,
-    })),
-    { onConflict: 'instructor_id' },
-  );
-  if (error) {
-    throw new PairingCommandError(
-      isMissingColumn(error)
-        ? MISSING_HANDLE_COLUMN
-        : `Failed to upsert instructor_shopify_state: ${error.message}`,
+  if (pairs.length > 0) {
+    const { error } = await supabase.from('instructor_shopify_state').upsert(
+      pairs.map((p) => ({
+        instructor_id: p.instructorId,
+        shopify_handle: p.legacyHandle,
+      })),
+      { onConflict: 'instructor_id' },
     );
+    if (error) {
+      throw new PairingCommandError(
+        isMissingColumn(error)
+          ? MISSING_HANDLE_COLUMN
+          : `Failed to upsert instructor_shopify_state: ${error.message}`,
+      );
+    }
   }
-  deps.log(`Updated ${pairs.length} row(s).`);
-  return pairs.length;
+
+  if (dismissed.length > 0) {
+    const dismissedIds = [...new Set(dismissed.map((d) => d.instructorId))];
+    const { error } = await supabase.from('instructor_shopify_state').upsert(
+      dismissedIds.map((id) => ({
+        instructor_id: id,
+        dismissed_legacy_handles: [
+          ...new Set([
+            ...(existing.get(id)?.dismissed_legacy_handles ?? []),
+            ...dismissed
+              .filter((d) => d.instructorId === id)
+              .map((d) => d.legacyHandle),
+          ]),
+        ].sort(),
+      })),
+      { onConflict: 'instructor_id' },
+    );
+    if (error) {
+      throw dismissedColumnError(
+        error,
+        'Failed to upsert instructor_shopify_state',
+      );
+    }
+    const queued = await supabase.from('instructor_sync_queue').upsert(
+      dismissedIds.map((id) => ({
+        instructor_id: id,
+        enqueued_at: deps.now().toISOString(),
+        attempts: 0,
+      })),
+      { onConflict: 'instructor_id' },
+    );
+    if (queued.error) {
+      throw new PairingCommandError(
+        `Failed to queue a Shopify sync: ${queued.error.message}`,
+      );
+    }
+    deps.log(`Queued a Shopify sync for ${dismissedIds.length} instructor(s).`);
+  }
+  deps.log(`Updated ${total} row(s).`);
+  return total;
 }
 
 const BACKFILL_INSTRUCTOR_COLUMNS =

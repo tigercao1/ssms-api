@@ -74,9 +74,17 @@ export interface GoLiveReadiness {
   certifications: GoLiveCertification[];
 }
 
+export interface GoLiveHold {
+  reason: 'legacy_pairing_decision';
+  legacyHandle: string;
+  legacyName: string;
+  message: string;
+}
+
 export interface GoLiveStatus extends GoLiveReadiness {
   live: boolean;
   liveUrl: string | null;
+  hold: GoLiveHold | null;
 }
 
 function nonBlank(value: string | null | undefined): boolean {

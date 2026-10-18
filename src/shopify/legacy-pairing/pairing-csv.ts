@@ -21,6 +21,13 @@ export interface ConfirmedPair {
   legacyHandle: string;
 }
 
+export type DismissedPair = ConfirmedPair;
+
+export interface PairingDecisions {
+  confirmed: ConfirmedPair[];
+  dismissed: DismissedPair[];
+}
+
 export class PairingCsvError extends Error {
   constructor(readonly problems: string[]) {
     super(`Pairing CSV is invalid:\n  - ${problems.join('\n  - ')}`);
@@ -100,7 +107,7 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim() !== ''));
 }
 
-export function parsePairingCsv(text: string): ConfirmedPair[] {
+export function parsePairingCsv(text: string): PairingDecisions {
   const [header, ...body] = parseCsv(text);
   if (!header) {
     throw new PairingCsvError(['file is empty']);
@@ -115,13 +122,14 @@ export function parsePairingCsv(text: string): ConfirmedPair[] {
 
   const problems: string[] = [];
   const confirmed: ConfirmedPair[] = [];
+  const dismissed: DismissedPair[] = [];
   body.forEach((cells, index) => {
     const line = index + 2;
     const confirm = at(cells, 'confirm').toLowerCase();
-    if (confirm === '' || confirm === 'n') {
+    if (confirm === '') {
       return;
     }
-    if (confirm !== 'y') {
+    if (confirm !== 'y' && confirm !== 'n') {
       problems.push(
         `line ${line}: confirm must be y, n or empty (got "${confirm}")`,
       );
@@ -129,6 +137,18 @@ export function parsePairingCsv(text: string): ConfirmedPair[] {
     }
     const instructorId = at(cells, 'instructor_id');
     const legacyHandle = at(cells, 'legacy_handle');
+    if (confirm === 'n') {
+      if (legacyHandle === '') {
+        return;
+      }
+      if (!UUID.test(instructorId)) {
+        problems.push(
+          `line ${line}: instructor_id "${instructorId}" is not a uuid`,
+        );
+      }
+      dismissed.push({ line, instructorId, legacyHandle });
+      return;
+    }
     if (!UUID.test(instructorId)) {
       problems.push(
         `line ${line}: instructor_id "${instructorId}" is not a uuid`,
@@ -168,8 +188,20 @@ export function parsePairingCsv(text: string): ConfirmedPair[] {
       );
     }
   }
+  for (const pair of dismissed) {
+    const clash = confirmed.find(
+      (c) =>
+        c.instructorId === pair.instructorId &&
+        c.legacyHandle === pair.legacyHandle,
+    );
+    if (clash) {
+      problems.push(
+        `instructor_id ${pair.instructorId} is both confirmed and dismissed for legacy_handle "${pair.legacyHandle}" (lines ${clash.line}, ${pair.line})`,
+      );
+    }
+  }
   if (problems.length > 0) {
     throw new PairingCsvError(problems);
   }
-  return confirmed;
+  return { confirmed, dismissed };
 }

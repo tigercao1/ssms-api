@@ -82,6 +82,7 @@ async function build(env: Record<string, string | undefined> = {}) {
           {} as never,
           {} as never,
           {} as never,
+          {} as never,
         ),
       },
       { provide: AuditService, useValue: audit },

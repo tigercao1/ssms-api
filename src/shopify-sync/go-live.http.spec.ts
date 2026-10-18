@@ -63,6 +63,7 @@ describe('go-live HTTP', () => {
         live: false,
         ready: true,
         liveUrl: null,
+        hold: null,
         missing: [],
         certifications: [
           {
@@ -135,6 +136,7 @@ describe('go-live HTTP', () => {
         live: false,
         ready: false,
         liveUrl: null,
+        hold: null,
         missing: [
           { group: 'profile', field: 'photo' },
           { group: 'certification', reason: 'none_verified' },
@@ -168,6 +170,7 @@ describe('go-live HTTP', () => {
         live: false,
         ready: false,
         liveUrl: null,
+        hold: null,
         missing: [],
         certifications: [expect.objectContaining({ status: 'verified' })],
       });
@@ -190,6 +193,7 @@ describe('go-live HTTP', () => {
           live: false,
           ready: false,
           liveUrl: null,
+          hold: null,
           missing: [],
           certifications: [expect.objectContaining({ status: 'verified' })],
         });
@@ -232,6 +236,7 @@ describe('go-live HTTP', () => {
         live: false,
         ready: false,
         liveUrl: null,
+        hold: null,
         missing: [{ group: 'profile', field: 'courseLevels' }],
         certifications: [expect.objectContaining({ status: 'verified' })],
       });

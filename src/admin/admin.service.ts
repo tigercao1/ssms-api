@@ -22,6 +22,8 @@ import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type { EmailTemplateVars } from '../mailer/mailer.types';
+import { GoLiveService } from '../shopify-sync/go-live.service';
+import type { InstructorStage } from '../shopify-sync/instructor-stage';
 import { AdminRepository } from './admin.repository';
 import {
   AdminInstructorListRecord,
@@ -89,6 +91,7 @@ export class AdminService {
     private readonly mailer: MailerService,
     @Inject(BIO_TRANSLATOR) private readonly translator: BioTranslator,
     private readonly onboarding: DocumentOnboardingService,
+    private readonly goLive: GoLiveService,
   ) {}
 
   /**
@@ -126,13 +129,39 @@ export class AdminService {
     limit?: number,
   ): Promise<AdminInstructorPage> {
     const size = limit ?? INSTRUCTOR_LIST_DEFAULT_LIMIT;
-    const { rows, total } = await this.repo.listInstructors(
-      filter,
+    const paging =
       page === undefined && limit === undefined
         ? undefined
-        : { limit: size, offset: pageOffset(page ?? 1, size) },
-    );
-    return { instructors: rows.map((row) => this.toListRecord(row)), total };
+        : { limit: size, offset: pageOffset(page ?? 1, size) };
+    const { stages: wanted, ...rowFilter } = filter;
+    if (!wanted?.length) {
+      const { rows, total } = await this.repo.listInstructors(
+        rowFilter,
+        paging,
+      );
+      const stages = await this.goLive.stages(rows.map((row) => row.id));
+      return {
+        instructors: rows.map((row) =>
+          this.toListRecord(row, stages.get(row.id)),
+        ),
+        total,
+      };
+    }
+    const rows = await this.repo.listAllInstructors(rowFilter);
+    const stages = await this.goLive.stages(rows.map((row) => row.id));
+    const matching = rows.filter((row) => {
+      const stage = stages.get(row.id);
+      return stage !== undefined && wanted.includes(stage);
+    });
+    const pageRows = paging
+      ? matching.slice(paging.offset, paging.offset + paging.limit)
+      : matching;
+    return {
+      instructors: pageRows.map((row) =>
+        this.toListRecord(row, stages.get(row.id)),
+      ),
+      total: matching.length,
+    };
   }
 
   /** Fetch a single instructor's core record (admin detail). */
@@ -613,11 +642,15 @@ export class AdminService {
     return new NotFoundException(`No '${slug}' entry with id '${id}'`);
   }
 
-  private toListRecord(row: AdminInstructorListRow): AdminInstructorListRecord {
+  private toListRecord(
+    row: AdminInstructorListRow,
+    stage: InstructorStage | undefined,
+  ): AdminInstructorListRecord {
     const { instructor_calendars: calendar, ...instructor } = row;
     return {
       ...this.toRecord(instructor),
       calendarConnected: calendar !== null,
+      stage: stage ?? null,
     };
   }
 

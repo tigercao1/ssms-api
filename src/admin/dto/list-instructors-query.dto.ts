@@ -10,9 +10,25 @@ import {
   Min,
 } from 'class-validator';
 import { MAX_PAGE, MAX_PAGE_SIZE } from '../../database/pagination';
+import {
+  INSTRUCTOR_STAGES,
+  type InstructorStage,
+} from '../../shopify-sync/instructor-stage';
 import type { ApprovalStatus } from '../admin.types';
 
 export const INSTRUCTOR_LIST_DEFAULT_LIMIT = 50;
+
+function toStageList(value: unknown): unknown {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const values: unknown[] = Array.isArray(value) ? value : [value];
+  const cleaned = values
+    .flatMap((v): unknown[] => (typeof v === 'string' ? v.split(',') : [v]))
+    .map((v) => (typeof v === 'string' ? v.trim() : v))
+    .filter((v) => v !== '');
+  return cleaned.length > 0 ? [...new Set(cleaned)] : undefined;
+}
 
 /**
  * Query string for `GET /admin/instructors` (T6.3). Every filter is optional;
@@ -23,6 +39,11 @@ export class ListInstructorsQueryDto {
   @IsOptional()
   @IsIn(['pending', 'approved', 'rejected'])
   status?: ApprovalStatus;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => toStageList(value))
+  @IsIn(INSTRUCTOR_STAGES, { each: true })
+  stage?: InstructorStage[];
 
   /** Narrow by active flag. Accepts `true`/`false` (string or boolean). */
   @IsOptional()

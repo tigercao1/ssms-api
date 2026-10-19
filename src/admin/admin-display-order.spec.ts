@@ -13,6 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import type { AuditEntry } from '../audit/audit.types';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
+import { GoLiveService } from '../shopify-sync/go-live.service';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { InstructorsService } from '../instructors/instructors.service';
 import { MailerService } from '../mailer/mailer.service';
@@ -95,6 +96,10 @@ async function build(initial: AdminInstructorRow = makeRow()) {
       { provide: InstructorsService, useValue: {} },
       { provide: MailerService, useValue: {} },
       { provide: DocumentOnboardingService, useValue: {} },
+      {
+        provide: GoLiveService,
+        useValue: { stages: () => Promise.resolve(new Map()) },
+      },
       { provide: BIO_TRANSLATOR, useValue: {} },
       { provide: AuditService, useValue: audit },
     ],

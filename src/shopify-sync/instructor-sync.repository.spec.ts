@@ -1,3 +1,7 @@
+import {
+  cappedSupabase,
+  POSTGREST_MAX_ROWS,
+} from '../../test/helpers/capped-supabase';
 import { SupabaseInstructorSyncRepository } from './instructor-sync.repository';
 
 interface Result {
@@ -31,6 +35,9 @@ function fakeSupabase(
         'select',
         'eq',
         'neq',
+        'in',
+        'order',
+        'range',
         'limit',
         'upsert',
         'update',
@@ -70,6 +77,190 @@ function fakeSupabase(
 const failure = { data: null, error: { message: 'boom' } };
 
 describe('SupabaseInstructorSyncRepository', () => {
+  describe('loadSnapshots', () => {
+    it('loads many instructors with grouped, active, ordered reference names', async () => {
+      const { repo, opsFor } = fakeSupabase({
+        instructors: {
+          data: [{ id: 'i-1' }, { id: 'i-2' }],
+          error: null,
+        },
+        instructors_teaching_locations: {
+          data: [
+            {
+              instructor_id: 'i-1',
+              teaching_locations: {
+                name: 'Whistler',
+                name_zh: '惠斯勒',
+                sort_order: 2,
+                is_active: true,
+              },
+            },
+            {
+              instructor_id: 'i-1',
+              teaching_locations: {
+                name: 'Banff',
+                sort_order: 1,
+                is_active: true,
+              },
+            },
+            {
+              instructor_id: 'i-2',
+              teaching_locations: {
+                name: 'Closed',
+                sort_order: 0,
+                is_active: false,
+              },
+            },
+          ],
+          error: null,
+        },
+        instructor_certifications: {
+          data: [
+            {
+              instructor_id: 'i-2',
+              org: 'csia',
+              track: 'regular',
+              level: 2,
+              is_partial: false,
+            },
+          ],
+          error: null,
+        },
+      });
+
+      const snapshots = await repo.loadSnapshots(['i-1', 'i-2', 'gone']);
+
+      expect([...snapshots.keys()]).toEqual(['i-1', 'i-2']);
+      expect(snapshots.get('i-1')).toMatchObject({
+        locations: [
+          { name: 'Banff', name_zh: null },
+          { name: 'Whistler', name_zh: '惠斯勒' },
+        ],
+        certifications: [],
+      });
+      expect(snapshots.get('i-2')).toMatchObject({
+        locations: [],
+        certifications: [
+          { org: 'csia', track: 'regular', level: 2, is_partial: false },
+        ],
+      });
+      expect(opsFor('instructors')[0]).toContainEqual([
+        'in',
+        'id',
+        ['i-1', 'i-2', 'gone'],
+      ]);
+    });
+
+    it('queries in chunks of 100 ids', async () => {
+      const { repo, opsFor } = fakeSupabase({
+        instructors: { data: [], error: null },
+      });
+      const ids = Array.from({ length: 150 }, (_, i) => `i-${i}`);
+
+      await repo.loadSnapshots(ids);
+
+      expect(
+        opsFor('instructors').map(
+          (ops) => (ops.find(([op]) => op === 'in')?.[2] as string[]).length,
+        ),
+      ).toEqual([100, 50]);
+    });
+
+    it('throws when a read fails', async () => {
+      const { repo } = fakeSupabase({
+        instructors: { data: [{ id: 'i-1' }], error: null },
+        instructors_languages: failure,
+      });
+      await expect(repo.loadSnapshots(['i-1'])).rejects.toThrow(
+        'Failed to load languages: boom',
+      );
+    });
+  });
+
+  describe('loadSnapshots over a row-capped PostgREST', () => {
+    it('reads junction and child rows of a chunk past the cap', async () => {
+      const many = POSTGREST_MAX_ROWS + 1;
+      const { client, requests } = cappedSupabase({
+        instructors: [{ id: 'i-1' }, { id: 'i-2' }],
+        instructors_languages: [
+          ...Array.from({ length: many }, (_, i) => ({
+            instructor_id: 'i-1',
+            language_id: `l${String(i).padStart(4, '0')}`,
+            languages: {
+              name: `L${String(i).padStart(4, '0')}`,
+              sort_order: i,
+              is_active: true,
+            },
+          })),
+          {
+            instructor_id: 'i-2',
+            language_id: 'l-last',
+            languages: { name: 'Last', sort_order: 0, is_active: true },
+          },
+        ],
+        instructor_certifications: [
+          ...Array.from({ length: many }, (_, i) => ({
+            id: `c${String(i).padStart(4, '0')}`,
+            instructor_id: 'i-1',
+            org: 'csia',
+            track: `t${i}`,
+            level: 1,
+            is_partial: false,
+          })),
+          {
+            id: 'z',
+            instructor_id: 'i-2',
+            org: 'casi',
+            track: 'regular',
+            level: 2,
+            is_partial: false,
+          },
+        ],
+      });
+      const repo = new SupabaseInstructorSyncRepository(client as never);
+
+      const snapshots = await repo.loadSnapshots(['i-1', 'i-2']);
+
+      expect(snapshots.get('i-1')?.languages).toHaveLength(many);
+      expect(snapshots.get('i-2')?.languages).toEqual([
+        { name: 'Last', name_zh: null },
+      ]);
+      expect(snapshots.get('i-1')?.certifications).toHaveLength(many);
+      expect(snapshots.get('i-2')?.certifications).toMatchObject([
+        { org: 'casi', track: 'regular', level: 2, is_partial: false },
+      ]);
+      for (const table of [
+        'instructors_languages',
+        'instructor_certifications',
+      ]) {
+        expect(
+          requests.filter((r) => r.table === table).map((r) => r.range),
+        ).toEqual([
+          [0, 999],
+          [1000, 1999],
+        ]);
+      }
+    });
+  });
+
+  describe('getStates', () => {
+    it('maps the stored states by instructor', async () => {
+      const state = { instructor_id: 'i-2', last_status: 'active' };
+      const { repo, opsFor } = fakeSupabase({
+        instructor_shopify_state: { data: [state], error: null },
+      });
+
+      expect(await repo.getStates(['i-1', 'i-2'])).toEqual(
+        new Map([['i-2', state]]),
+      );
+      expect(opsFor('instructor_shopify_state')[0]).toContainEqual([
+        'in',
+        'instructor_id',
+        ['i-1', 'i-2'],
+      ]);
+    });
+  });
+
   describe('loadSnapshot', () => {
     it('returns null when the instructor no longer exists', async () => {
       const { repo, queries } = fakeSupabase();

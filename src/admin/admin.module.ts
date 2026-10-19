@@ -5,6 +5,7 @@ import { InstructorsModule } from '../instructors/instructors.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { MediaModule } from '../media/media.module';
 import { SeasonsModule } from '../seasons/seasons.module';
+import { ShopifySyncModule } from '../shopify-sync/shopify-sync.module';
 import { AdminMediaController } from './admin-media.controller';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
@@ -33,6 +34,7 @@ import { AdminService } from './admin.service';
     BioTranslationModule,
     DocumentsModule,
     SeasonsModule,
+    ShopifySyncModule,
   ],
   controllers: [AdminController, AdminMediaController],
   providers: [

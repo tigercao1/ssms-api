@@ -6,6 +6,7 @@ import {
   hasCode,
   PG_UNIQUE_VIOLATION,
 } from '../database/db-result';
+import { fetchAllPages } from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type {
   AssignmentStatus,
@@ -40,6 +41,10 @@ export abstract class DocumentAssignmentsRepository {
     subjectType: SubjectType,
     subjectId: string,
   ): Promise<DocumentAssignmentRow[]>;
+  abstract listOpenForSubjects(
+    subjectType: SubjectType,
+    subjectIds: readonly string[],
+  ): Promise<Map<string, DocumentAssignmentRow[]>>;
   abstract findById(id: string): Promise<DocumentAssignmentRow | null>;
   /** Which of `subjectIds` already hold a non-archived assignment of the template for the season. */
   abstract findOpenSubjectIds(
@@ -106,6 +111,36 @@ export class SupabaseDocumentAssignmentsRepository extends DocumentAssignmentsRe
     >;
     check(error, 'list document assignments');
     return data ?? [];
+  }
+
+  async listOpenForSubjects(
+    subjectType: SubjectType,
+    subjectIds: readonly string[],
+  ): Promise<Map<string, DocumentAssignmentRow[]>> {
+    const bySubject = new Map<string, DocumentAssignmentRow[]>();
+    for (let i = 0; i < subjectIds.length; i += SUBJECT_ID_CHUNK) {
+      const ids = subjectIds.slice(i, i + SUBJECT_ID_CHUNK);
+      const rows = await fetchAllPages<DocumentAssignmentRow>(
+        (from, to) =>
+          this.supabase
+            .from(DOCUMENT_ASSIGNMENTS_TABLE)
+            .select(DOCUMENT_ASSIGNMENT_COLUMNS)
+            .eq('subject_type', subjectType)
+            .not('status', 'eq', 'archived')
+            .in('subject_id', ids)
+            .order('assigned_at', { ascending: false })
+            .order('id', { ascending: true })
+            .range(from, to),
+        'list document assignments',
+      );
+      for (const row of rows) {
+        bySubject.set(row.subject_id, [
+          ...(bySubject.get(row.subject_id) ?? []),
+          row,
+        ]);
+      }
+    }
+    return bySubject;
   }
 
   async findById(id: string): Promise<DocumentAssignmentRow | null> {

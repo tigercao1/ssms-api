@@ -58,5 +58,6 @@ import { ShopifySyncWorker } from './shopify-sync.worker';
     RolesGuard,
     ReconcileAuthGuard,
   ],
+  exports: [GoLiveService],
 })
 export class ShopifySyncModule {}

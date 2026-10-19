@@ -1,3 +1,7 @@
+import {
+  cappedSupabase,
+  POSTGREST_MAX_ROWS,
+} from '../../test/helpers/capped-supabase';
 import { recordingSupabase } from '../../test/helpers/lessons-fakes';
 import { DatabaseError, PG_UNIQUE_VIOLATION } from '../database/db-result';
 import {
@@ -286,6 +290,158 @@ describe('SupabaseDocumentAssignmentsRepository.templateStats', () => {
     });
     await expect(repo.templateStats([ID])).resolves.toEqual(new Map());
     await expect(repo.templateStats([ID])).rejects.toThrow('boom');
+  });
+});
+
+describe('bulk per-instructor reads', () => {
+  it('groups open assignments by subject, in chunks', async () => {
+    const ids = Array.from({ length: SUBJECT_ID_CHUNK + 1 }, (_, i) => `s${i}`);
+    const { client, queries } = recordingSupabase({
+      document_assignments: [
+        ok([
+          { id: 'a1', subject_id: 's0' },
+          { id: 'a2', subject_id: 's0' },
+          { id: 'a3', subject_id: 's1' },
+        ]),
+        ok(null),
+        fail,
+      ],
+    });
+    const repo = new SupabaseDocumentAssignmentsRepository(client);
+
+    const bySubject = await repo.listOpenForSubjects('instructor', ids);
+
+    expect(bySubject).toEqual(
+      new Map([
+        [
+          's0',
+          [
+            { id: 'a1', subject_id: 's0' },
+            { id: 'a2', subject_id: 's0' },
+          ],
+        ],
+        ['s1', [{ id: 'a3', subject_id: 's1' }]],
+      ]),
+    );
+    expect(queries[0].ops).toEqual([
+      ['select', DOCUMENT_ASSIGNMENT_COLUMNS],
+      ['eq', 'subject_type', 'instructor'],
+      ['not', 'status', 'eq', 'archived'],
+      ['in', 'subject_id', ids.slice(0, SUBJECT_ID_CHUNK)],
+      ['order', 'assigned_at', { ascending: false }],
+      ['order', 'id', { ascending: true }],
+      ['range', 0, 999],
+    ]);
+    expect(queries[1].ops).toContainEqual([
+      'in',
+      'subject_id',
+      [`s${SUBJECT_ID_CHUNK}`],
+    ]);
+    await expect(repo.listOpenForSubjects('instructor', ['x'])).rejects.toThrow(
+      'list document assignments',
+    );
+  });
+
+  it('groups certification uploads by instructor, newest first', async () => {
+    const { client, queries } = recordingSupabase({
+      certification_uploads: [
+        ok([
+          { id: 'u2', instructor_id: 'i1' },
+          { id: 'u1', instructor_id: 'i1' },
+          { id: 'u3', instructor_id: 'i2' },
+        ]),
+        fail,
+      ],
+    });
+    const repo = new SupabaseDocumentSubjectsRepository(client);
+
+    await expect(
+      repo.listCertificationUploadsFor(['i1', 'i2']),
+    ).resolves.toEqual(
+      new Map([
+        [
+          'i1',
+          [
+            { id: 'u2', instructor_id: 'i1' },
+            { id: 'u1', instructor_id: 'i1' },
+          ],
+        ],
+        ['i2', [{ id: 'u3', instructor_id: 'i2' }]],
+      ]),
+    );
+    expect(queries[0].ops).toEqual([
+      ['select', CERTIFICATION_UPLOAD_COLUMNS],
+      ['in', 'instructor_id', ['i1', 'i2']],
+      ['order', 'inserted_at', { ascending: false }],
+      ['order', 'id', { ascending: true }],
+      ['range', 0, 999],
+    ]);
+    await expect(repo.listCertificationUploadsFor(['i1'])).rejects.toThrow(
+      'boom',
+    );
+  });
+});
+
+describe('bulk per-instructor reads over a row-capped PostgREST', () => {
+  const many = POSTGREST_MAX_ROWS + 1;
+
+  it('reads every open assignment of a chunk past the cap', async () => {
+    const { client, requests } = cappedSupabase({
+      document_assignments: [
+        ...Array.from({ length: many }, (_, i) => ({
+          id: `a${String(i).padStart(4, '0')}`,
+          subject_type: 'instructor',
+          subject_id: 's0',
+          status: 'assigned',
+          assigned_at: '2026-01-01T00:00:00Z',
+        })),
+        {
+          id: 'b',
+          subject_type: 'instructor',
+          subject_id: 's1',
+          status: 'assigned',
+          assigned_at: '2026-01-02T00:00:00Z',
+        },
+      ],
+    });
+    const repo = new SupabaseDocumentAssignmentsRepository(client as never);
+
+    const bySubject = await repo.listOpenForSubjects('instructor', [
+      's0',
+      's1',
+    ]);
+
+    expect(bySubject.get('s0')).toHaveLength(many);
+    expect(bySubject.get('s1')?.map((row) => row.id)).toEqual(['b']);
+    expect(requests.map((r) => r.range)).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ]);
+  });
+
+  it('reads every certification upload of a chunk past the cap', async () => {
+    const { client, requests } = cappedSupabase({
+      certification_uploads: [
+        ...Array.from({ length: many }, (_, i) => ({
+          id: `u${String(i).padStart(4, '0')}`,
+          instructor_id: 'i1',
+          inserted_at: '2026-01-01T00:00:00Z',
+        })),
+        { id: 'v', instructor_id: 'i2', inserted_at: '2026-01-02T00:00:00Z' },
+      ],
+    });
+    const repo = new SupabaseDocumentSubjectsRepository(client as never);
+
+    const byInstructor = await repo.listCertificationUploadsFor(['i1', 'i2']);
+
+    expect(new Set(byInstructor.get('i1')?.map((row) => row.id)).size).toBe(
+      many,
+    );
+    expect(byInstructor.get('i2')?.map((row) => row.id)).toEqual(['v']);
+    expect(requests.map((r) => r.range)).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ]);
   });
 });
 

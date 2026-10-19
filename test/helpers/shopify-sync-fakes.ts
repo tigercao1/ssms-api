@@ -172,6 +172,32 @@ export class InMemorySyncRepository extends InstructorSyncRepository {
     return Promise.resolve(this.snapshots.get(instructorId) ?? null);
   }
 
+  async loadSnapshots(
+    instructorIds: readonly string[],
+  ): Promise<Map<string, InstructorSnapshot>> {
+    const found = new Map<string, InstructorSnapshot>();
+    for (const id of instructorIds) {
+      const snapshot = await this.loadSnapshot(id);
+      if (snapshot) {
+        found.set(id, snapshot);
+      }
+    }
+    return found;
+  }
+
+  async getStates(
+    instructorIds: readonly string[],
+  ): Promise<Map<string, InstructorShopifyState>> {
+    const found = new Map<string, InstructorShopifyState>();
+    for (const id of instructorIds) {
+      const state = await this.getState(id);
+      if (state) {
+        found.set(id, state);
+      }
+    }
+    return found;
+  }
+
   getState(instructorId: string): Promise<InstructorShopifyState | null> {
     const state = this.states.get(instructorId);
     return Promise.resolve(state ? { ...state } : null);

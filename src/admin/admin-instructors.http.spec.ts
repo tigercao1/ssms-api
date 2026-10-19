@@ -5,6 +5,10 @@ import {
   INSTRUCTOR_AUTH,
   startAdminApp,
 } from '../../test/helpers/admin-http';
+import {
+  cappedSupabase,
+  POSTGREST_MAX_ROWS,
+} from '../../test/helpers/capped-supabase';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
@@ -14,8 +18,13 @@ import { DocumentOnboardingService } from '../documents/document-onboarding.serv
 import { InstructorsService } from '../instructors/instructors.service';
 import { MailerService } from '../mailer/mailer.service';
 import { SeasonsService } from '../seasons/seasons.service';
+import { GoLiveService } from '../shopify-sync/go-live.service';
+import {
+  INSTRUCTOR_STAGES,
+  type InstructorStage,
+} from '../shopify-sync/instructor-stage';
 import { AdminController } from './admin.controller';
-import { AdminRepository } from './admin.repository';
+import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 import type {
   AdminInstructorListRecord,
@@ -86,12 +95,41 @@ class InMemoryInstructorList {
       total: matches.length,
     });
   }
+
+  async listAllInstructors(
+    filter: ListInstructorsFilter,
+  ): Promise<AdminInstructorListRow[]> {
+    return (await this.listInstructors(filter)).rows;
+  }
+}
+
+const stageOf = (n: number): InstructorStage =>
+  INSTRUCTOR_STAGES[n % INSTRUCTOR_STAGES.length];
+
+class StageLookup {
+  calls: string[][] = [];
+
+  stages(ids: string[]): Promise<Map<string, InstructorStage>> {
+    this.calls.push(ids);
+    return Promise.resolve(
+      new Map(ids.map((id) => [id, stageOf(Number(id.slice(-12)))])),
+    );
+  }
 }
 
 async function build(count = 60) {
   const repo = new InMemoryInstructorList();
+  const goLive = new StageLookup();
   repo.rows = Array.from({ length: count }, (_, i) => makeRow(i + 1));
-  const app = await startAdminApp(
+  const app = await startListApp(repo, goLive);
+  return { app, repo, goLive };
+}
+
+function startListApp(
+  repo: Pick<AdminRepository, 'listInstructors' | 'listAllInstructors'>,
+  goLive: Pick<GoLiveService, 'stages'>,
+) {
+  return startAdminApp(
     Test.createTestingModule({
       controllers: [AdminController],
       providers: [
@@ -103,10 +141,10 @@ async function build(count = 60) {
         { provide: DocumentOnboardingService, useValue: {} },
         { provide: BIO_TRANSLATOR, useValue: {} },
         { provide: AuditService, useValue: recordingAudit() },
+        { provide: GoLiveService, useValue: goLive },
       ],
     }),
   );
-  return { app, repo };
 }
 
 const ids = (res: request.Response) =>
@@ -257,7 +295,82 @@ describe('GET /admin/instructors', () => {
     expect(ctx.repo.calls[0].page).toEqual({ limit: 100, offset: 999_900 });
   });
 
+  it('returns each row with its stage, deriving stages for the page only', async () => {
+    ctx = await build();
+    const res = await list('?page=1&limit=3').expect(200);
+    expect(
+      (res.body as AdminInstructorListRecord[]).map((r) => [r.id, r.stage]),
+    ).toEqual([
+      [instructorId(60), stageOf(60)],
+      [instructorId(59), stageOf(59)],
+      [instructorId(58), stageOf(58)],
+    ]);
+    expect(ctx.goLive.calls).toEqual([newestFirst(60, 59, 58)]);
+  });
+
+  it('filters by several stages before paging, with the filtered total', async () => {
+    ctx = await build();
+    const wanted = (n: number) => ['live', 'in_review'].includes(stageOf(n));
+    const matching = range(60, 1).filter(wanted);
+
+    const first = await list('?stage=live,in_review&page=1&limit=5').expect(
+      200,
+    );
+    const second = await list(
+      '?stage=live&stage=in_review&page=2&limit=5',
+    ).expect(200);
+
+    expect(ids(first)).toEqual(newestFirst(...matching.slice(0, 5)));
+    expect(ids(second)).toEqual(newestFirst(...matching.slice(5, 10)));
+    expect(first.headers['x-total-count']).toBe(String(matching.length));
+    expect(second.headers['x-total-count']).toBe(String(matching.length));
+    expect(ctx.repo.calls[0]).toEqual({ filter: {}, page: undefined });
+    expect(ctx.goLive.calls[0]).toHaveLength(60);
+  });
+
+  it('combines the stage filter with active, calendar and q', async () => {
+    ctx = await build();
+    const res = await list(
+      '?stage=onboarding,deactivated&active=true&calendarConnected=false&q=jane&limit=50',
+    ).expect(200);
+    const matching = range(60, 1).filter(
+      (n) =>
+        ['onboarding', 'deactivated'].includes(stageOf(n)) &&
+        n % 5 !== 0 &&
+        n % 4 !== 0 &&
+        n % 2 === 1,
+    );
+    expect(ids(res)).toEqual(newestFirst(...matching));
+    expect(res.headers['x-total-count']).toBe(String(matching.length));
+    expect(ctx.repo.calls[0]).toEqual({
+      filter: { isActive: true, calendarConnected: false, q: 'jane' },
+      page: undefined,
+    });
+  });
+
+  it('answers a stage-filtered page past the end with no rows and the filtered total', async () => {
+    ctx = await build();
+    const res = await list('?stage=going_live&page=5&limit=50').expect(200);
+    expect(res.body).toEqual([]);
+    expect(res.headers['x-total-count']).toBe(
+      String(range(60, 1).filter((n) => stageOf(n) === 'going_live').length),
+    );
+  });
+
+  it('keeps the approval status filter working alongside stage', async () => {
+    ctx = await build();
+    const res = await list('?status=pending&stage=live').expect(200);
+    const matching = range(60, 1).filter(
+      (n) => n % 3 === 0 && stageOf(n) === 'live',
+    );
+    expect(ids(res)).toEqual(newestFirst(...matching));
+    expect(ctx.repo.calls[0].filter).toEqual({ status: 'pending' });
+  });
+
   it.each([
+    'stage=held',
+    'stage=live,published',
+    'stage=approved',
     'page=0',
     'page=-1',
     'page=10001',
@@ -274,5 +387,41 @@ describe('GET /admin/instructors', () => {
     ctx = await build();
     await list(`?${query}`).expect(400);
     expect(ctx.repo.calls).toEqual([]);
+  });
+});
+
+describe('GET /admin/instructors?stage= over a row-capped PostgREST', () => {
+  it('pages candidates past the response cap for the last page and the total', async () => {
+    const count = POSTGREST_MAX_ROWS + 1;
+    const { client, requests } = cappedSupabase({
+      instructors: Array.from({ length: count }, (_, i) => makeRow(i + 1)),
+    });
+    const allLive = {
+      stages: (instructorIds: readonly string[]) =>
+        Promise.resolve(
+          new Map<string, InstructorStage>(
+            instructorIds.map((id) => [id, 'live']),
+          ),
+        ),
+    };
+    const app = await startListApp(
+      new SupabaseAdminRepository(client as never),
+      allLive,
+    );
+    try {
+      const res = await request(app.getHttpServer())
+        .get('/admin/instructors?stage=live&page=21&limit=50')
+        .set('Authorization', admin)
+        .expect(200);
+
+      expect(ids(res)).toEqual([instructorId(1)]);
+      expect(res.headers['x-total-count']).toBe(String(count));
+      expect(requests).toEqual([
+        { table: 'instructors', range: [0, 999] },
+        { table: 'instructors', range: [1000, 1999] },
+      ]);
+    } finally {
+      await app.close();
+    }
   });
 });

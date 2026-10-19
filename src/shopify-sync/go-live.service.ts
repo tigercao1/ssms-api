@@ -3,14 +3,20 @@ import { ConfigService } from '@nestjs/config';
 import { torontoToday } from '../documents/certification-validity';
 import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
 import { MeDocumentsService } from '../documents/me-documents.service';
+import type {
+  CertificationUploadRow,
+  DocumentChecklistItem,
+} from '../documents/documents.types';
 import {
   type GoLiveDocument,
   type GoLiveHold,
   goLiveReadiness,
   type GoLiveReadiness,
+  type GoLiveSnapshot,
   type GoLiveStatus,
   verifiedCertifications,
 } from './go-live';
+import { type InstructorStage, instructorStage } from './instructor-stage';
 import { InstructorSyncRepository } from './instructor-sync.repository';
 import {
   type InstructorShopifyState,
@@ -26,6 +32,29 @@ export const DEFAULT_STOREFRONT_LIVE_BASE_URL =
 export interface GoLiveAssessment {
   readiness: GoLiveReadiness;
   publishable: InstructorSnapshot;
+  snapshot: GoLiveSnapshot;
+}
+
+function goLiveSnapshot(
+  snapshot: InstructorSnapshot,
+  certificationUploads: CertificationUploadRow[],
+  documents: DocumentChecklistItem[],
+): GoLiveSnapshot {
+  return {
+    ...snapshot,
+    certificationUploads,
+    documents: documents.filter(
+      (item): item is typeof item & GoLiveDocument =>
+        item.assignmentId !== null,
+    ),
+  };
+}
+
+function isLive(
+  snapshot: InstructorSnapshot,
+  state: InstructorShopifyState | null | undefined,
+): boolean {
+  return isVisible(snapshot.instructor) && state?.last_status === 'active';
 }
 
 @Injectable()
@@ -54,21 +83,49 @@ export class GoLiveService {
         ? this.documents.onboardingDocuments(instructorId)
         : Promise.resolve([]),
     ]);
-    const goLive = {
-      ...snapshot,
-      certificationUploads,
-      documents: documents.filter(
-        (item): item is typeof item & GoLiveDocument =>
-          item.assignmentId !== null,
-      ),
-    };
+    const goLive = goLiveSnapshot(snapshot, certificationUploads, documents);
     return {
       readiness: goLiveReadiness(goLive, today),
       publishable: {
         ...snapshot,
         certifications: verifiedCertifications(goLive, today),
       },
+      snapshot: goLive,
     };
+  }
+
+  async stages(
+    instructorIds: readonly string[],
+    today = torontoToday(),
+  ): Promise<Map<string, InstructorStage>> {
+    const snapshots = await this.repo.loadSnapshots(instructorIds);
+    const found = [...snapshots.keys()];
+    const visible = [...snapshots.values()]
+      .filter((snapshot) => isVisible(snapshot.instructor))
+      .map((snapshot) => snapshot.instructor.id);
+    const [uploads, documents, states] = await Promise.all([
+      this.subjects.listCertificationUploadsFor(found),
+      this.documents.onboardingDocumentsFor(visible),
+      this.repo.getStates(visible),
+    ]);
+    return new Map(
+      [...snapshots].map(([id, snapshot]) => {
+        const goLive = goLiveSnapshot(
+          snapshot,
+          uploads.get(id) ?? [],
+          documents.get(id) ?? [],
+        );
+        return [
+          id,
+          instructorStage(
+            goLive,
+            goLiveReadiness(goLive, today),
+            isLive(snapshot, states.get(id)),
+            today,
+          ),
+        ];
+      }),
+    );
   }
 
   async mine(authUserId: string): Promise<GoLiveStatus> {
@@ -76,20 +133,27 @@ export class GoLiveService {
     return this.status(instructor.id);
   }
 
-  async status(instructorId: string): Promise<GoLiveStatus> {
+  async status(
+    instructorId: string,
+    today = torontoToday(),
+  ): Promise<GoLiveStatus> {
     const [assessment, state] = await Promise.all([
-      this.assess(instructorId),
+      this.assess(instructorId, today),
       this.repo.getState(instructorId),
     ]);
     if (!assessment) {
       throw new NotFoundException(`Instructor ${instructorId} not found`);
     }
-    const live =
-      isVisible(assessment.publishable.instructor) &&
-      state?.last_status === 'active';
+    const live = isLive(assessment.publishable, state);
     const handle = state?.shopify_handle ?? null;
     return {
       live,
+      stage: instructorStage(
+        assessment.snapshot,
+        assessment.readiness,
+        live,
+        today,
+      ),
       ready: assessment.readiness.ready,
       liveUrl: live && handle ? `${this.liveBaseUrl()}${handle}` : null,
       missing: assessment.readiness.missing,

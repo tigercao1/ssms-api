@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
+import { GoLiveService } from '../shopify-sync/go-live.service';
+import type { InstructorStage } from '../shopify-sync/instructor-stage';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { createBioTranslator } from '../bio-translation/bio-translation.module';
 import { Test } from '@nestjs/testing';
@@ -53,6 +55,7 @@ describe('AdminService', () => {
   // not trip eslint's unbound-method rule — same pattern as the controller spec.
   const repo = {
     listInstructors: jest.fn(),
+    listAllInstructors: jest.fn(),
     findInstructorById: jest.fn(),
     updateInstructor: jest.fn(),
     insertReference: jest.fn(),
@@ -77,6 +80,12 @@ describe('AdminService', () => {
   const onboarding = {
     assignPublished: jest.fn().mockResolvedValue({ created: 0, skipped: 0 }),
   };
+  const goLive = {
+    stages: jest.fn(
+      (ids: string[]): Promise<Map<string, InstructorStage>> =>
+        Promise.resolve(new Map(ids.map((id) => [id, 'onboarding']))),
+    ),
+  };
   const translator = {
     modelId: 'gemini-test',
     translate: jest.fn<Promise<string>, [Record<string, unknown>]>(),
@@ -93,6 +102,7 @@ describe('AdminService', () => {
         { provide: AuditService, useValue: audit },
         { provide: MailerService, useValue: mailer },
         { provide: DocumentOnboardingService, useValue: onboarding },
+        { provide: GoLiveService, useValue: goLive },
         { provide: BIO_TRANSLATOR, useValue: translator },
       ],
     }).compile();
@@ -126,10 +136,43 @@ describe('AdminService', () => {
           isActive: true,
           authUserId: '22222222-2222-4222-8222-222222222222',
           calendarConnected: true,
+          stage: 'onboarding',
         }),
         expect.objectContaining({ id: 'i2', calendarConnected: false }),
       ]);
       expect(result[0]).not.toHaveProperty('instructor_calendars');
+      expect(goLive.stages).toHaveBeenCalledWith([makeRow().id, 'i2']);
+    });
+
+    it('lists every matching row, then filters by stage before paging', async () => {
+      const rows = ['a', 'b', 'c', 'd', 'e'].map((id) => ({
+        ...makeRow({ id }),
+        instructor_calendars: null,
+      }));
+      repo.listAllInstructors.mockResolvedValue(rows);
+      goLive.stages.mockResolvedValueOnce(
+        new Map<string, InstructorStage>([
+          ['a', 'live'],
+          ['b', 'in_review'],
+          ['c', 'live'],
+          ['d', 'pending'],
+          ['e', 'in_review'],
+        ]),
+      );
+
+      const { instructors: result, total } = await service.listInstructors(
+        { isActive: true, stages: ['live', 'in_review'] },
+        2,
+        2,
+      );
+
+      expect(repo.listAllInstructors).toHaveBeenCalledWith({ isActive: true });
+      expect(repo.listInstructors).not.toHaveBeenCalled();
+      expect(total).toBe(4);
+      expect(result.map((r) => [r.id, r.stage])).toEqual([
+        ['c', 'live'],
+        ['e', 'in_review'],
+      ]);
     });
 
     it.each([
@@ -789,6 +832,7 @@ describe('AdminService', () => {
           { provide: AuditService, useValue: audit },
           { provide: MailerService, useValue: mailer },
           { provide: DocumentOnboardingService, useValue: onboarding },
+          { provide: GoLiveService, useValue: goLive },
           { provide: BIO_TRANSLATOR, useValue: translator },
         ],
       }).compile();
@@ -833,6 +877,7 @@ describe('AdminService', () => {
           { provide: AuditService, useValue: audit },
           { provide: MailerService, useValue: mailer },
           { provide: DocumentOnboardingService, useValue: onboarding },
+          { provide: GoLiveService, useValue: goLive },
           { provide: BIO_TRANSLATOR, useValue: translator },
         ],
       }).compile();
@@ -1451,6 +1496,7 @@ describe('AdminService reference translation gate', () => {
         { provide: AuditService, useValue: { record: jest.fn() } },
         { provide: MailerService, useValue: {} },
         { provide: DocumentOnboardingService, useValue: {} },
+        { provide: GoLiveService, useValue: {} },
         {
           provide: BIO_TRANSLATOR,
           useFactory: createBioTranslator,

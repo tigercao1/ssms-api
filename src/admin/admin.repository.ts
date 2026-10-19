@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { DbResult, ilikeAny, searchTokens } from '../database/db-result';
 import {
   type CountedResult,
+  fetchAllPages,
   type PageRequest,
   PGRST_RANGE_NOT_SATISFIABLE,
   type RowPage,
@@ -55,6 +56,9 @@ export abstract class AdminRepository {
     filter: ListInstructorsFilter,
     page?: PageRequest,
   ): Promise<RowPage<AdminInstructorListRow>>;
+  abstract listAllInstructors(
+    filter: ListInstructorsFilter,
+  ): Promise<AdminInstructorListRow[]>;
   abstract findInstructorById(id: string): Promise<AdminInstructorRow | null>;
   /** Apply a core-column patch (approval_status / is_active) and return it. */
   abstract updateInstructor(
@@ -130,6 +134,19 @@ export class SupabaseAdminRepository extends AdminRepository {
     return { rows: data ?? [], total: count ?? 0 };
   }
 
+  listAllInstructors(
+    filter: ListInstructorsFilter,
+  ): Promise<AdminInstructorListRow[]> {
+    return fetchAllPages<AdminInstructorListRow>(
+      (from, to) =>
+        this.instructorsMatching(filter, INSTRUCTOR_LIST_COLUMNS)
+          .order('inserted_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to),
+      'list instructors',
+    );
+  }
+
   private async countInstructors(
     filter: ListInstructorsFilter,
   ): Promise<number> {
@@ -152,7 +169,7 @@ export class SupabaseAdminRepository extends AdminRepository {
   private instructorsMatching(
     filter: ListInstructorsFilter,
     columns: string,
-    options: { count: 'exact'; head?: boolean },
+    options?: { count: 'exact'; head?: boolean },
   ) {
     let query = this.supabase.from('instructors').select(columns, options);
 

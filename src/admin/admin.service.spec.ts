@@ -55,6 +55,7 @@ describe('AdminService', () => {
   // not trip eslint's unbound-method rule — same pattern as the controller spec.
   const repo = {
     listInstructors: jest.fn(),
+    listAllInstructors: jest.fn(),
     findInstructorById: jest.fn(),
     updateInstructor: jest.fn(),
     insertReference: jest.fn(),
@@ -148,7 +149,7 @@ describe('AdminService', () => {
         ...makeRow({ id }),
         instructor_calendars: null,
       }));
-      repo.listInstructors.mockResolvedValue({ rows, total: rows.length });
+      repo.listAllInstructors.mockResolvedValue(rows);
       goLive.stages.mockResolvedValueOnce(
         new Map<string, InstructorStage>([
           ['a', 'live'],
@@ -165,7 +166,8 @@ describe('AdminService', () => {
         2,
       );
 
-      expect(repo.listInstructors).toHaveBeenCalledWith({ isActive: true });
+      expect(repo.listAllInstructors).toHaveBeenCalledWith({ isActive: true });
+      expect(repo.listInstructors).not.toHaveBeenCalled();
       expect(total).toBe(4);
       expect(result.map((r) => [r.id, r.stage])).toEqual([
         ['c', 'live'],

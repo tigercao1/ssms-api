@@ -5,6 +5,10 @@ import {
   INSTRUCTOR_AUTH,
   startAdminApp,
 } from '../../test/helpers/admin-http';
+import {
+  cappedSupabase,
+  POSTGREST_MAX_ROWS,
+} from '../../test/helpers/capped-supabase';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
@@ -20,7 +24,7 @@ import {
   type InstructorStage,
 } from '../shopify-sync/instructor-stage';
 import { AdminController } from './admin.controller';
-import { AdminRepository } from './admin.repository';
+import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 import type {
   AdminInstructorListRecord,
@@ -91,6 +95,12 @@ class InMemoryInstructorList {
       total: matches.length,
     });
   }
+
+  async listAllInstructors(
+    filter: ListInstructorsFilter,
+  ): Promise<AdminInstructorListRow[]> {
+    return (await this.listInstructors(filter)).rows;
+  }
 }
 
 const stageOf = (n: number): InstructorStage =>
@@ -111,7 +121,15 @@ async function build(count = 60) {
   const repo = new InMemoryInstructorList();
   const goLive = new StageLookup();
   repo.rows = Array.from({ length: count }, (_, i) => makeRow(i + 1));
-  const app = await startAdminApp(
+  const app = await startListApp(repo, goLive);
+  return { app, repo, goLive };
+}
+
+function startListApp(
+  repo: Pick<AdminRepository, 'listInstructors' | 'listAllInstructors'>,
+  goLive: Pick<GoLiveService, 'stages'>,
+) {
+  return startAdminApp(
     Test.createTestingModule({
       controllers: [AdminController],
       providers: [
@@ -127,7 +145,6 @@ async function build(count = 60) {
       ],
     }),
   );
-  return { app, repo, goLive };
 }
 
 const ids = (res: request.Response) =>
@@ -370,5 +387,41 @@ describe('GET /admin/instructors', () => {
     ctx = await build();
     await list(`?${query}`).expect(400);
     expect(ctx.repo.calls).toEqual([]);
+  });
+});
+
+describe('GET /admin/instructors?stage= over a row-capped PostgREST', () => {
+  it('pages candidates past the response cap for the last page and the total', async () => {
+    const count = POSTGREST_MAX_ROWS + 1;
+    const { client, requests } = cappedSupabase({
+      instructors: Array.from({ length: count }, (_, i) => makeRow(i + 1)),
+    });
+    const allLive = {
+      stages: (instructorIds: readonly string[]) =>
+        Promise.resolve(
+          new Map<string, InstructorStage>(
+            instructorIds.map((id) => [id, 'live']),
+          ),
+        ),
+    };
+    const app = await startListApp(
+      new SupabaseAdminRepository(client as never),
+      allLive,
+    );
+    try {
+      const res = await request(app.getHttpServer())
+        .get('/admin/instructors?stage=live&page=21&limit=50')
+        .set('Authorization', admin)
+        .expect(200);
+
+      expect(ids(res)).toEqual([instructorId(1)]);
+      expect(res.headers['x-total-count']).toBe(String(count));
+      expect(requests).toEqual([
+        { table: 'instructors', range: [0, 999] },
+        { table: 'instructors', range: [1000, 1999] },
+      ]);
+    } finally {
+      await app.close();
+    }
   });
 });

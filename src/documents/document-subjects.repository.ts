@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
+import { fetchAllPages } from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type {
   CertificationUploadRow,
@@ -158,15 +159,19 @@ export class SupabaseDocumentSubjectsRepository extends DocumentSubjectsReposito
   ): Promise<Map<string, CertificationUploadRow[]>> {
     const byInstructor = new Map<string, CertificationUploadRow[]>();
     for (let i = 0; i < instructorIds.length; i += INSTRUCTOR_ID_CHUNK) {
-      const { data, error } = (await this.supabase
-        .from(CERTIFICATION_UPLOADS_TABLE)
-        .select(CERTIFICATION_UPLOAD_COLUMNS)
-        .in('instructor_id', instructorIds.slice(i, i + INSTRUCTOR_ID_CHUNK))
-        .order('inserted_at', { ascending: false })) as DbResult<
-        CertificationUploadRow[]
-      >;
-      check(error, 'list certification uploads');
-      for (const row of data ?? []) {
+      const ids = instructorIds.slice(i, i + INSTRUCTOR_ID_CHUNK);
+      const rows = await fetchAllPages<CertificationUploadRow>(
+        (from, to) =>
+          this.supabase
+            .from(CERTIFICATION_UPLOADS_TABLE)
+            .select(CERTIFICATION_UPLOAD_COLUMNS)
+            .in('instructor_id', ids)
+            .order('inserted_at', { ascending: false })
+            .order('id', { ascending: true })
+            .range(from, to),
+        'list certification uploads',
+      );
+      for (const row of rows) {
         byInstructor.set(row.instructor_id, [
           ...(byInstructor.get(row.instructor_id) ?? []),
           row,

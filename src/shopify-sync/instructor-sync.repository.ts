@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchAllPages } from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import type {
   InstructorShopifyState,
@@ -362,18 +363,23 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
     fkColumn: string,
     refTable: string,
   ): Promise<Map<string, SyncRefName[]>> {
-    const { data, error } = await this.supabase
-      .from(junction)
-      .select(
-        `instructor_id, ${refTable}:${fkColumn} ( name, name_zh, sort_order, is_active )`,
-      )
-      .in('instructor_id', instructorIds);
-    check(error, `load ${refTable}`);
+    const rows = await fetchAllPages<
+      Record<string, RefJoin | null> & { instructor_id: string }
+    >(
+      (from, to) =>
+        this.supabase
+          .from(junction)
+          .select(
+            `instructor_id, ${refTable}:${fkColumn} ( name, name_zh, sort_order, is_active )`,
+          )
+          .in('instructor_id', instructorIds)
+          .order('instructor_id', { ascending: true })
+          .order(fkColumn, { ascending: true })
+          .range(from, to),
+      `load ${refTable}`,
+    );
     const byInstructor = new Map<string, RefJoin[]>();
-    for (const row of (data ?? []) as unknown as (Record<
-      string,
-      RefJoin | null
-    > & { instructor_id: string })[]) {
+    for (const row of rows) {
       const ref = row[refTable];
       if (ref != null && ref.is_active) {
         byInstructor.set(row.instructor_id, [
@@ -392,15 +398,18 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
     columns: string,
     instructorIds: readonly string[],
   ): Promise<Map<string, T[]>> {
-    const { data, error } = await this.supabase
-      .from(table)
-      .select(`instructor_id, ${columns}`)
-      .in('instructor_id', instructorIds);
-    check(error, `load ${table}`);
+    const rows = await fetchAllPages<T & { instructor_id: string }>(
+      (from, to) =>
+        this.supabase
+          .from(table)
+          .select(`instructor_id, ${columns}`)
+          .in('instructor_id', instructorIds)
+          .order('id', { ascending: true })
+          .range(from, to),
+      `load ${table}`,
+    );
     const byInstructor = new Map<string, T[]>();
-    for (const row of (data ?? []) as unknown as (T & {
-      instructor_id: string;
-    })[]) {
+    for (const row of rows) {
       const { instructor_id: id, ...rest } = row;
       byInstructor.set(id, [...(byInstructor.get(id) ?? []), rest as T]);
     }

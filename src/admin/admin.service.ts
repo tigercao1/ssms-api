@@ -147,7 +147,7 @@ export class AdminService {
         total,
       };
     }
-    const { rows } = await this.repo.listInstructors(rowFilter);
+    const rows = await this.repo.listAllInstructors(rowFilter);
     const stages = await this.goLive.stages(rows.map((row) => row.id));
     const matching = rows.filter((row) => {
       const stage = stages.get(row.id);

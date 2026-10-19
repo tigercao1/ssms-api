@@ -4,6 +4,8 @@
  * presenter types are the camelCase shapes returned by `/admin/*`.
  */
 
+import type { InstructorStage } from '../shopify-sync/instructor-stage';
+
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type PreferredLanguage = 'en' | 'zh-CN';
 /** Roles an admin can assign via `app_metadata.role` (server-set only). */
@@ -79,6 +81,7 @@ export interface AdminInstructorRecord {
 
 export interface AdminInstructorListRecord extends AdminInstructorRecord {
   calendarConnected: boolean;
+  stage: InstructorStage | null;
 }
 
 /** Optional narrowing applied to `GET /admin/instructors`. */
@@ -87,6 +90,7 @@ export interface ListInstructorsFilter {
   isActive?: boolean;
   calendarConnected?: boolean;
   q?: string;
+  stages?: InstructorStage[];
 }
 
 /** Mutable core columns an admin transition can write. */

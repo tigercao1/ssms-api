@@ -43,6 +43,9 @@ export abstract class DocumentSubjectsRepository {
   abstract listCertificationUploads(
     instructorId: string,
   ): Promise<CertificationUploadRow[]>;
+  abstract listCertificationUploadsFor(
+    instructorIds: readonly string[],
+  ): Promise<Map<string, CertificationUploadRow[]>>;
 }
 
 @Injectable()
@@ -148,5 +151,28 @@ export class SupabaseDocumentSubjectsRepository extends DocumentSubjectsReposito
     >;
     check(error, 'list certification uploads');
     return data ?? [];
+  }
+
+  async listCertificationUploadsFor(
+    instructorIds: readonly string[],
+  ): Promise<Map<string, CertificationUploadRow[]>> {
+    const byInstructor = new Map<string, CertificationUploadRow[]>();
+    for (let i = 0; i < instructorIds.length; i += INSTRUCTOR_ID_CHUNK) {
+      const { data, error } = (await this.supabase
+        .from(CERTIFICATION_UPLOADS_TABLE)
+        .select(CERTIFICATION_UPLOAD_COLUMNS)
+        .in('instructor_id', instructorIds.slice(i, i + INSTRUCTOR_ID_CHUNK))
+        .order('inserted_at', { ascending: false })) as DbResult<
+        CertificationUploadRow[]
+      >;
+      check(error, 'list certification uploads');
+      for (const row of data ?? []) {
+        byInstructor.set(row.instructor_id, [
+          ...(byInstructor.get(row.instructor_id) ?? []),
+          row,
+        ]);
+      }
+    }
+    return byInstructor;
   }
 }

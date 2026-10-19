@@ -473,6 +473,22 @@ export class InMemoryDocumentAssignmentsRepository extends DocumentAssignmentsRe
     );
   }
 
+  async listOpenForSubjects(
+    subjectType: SubjectType,
+    subjectIds: readonly string[],
+  ): Promise<Map<string, DocumentAssignmentRow[]>> {
+    const bySubject = new Map<string, DocumentAssignmentRow[]>();
+    for (const id of subjectIds) {
+      const open = (await this.listForSubject(subjectType, id)).filter(
+        (row) => row.status !== 'archived',
+      );
+      if (open.length > 0) {
+        bySubject.set(id, open);
+      }
+    }
+    return bySubject;
+  }
+
   findById(id: string): Promise<DocumentAssignmentRow | null> {
     const row = this.rows.get(id);
     return Promise.resolve(row ? this.withTemplate(row) : null);
@@ -753,5 +769,15 @@ export class InMemoryDocumentSubjectsRepository extends DocumentSubjectsReposito
         .filter((u) => u.instructor_id === instructorId)
         .sort((a, b) => b.inserted_at.localeCompare(a.inserted_at)),
     );
+  }
+
+  async listCertificationUploadsFor(
+    instructorIds: readonly string[],
+  ): Promise<Map<string, CertificationUploadRow[]>> {
+    const byInstructor = new Map<string, CertificationUploadRow[]>();
+    for (const id of instructorIds) {
+      byInstructor.set(id, await this.listCertificationUploads(id));
+    }
+    return byInstructor;
   }
 }

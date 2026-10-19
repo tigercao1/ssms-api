@@ -8,6 +8,7 @@ import type {
   DocumentChecklistItem,
 } from '../documents/documents.types';
 import { isDocumentItemDone } from '../documents/me-documents.service';
+import type { InstructorStage } from './instructor-stage';
 import {
   type InstructorSnapshot,
   isVisible,
@@ -83,6 +84,7 @@ export interface GoLiveHold {
 
 export interface GoLiveStatus extends GoLiveReadiness {
   live: boolean;
+  stage: InstructorStage;
   liveUrl: string | null;
   hold: GoLiveHold | null;
 }

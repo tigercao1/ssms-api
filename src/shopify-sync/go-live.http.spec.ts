@@ -61,6 +61,7 @@ describe('go-live HTTP', () => {
 
       expect(await mine()).toEqual({
         live: false,
+        stage: 'going_live',
         ready: true,
         liveUrl: null,
         hold: null,
@@ -87,6 +88,7 @@ describe('go-live HTTP', () => {
 
       expect(await mine()).toMatchObject({
         live: true,
+        stage: 'live',
         ready: true,
         liveUrl: 'https://ssnow.club/pages/our-team/eddie-chen',
       });
@@ -134,6 +136,7 @@ describe('go-live HTTP', () => {
 
       expect(await mine()).toEqual({
         live: false,
+        stage: 'onboarding',
         ready: false,
         liveUrl: null,
         hold: null,
@@ -168,6 +171,7 @@ describe('go-live HTTP', () => {
 
       expect(await mine()).toEqual({
         live: false,
+        stage: 'pending',
         ready: false,
         liveUrl: null,
         hold: null,
@@ -177,12 +181,12 @@ describe('go-live HTTP', () => {
     });
 
     it.each([
-      ['pending', { approval_status: 'pending' as const }],
-      ['rejected', { approval_status: 'rejected' as const }],
-      ['inactive', { is_active: false }],
+      ['pending', { approval_status: 'pending' as const }, 'pending'],
+      ['rejected', { approval_status: 'rejected' as const }, 'rejected'],
+      ['inactive', { is_active: false }, 'deactivated'],
     ])(
       'is not live for a %s instructor whose Shopify entry is still active',
-      async (_label, instructor) => {
+      async (_label, instructor, stage) => {
         ctx = await build(readySnapshotOf({ instructor }));
         await ctx.repo.saveState(INSTRUCTOR_ID, {
           shopify_handle: 'eddie-chen',
@@ -191,6 +195,7 @@ describe('go-live HTTP', () => {
 
         expect(await mine()).toEqual({
           live: false,
+          stage,
           ready: false,
           liveUrl: null,
           hold: null,
@@ -234,6 +239,7 @@ describe('go-live HTTP', () => {
 
       expect(res.body).toEqual({
         live: false,
+        stage: 'onboarding',
         ready: false,
         liveUrl: null,
         hold: null,

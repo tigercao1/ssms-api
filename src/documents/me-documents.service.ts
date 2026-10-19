@@ -40,7 +40,7 @@ export const DEACTIVATED =
   'Your account is inactive, so onboarding documents and uploads are not available';
 export const DEACTIVATED_REASON: ChecklistLockReason = 'deactivated';
 
-function lockFor(
+export function lockFor(
   instructor: Pick<DocumentInstructorRow, 'approval_status' | 'is_active'>,
 ): { message: string; reason: ChecklistLockReason } | null {
   if (!instructor.is_active) {
@@ -96,6 +96,33 @@ function toDocumentItem(row: DocumentAssignmentRow): DocumentChecklistItem {
   };
 }
 
+function seasonFor(
+  open: readonly DocumentAssignmentRow[],
+  currentKey: string | null,
+): string | null {
+  if (currentKey) {
+    return currentKey;
+  }
+  const seasons = open
+    .map((row) => row.season)
+    .filter((s): s is string => Boolean(s))
+    .sort();
+  return seasons.at(-1) ?? null;
+}
+
+function seasonDocuments(
+  assignments: readonly DocumentAssignmentRow[],
+  currentKey: string | null,
+): { season: string | null; documents: DocumentChecklistItem[] } {
+  const open = assignments.filter((row) => row.status !== 'archived');
+  const season = seasonFor(open, currentKey);
+  const documents = open
+    .filter((row) => season === null || row.season === season || !row.season)
+    .sort(bySortOrder)
+    .map(toDocumentItem);
+  return { season, documents };
+}
+
 function toPreviewItem(template: DocumentTemplateRow): DocumentChecklistItem {
   return {
     type: 'document',
@@ -117,9 +144,15 @@ function toPreviewItem(template: DocumentTemplateRow): DocumentChecklistItem {
   };
 }
 
-function toCertificationItems(
-  certifications: InstructorCertificationRow[],
-  uploads: CertificationUploadRow[],
+export type CertificationChecklistUpload = Pick<
+  CertificationUploadRow,
+  'org' | 'track' | 'review_status' | 'valid_until' | 'inserted_at'
+> &
+  Partial<Pick<CertificationUploadRow, 'id' | 'review_note'>>;
+
+export function toCertificationItems(
+  certifications: readonly InstructorCertificationRow[],
+  uploads: readonly CertificationChecklistUpload[],
   today: string,
   locked: boolean,
 ): CertificationChecklistItem[] {
@@ -127,9 +160,7 @@ function toCertificationItems(
     uploads.map((row) => ({ ...row, insertedAt: row.inserted_at })),
   );
   return certifications.map((cert): CertificationChecklistItem => {
-    const upload: CertificationUploadRow | undefined = current.get(
-      certificationKey(cert.org, cert.track),
-    );
+    const upload = current.get(certificationKey(cert.org, cert.track));
     return {
       type: 'certification',
       org: cert.org,
@@ -290,6 +321,24 @@ export class MeDocumentsService {
     return (await this.currentDocuments(instructorId)).documents;
   }
 
+  async onboardingDocumentsFor(
+    instructorIds: readonly string[],
+  ): Promise<Map<string, DocumentChecklistItem[]>> {
+    if (instructorIds.length === 0) {
+      return new Map();
+    }
+    const [assignments, currentKey] = await Promise.all([
+      this.assignments.listOpenForSubjects('instructor', instructorIds),
+      this.seasons.currentKey(),
+    ]);
+    return new Map(
+      instructorIds.map((id) => [
+        id,
+        seasonDocuments(assignments.get(id) ?? [], currentKey).documents,
+      ]),
+    );
+  }
+
   private async currentDocuments(
     instructorId: string,
   ): Promise<{ season: string | null; documents: DocumentChecklistItem[] }> {
@@ -297,26 +346,12 @@ export class MeDocumentsService {
       'instructor',
       instructorId,
     );
-    const open = assignments.filter((row) => row.status !== 'archived');
-    const season = await this.currentSeason(open);
-    const documents = open
-      .filter((row) => season === null || row.season === season || !row.season)
-      .sort(bySortOrder)
-      .map(toDocumentItem);
-    return { season, documents };
+    return seasonDocuments(assignments, await this.seasons.currentKey());
   }
 
   private async currentSeason(
     open: DocumentAssignmentRow[],
   ): Promise<string | null> {
-    const current = await this.seasons.currentKey();
-    if (current) {
-      return current;
-    }
-    const seasons = open
-      .map((row) => row.season)
-      .filter((s): s is string => Boolean(s))
-      .sort();
-    return seasons.at(-1) ?? null;
+    return seasonFor(open, await this.seasons.currentKey());
   }
 }

@@ -347,42 +347,43 @@ export const en: MessageCatalog = {
         carving: '{org} Carving',
       },
       expiring: {
-        subject: 'Your {certification} certification expires on {validUntil}',
+        subject:
+          'Your membership card for {certification} expires on {validUntil}',
         preheader:
-          'Upload your renewed certification to stay cleared to teach.',
-        heading: 'Your certification is about to expire',
+          'Upload your renewed membership card to stay cleared to teach.',
+        heading: 'Your membership is about to expire',
         paragraphs: [
-          'The {certification} proof on your instructor profile is valid until {validUntil}.',
-          'Once you have renewed your membership, upload the new proof in the instructor portal so we can keep scheduling you.',
+          'The membership card on your instructor profile for {certification} is valid until {validUntil}.',
+          "Once you have renewed your membership, upload the new season's membership card in the instructor portal so we can keep scheduling you. It should show your name, membership number and the new expiry date.",
         ],
-        button: 'Upload renewed certification',
+        button: 'Upload renewed membership card',
         finePrint:
-          "If you've already uploaded your renewed certification, you can ignore this email.",
+          "If you've already uploaded your renewed membership card, you can ignore this email.",
       },
       expired: {
-        subject: 'Your {certification} certification has expired',
-        preheader: 'Upload your renewed certification to keep teaching.',
-        heading: 'Your certification has expired',
+        subject: 'Your membership card for {certification} has expired',
+        preheader: "Upload this season's membership card to keep teaching.",
+        heading: 'Your membership card has expired',
         paragraphs: [
-          'The {certification} proof on your instructor profile was valid until {validUntil} and has now expired.',
-          'Please renew your membership and upload the new proof in the instructor portal.',
+          'The membership card on your instructor profile for {certification} was valid until {validUntil} and has now expired.',
+          "Please renew your membership and upload this season's membership card in the instructor portal. It should show your name, membership number and the new expiry date.",
         ],
-        button: 'Upload new certification',
+        button: 'Upload membership card',
         finePrint:
-          "If you've already uploaded your renewed certification, you can ignore this email.",
+          "If you've already uploaded your renewed membership card, you can ignore this email.",
       },
       rejected: {
-        subject: 'Please upload your {certification} certification again',
-        preheader: 'We could not accept the certification proof you uploaded.',
-        heading: 'Your certification proof was not accepted',
+        subject: 'Please upload your membership card for {certification} again',
+        preheader: 'We could not accept the membership card you uploaded.',
+        heading: 'Your membership card was not accepted',
         paragraphs: [
-          'We reviewed the {certification} proof you uploaded and could not accept it.',
-          'Please upload a clear, current copy in the instructor portal so we can verify your certification.',
+          'We reviewed the membership card you uploaded for {certification} and could not accept it.',
+          "Please upload a clear copy of this season's membership card in the instructor portal. It should show your name, membership number and an expiry date that covers this season.",
         ],
         reasonLabel: 'A note from our team:',
-        button: 'Upload certification',
+        button: 'Upload membership card',
         finePrint:
-          "You're receiving this because you uploaded a certification to your Serendipity Snow Club instructor profile.",
+          "You're receiving this because you uploaded a membership card to your Serendipity Snow Club instructor profile.",
       },
     },
     admin: {

@@ -22,19 +22,19 @@ describe('certification expiry emails', () => {
     [
       'certification.expiring',
       'en',
-      'Your CASI Park Level 1 certification expires on 2026-11-30',
+      'Your membership card for CASI Park Level 1 expires on 2026-11-30',
     ],
     [
       'certification.expired',
       'en',
-      'Your CASI Park Level 1 certification has expired',
+      'Your membership card for CASI Park Level 1 has expired',
     ],
     [
       'certification.expiring',
       'zh-CN',
-      '您的 CASI 公园 1 级 证书将于 2026-11-30 到期',
+      '您用于 CASI 公园 1 级 的会员卡将于 2026-11-30 到期',
     ],
-    ['certification.expired', 'zh-CN', '您的 CASI 公园 1 级 证书已过期'],
+    ['certification.expired', 'zh-CN', '您用于 CASI 公园 1 级 的会员卡已过期'],
   ] as const)(
     '%s in %s names the certification and links to re-upload',
     (template, language, subject) => {
@@ -81,10 +81,14 @@ describe('certification rejected email', () => {
   it.each([
     [
       'en',
-      'Please upload your CASI Park Level 1 certification again',
+      'Please upload your membership card for CASI Park Level 1 again',
       'A note from our team: Blurry photo',
     ],
-    ['zh-CN', '请重新上传您的 CASI 公园 1 级 证书', '团队备注： Blurry photo'],
+    [
+      'zh-CN',
+      '请重新上传您用于 CASI 公园 1 级 的会员卡',
+      '团队备注： Blurry photo',
+    ],
   ] as const)(
     'in %s names the certification, quotes the note and links to re-upload',
     (language, subject, note) => {
@@ -123,7 +127,7 @@ describe('certification rejected email', () => {
       reason: '   ',
     });
     expect(email.subject).toBe(
-      'Please upload your CSIA Carving certification again',
+      'Please upload your membership card for CSIA Carving again',
     );
     expect(email.text).not.toContain('A note from our team');
   });

@@ -5,6 +5,8 @@ import { MailerModule } from '../mailer/mailer.module';
 import { SeasonsModule } from '../seasons/seasons.module';
 import { AdminCertificationUploadsController } from './admin-certification-uploads.controller';
 import { AdminCertificationUploadsService } from './admin-certification-uploads.service';
+import { AdminDocumentReviewsController } from './admin-document-reviews.controller';
+import { AdminDocumentReviewsService } from './admin-document-reviews.service';
 import { AdminDocumentRemindersController } from './admin-document-reminders.controller';
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentExportsController } from './admin-document-exports.controller';
@@ -69,6 +71,7 @@ import {
     InternalDocumentsController,
     MeCertificationUploadsController,
     AdminCertificationUploadsController,
+    AdminDocumentReviewsController,
   ],
   providers: [
     { provide: PrivateStorageClient, useClass: R2PrivateStorageClient },
@@ -115,6 +118,7 @@ import {
     },
     MeCertificationUploadsService,
     AdminCertificationUploadsService,
+    AdminDocumentReviewsService,
     CertificationExpiryService,
   ],
   exports: [

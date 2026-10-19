@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import type { DocumentReviewFilter } from './document-reviews.types';
 import {
   CERTIFICATION_UPLOAD_COLUMNS,
   CERTIFICATION_UPLOADS_TABLE,
@@ -61,6 +62,24 @@ export interface ExpiryCandidateRow extends CertificationUploadRow {
   instructor: ExpiryInstructorRow | null;
 }
 
+export interface ReviewQueueQuery {
+  status: DocumentReviewFilter;
+  since: string;
+  limit: number;
+  offset: number;
+}
+
+export interface ReviewQueueRow extends CertificationUploadRow {
+  is_current: boolean;
+  level: number | null;
+  instructor_email: string;
+  instructor_first_name: string | null;
+  instructor_last_name: string | null;
+  instructor_display_name_en: string | null;
+  instructor_display_name_zh: string | null;
+  total_count: number;
+}
+
 /** Enough of an upload to tell which one is current per `(instructor, org, track)`. */
 export interface CertificationUploadKeyRow {
   id: string;
@@ -94,6 +113,7 @@ export abstract class CertificationUploadsRepository {
     fromDate: string,
     toDateExclusive: string,
   ): Promise<ExpiryCandidateRow[]>;
+  abstract listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueRow[]>;
   /** Every upload of the given instructors (keys only). */
   abstract listUploadKeys(
     instructorIds: string[],
@@ -176,6 +196,20 @@ export class SupabaseCertificationUploadsRepository extends CertificationUploads
       ExpiryCandidateRow[]
     >;
     check(error, 'list expiring certification uploads');
+    return data ?? [];
+  }
+
+  async listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueRow[]> {
+    const { data, error } = (await this.supabase.rpc(
+      'certification_upload_reviews',
+      {
+        p_status: query.status,
+        p_since: query.since,
+        p_limit: query.limit,
+        p_offset: query.offset,
+      },
+    )) as DbResult<ReviewQueueRow[]>;
+    check(error, 'list certification upload reviews');
     return data ?? [];
   }
 

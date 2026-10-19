@@ -96,6 +96,36 @@ describe('SupabaseCertificationUploadsRepository', () => {
     );
   });
 
+  it('reads a page of the review queue through certification_upload_reviews', async () => {
+    const row = { id: ID, total_count: 1 };
+    const { client, queries } = recordingSupabase({
+      'rpc:certification_upload_reviews': [ok([row]), ok(null)],
+    });
+    const repo = new SupabaseCertificationUploadsRepository(client);
+    const query = {
+      status: 'decided' as const,
+      since: '2026-10-01T00:00:00.000Z',
+      limit: 50,
+      offset: 100,
+    };
+    await expect(repo.listReviewQueue(query)).resolves.toEqual([row]);
+    await expect(repo.listReviewQueue(query)).resolves.toEqual([]);
+    expect(queries[0]).toEqual({
+      table: 'rpc:certification_upload_reviews',
+      ops: [
+        [
+          'rpc',
+          {
+            p_status: 'decided',
+            p_since: '2026-10-01T00:00:00.000Z',
+            p_limit: 50,
+            p_offset: 100,
+          },
+        ],
+      ],
+    });
+  });
+
   it('reads upload keys and certifications in instructor-id chunks', async () => {
     const ids = Array.from(
       { length: INSTRUCTOR_ID_CHUNK + 1 },
@@ -165,6 +195,16 @@ describe('SupabaseCertificationUploadsRepository', () => {
         r.listExpiryCandidates('a', 'b'),
     ],
     [
+      'listReviewQueue',
+      (r: SupabaseCertificationUploadsRepository) =>
+        r.listReviewQueue({
+          status: 'pending',
+          since: 'a',
+          limit: 1,
+          offset: 0,
+        }),
+    ],
+    [
       'listUploadKeys',
       (r: SupabaseCertificationUploadsRepository) => r.listUploadKeys([ID]),
     ],
@@ -181,6 +221,7 @@ describe('SupabaseCertificationUploadsRepository', () => {
     const { client } = recordingSupabase({
       certification_uploads: fail,
       instructor_certifications: fail,
+      'rpc:certification_upload_reviews': fail,
     });
     await expect(
       call(new SupabaseCertificationUploadsRepository(client)),

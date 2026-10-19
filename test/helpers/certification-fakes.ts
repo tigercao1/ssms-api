@@ -9,6 +9,8 @@ import {
   type ExpiryCandidateRow,
   type InstructorCertificationKeyRow,
   type NewCertificationUploadRow,
+  type ReviewQueueQuery,
+  type ReviewQueueRow,
 } from '../../src/documents/certification-uploads.repository';
 import type {
   CertificationUploadRow,
@@ -20,6 +22,18 @@ import type {
   SendOutcome,
 } from '../../src/mailer/mailer.types';
 import type { InMemoryDocumentSubjectsRepository } from './documents-fakes';
+
+export const POSTGREST_MAX_ROWS = 1000;
+
+function compareInserted(
+  a: CertificationUploadRow,
+  b: CertificationUploadRow,
+): number {
+  return (
+    Date.parse(a.inserted_at) - Date.parse(b.inserted_at) ||
+    a.id.localeCompare(b.id)
+  );
+}
 
 let clock = Date.parse('2026-10-05T00:00:00Z');
 function nextTimestamp(): string {
@@ -34,6 +48,7 @@ function nextTimestamp(): string {
 export class InMemoryCertificationUploadsRepository extends CertificationUploadsRepository {
   readonly languages = new Map<string, string>();
   readonly swaps: { id: string; sentAt: string | null }[] = [];
+  readonly reviewQueries: ReviewQueueQuery[] = [];
 
   constructor(private readonly subjects: InMemoryDocumentSubjectsRepository) {
     super();
@@ -125,6 +140,59 @@ export class InMemoryCertificationUploadsRepository extends CertificationUploads
                   approval_status: instructor.approval_status,
                 }
               : null,
+          };
+        }),
+    );
+  }
+
+  listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueRow[]> {
+    this.reviewQueries.push(query);
+    const keyOf = (r: CertificationUploadRow) =>
+      `${r.instructor_id}:${r.org}:${r.track}`;
+    const latest = new Map<string, CertificationUploadRow>();
+    for (const row of this.rows) {
+      const seen = latest.get(keyOf(row));
+      if (!seen || compareInserted(row, seen) > 0) {
+        latest.set(keyOf(row), row);
+      }
+    }
+    const isCurrent = (r: CertificationUploadRow) => latest.get(keyOf(r)) === r;
+    const matching = this.rows
+      .filter(
+        (r) =>
+          this.subjects.instructors.has(r.instructor_id) &&
+          (query.status === 'pending'
+            ? r.review_status === 'pending' && isCurrent(r)
+            : r.review_status !== 'pending' &&
+              r.reviewed_at !== null &&
+              Date.parse(r.reviewed_at) >= Date.parse(query.since)),
+      )
+      .sort((a, b) =>
+        query.status === 'pending'
+          ? compareInserted(a, b)
+          : Date.parse(b.reviewed_at ?? '') - Date.parse(a.reviewed_at ?? '') ||
+            a.id.localeCompare(b.id),
+      );
+    return Promise.resolve(
+      matching
+        .slice(query.offset, query.offset + query.limit)
+        .slice(0, POSTGREST_MAX_ROWS)
+        .map((r) => {
+          const instructor = this.subjects.instructors.get(r.instructor_id);
+          return {
+            ...r,
+            is_current: isCurrent(r),
+            level:
+              this.subjects.certifications
+                .get(r.instructor_id)
+                ?.find((c) => c.org === r.org && c.track === r.track)?.level ??
+              null,
+            instructor_email: instructor?.email ?? '',
+            instructor_first_name: instructor?.first_name ?? null,
+            instructor_last_name: instructor?.last_name ?? null,
+            instructor_display_name_en: instructor?.display_name_en ?? null,
+            instructor_display_name_zh: null,
+            total_count: matching.length,
           };
         }),
     );

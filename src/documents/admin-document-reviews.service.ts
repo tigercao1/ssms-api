@@ -32,19 +32,10 @@ function toInstructor(row: ReviewInstructorRow): DocumentReviewInstructor {
   };
 }
 
-/**
- * Instructor-submitted documents across every instructor that need (or got)
- * a manual decision. Decisions go through each type's own review endpoint.
- */
 @Injectable()
 export class AdminDocumentReviewsService {
   constructor(private readonly uploads: CertificationUploadsRepository) {}
 
-  /**
-   * `pending`: every current pending item, oldest first. `decided`: items
-   * approved or rejected in the last {@link DECIDED_REVIEW_WINDOW_DAYS} days,
-   * newest decision first, at most {@link DECIDED_REVIEW_LIMIT}.
-   */
   async list(
     filter: DocumentReviewFilter,
     now = new Date(),

@@ -4,7 +4,6 @@ import {
   type DocumentReviewFilter,
 } from '../document-reviews.types';
 
-/** `GET /admin/document-reviews` query. */
 export class DocumentReviewsQueryDto {
   @IsOptional()
   @IsIn(DOCUMENT_REVIEW_FILTERS)

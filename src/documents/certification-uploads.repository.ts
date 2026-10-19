@@ -64,7 +64,6 @@ export interface ExpiryCandidateRow extends CertificationUploadRow {
   instructor: ExpiryInstructorRow | null;
 }
 
-/** The instructor shown next to an upload in the review queue. */
 export interface ReviewInstructorRow {
   id: string;
   email: string;
@@ -111,9 +110,7 @@ export abstract class CertificationUploadsRepository {
     fromDate: string,
     toDateExclusive: string,
   ): Promise<ExpiryCandidateRow[]>;
-  /** Pending uploads, oldest first, with their instructor. */
   abstract listPendingReview(): Promise<ReviewCandidateRow[]>;
-  /** Uploads approved or rejected at or after `since`, newest decision first, with their instructor. */
   abstract listReviewedSince(
     since: string,
     limit: number,

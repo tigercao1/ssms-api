@@ -1,4 +1,3 @@
-/** Types for the admin queue of instructor-submitted documents awaiting manual review. */
 import type { CertUpload, ReviewStatus } from './documents.types';
 
 export const DOCUMENT_REVIEW_TYPES = ['certification_upload'] as const;
@@ -27,11 +26,9 @@ interface DocumentReviewItemBase<T extends DocumentReviewType> {
   contentType: string;
 }
 
-/** A certification upload; its file is served by `GET /admin/certification-uploads/:id/url`. */
 export interface CertificationUploadReviewItem extends DocumentReviewItemBase<'certification_upload'> {
   certificationUpload: CertUpload;
   level: number | null;
 }
 
-/** One `GET /admin/document-reviews` item, discriminated by `type`. */
 export type DocumentReviewItem = CertificationUploadReviewItem;

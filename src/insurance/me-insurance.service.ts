@@ -51,7 +51,7 @@ export const INSURANCE_REJECTED =
 export const INSURANCE_DEACTIVATED =
   'Your account is inactive, so lesson insurance is not available';
 export const INSURANCE_ONBOARDING_INCOMPLETE =
-  'Finish your onboarding documents and certifications to open lesson insurance';
+  'Finish your onboarding documents and membership cards to open lesson insurance';
 
 const LOCK_MESSAGES: Record<InsuranceLockReason, string> = {
   pending_approval: INSURANCE_PENDING,

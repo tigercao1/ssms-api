@@ -180,12 +180,11 @@ describe('buildInstructorFields', () => {
   });
 
   describe('certification', () => {
-    it('lists ski first: highest cert then trainer level, per discipline', () => {
+    it('lists ski first: regular, park and carving certs then trainer level, per discipline', () => {
       const fields = fieldsOf(
         snapshotOf({
           certifications: [
             cert('casi', 'regular', 2),
-            cert('csia', 'regular', 2),
             cert('csia', 'park', 2),
             cert('csia', 'regular', 3),
           ],
@@ -196,23 +195,26 @@ describe('buildInstructorFields', () => {
         }),
       );
       expect(fields.certification).toBe(
-        'CSIA Level 3, Ski Trainer Level 1, CASI Level 2',
+        'CSIA Level 3, CSIA Park Level 2, Ski Trainer Level 1, CASI Level 2',
       );
     });
 
-    it('prefers any regular cert over a higher park or carving one', () => {
+    it('shows park and carving levels alongside a regular partial', () => {
       const fields = fieldsOf(
         snapshotOf({
           certifications: [
+            cert('casi', 'carving', 1),
             cert('casi', 'park', 2),
-            cert('casi', 'regular', 1, true),
+            cert('casi', 'regular', 3, true),
           ],
         }),
       );
-      expect(fields.certification).toBe('CASI Level 1 Partial');
+      expect(fields.certification).toBe(
+        'CASI Level 3 Partial, CASI Park Level 2, CASI Carving Level 1',
+      );
     });
 
-    it('uses the highest park or carving cert when no regular one exists', () => {
+    it('shows park and carving levels when no regular cert exists', () => {
       const fields = fieldsOf(
         snapshotOf({
           certifications: [cert('casi', 'carving', 1), cert('casi', 'park', 2)],
@@ -220,17 +222,8 @@ describe('buildInstructorFields', () => {
         }),
       );
       expect(fields.certification).toBe(
-        'CASI Park Level 2, Snowboard Trainer Level 3',
+        'CASI Park Level 2, CASI Carving Level 1, Snowboard Trainer Level 3',
       );
-    });
-
-    it('breaks a level tie between park and carving in favour of park', () => {
-      const fields = fieldsOf(
-        snapshotOf({
-          certifications: [cert('casi', 'carving', 1), cert('casi', 'park', 1)],
-        }),
-      );
-      expect(fields.certification).toBe('CASI Park Level 1');
     });
 
     it('shows a trainer level on its own when there is no cert', () => {

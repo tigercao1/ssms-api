@@ -171,10 +171,9 @@ function disciplineType(snapshot: InstructorSnapshot): string {
 function certificationLine(snapshot: InstructorSnapshot): string {
   const parts: string[] = [];
   for (const { discipline, org, trainerLabel } of heldDisciplines(snapshot)) {
-    const cert = highestCertification(
+    for (const cert of byTrack(
       snapshot.certifications.filter((c) => c.org === org),
-    );
-    if (cert) {
+    )) {
       parts.push(
         formatCertification({
           org: cert.org,
@@ -192,14 +191,12 @@ function certificationLine(snapshot: InstructorSnapshot): string {
   return parts.join(', ');
 }
 
-function highestCertification(certs: SyncCertRow[]): SyncCertRow | undefined {
-  const regular = certs.filter((c) => c.track === 'regular');
-  const pool = regular.length > 0 ? regular : certs;
-  return [...pool].sort(
+function byTrack(certs: SyncCertRow[]): SyncCertRow[] {
+  return [...certs].sort(
     (a, b) =>
-      b.level - a.level ||
-      TRACK_PRECEDENCE[a.track] - TRACK_PRECEDENCE[b.track],
-  )[0];
+      TRACK_PRECEDENCE[a.track] - TRACK_PRECEDENCE[b.track] ||
+      b.level - a.level,
+  );
 }
 
 function trainerLevel(

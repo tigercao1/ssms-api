@@ -305,7 +305,7 @@ async function drawField(
   }
 }
 
-function wrap(
+export function wrap(
   text: string,
   font: PDFFont,
   size: number,

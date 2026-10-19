@@ -32,3 +32,8 @@ export interface CertificationUploadReviewItem extends DocumentReviewItemBase<'c
 }
 
 export type DocumentReviewItem = CertificationUploadReviewItem;
+
+export interface DocumentReviewPage {
+  items: DocumentReviewItem[];
+  total: number;
+}

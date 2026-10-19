@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import type { DocumentReviewFilter } from './document-reviews.types';
 import {
   CERTIFICATION_UPLOAD_COLUMNS,
   CERTIFICATION_UPLOADS_TABLE,
@@ -18,9 +19,6 @@ export const EXPIRY_INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, preferred_language, is_active, ' +
   'approval_status';
 export const EXPIRY_CANDIDATE_COLUMNS = `${CERTIFICATION_UPLOAD_COLUMNS}, instructor:instructors(${EXPIRY_INSTRUCTOR_COLUMNS})`;
-export const REVIEW_INSTRUCTOR_COLUMNS =
-  'id, email, first_name, last_name, display_name_en, display_name_zh';
-export const REVIEW_CANDIDATE_COLUMNS = `${CERTIFICATION_UPLOAD_COLUMNS}, instructor:instructors(${REVIEW_INSTRUCTOR_COLUMNS})`;
 
 /** A confirmed upload, inserted with the id issued at presign time. */
 export type NewCertificationUploadRow = Pick<
@@ -64,17 +62,22 @@ export interface ExpiryCandidateRow extends CertificationUploadRow {
   instructor: ExpiryInstructorRow | null;
 }
 
-export interface ReviewInstructorRow {
-  id: string;
-  email: string;
-  first_name: string | null;
-  last_name: string | null;
-  display_name_en: string | null;
-  display_name_zh: string | null;
+export interface ReviewQueueQuery {
+  status: DocumentReviewFilter;
+  since: string;
+  limit: number;
+  offset: number;
 }
 
-export interface ReviewCandidateRow extends CertificationUploadRow {
-  instructor: ReviewInstructorRow | null;
+export interface ReviewQueueRow extends CertificationUploadRow {
+  is_current: boolean;
+  level: number | null;
+  instructor_email: string;
+  instructor_first_name: string | null;
+  instructor_last_name: string | null;
+  instructor_display_name_en: string | null;
+  instructor_display_name_zh: string | null;
+  total_count: number;
 }
 
 /** Enough of an upload to tell which one is current per `(instructor, org, track)`. */
@@ -110,11 +113,7 @@ export abstract class CertificationUploadsRepository {
     fromDate: string,
     toDateExclusive: string,
   ): Promise<ExpiryCandidateRow[]>;
-  abstract listPendingReview(): Promise<ReviewCandidateRow[]>;
-  abstract listReviewedSince(
-    since: string,
-    limit: number,
-  ): Promise<ReviewCandidateRow[]>;
+  abstract listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueRow[]>;
   /** Every upload of the given instructors (keys only). */
   abstract listUploadKeys(
     instructorIds: string[],
@@ -200,30 +199,17 @@ export class SupabaseCertificationUploadsRepository extends CertificationUploads
     return data ?? [];
   }
 
-  async listPendingReview(): Promise<ReviewCandidateRow[]> {
-    const { data, error } = (await this.supabase
-      .from(CERTIFICATION_UPLOADS_TABLE)
-      .select(REVIEW_CANDIDATE_COLUMNS)
-      .eq('review_status', 'pending')
-      .order('inserted_at', { ascending: true })) as DbResult<
-      ReviewCandidateRow[]
-    >;
-    check(error, 'list pending certification uploads');
-    return data ?? [];
-  }
-
-  async listReviewedSince(
-    since: string,
-    limit: number,
-  ): Promise<ReviewCandidateRow[]> {
-    const { data, error } = (await this.supabase
-      .from(CERTIFICATION_UPLOADS_TABLE)
-      .select(REVIEW_CANDIDATE_COLUMNS)
-      .in('review_status', ['approved', 'rejected'])
-      .gte('reviewed_at', since)
-      .order('reviewed_at', { ascending: false })
-      .limit(limit)) as DbResult<ReviewCandidateRow[]>;
-    check(error, 'list reviewed certification uploads');
+  async listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueRow[]> {
+    const { data, error } = (await this.supabase.rpc(
+      'certification_upload_reviews',
+      {
+        p_status: query.status,
+        p_since: query.since,
+        p_limit: query.limit,
+        p_offset: query.offset,
+      },
+    )) as DbResult<ReviewQueueRow[]>;
+    check(error, 'list certification upload reviews');
     return data ?? [];
   }
 

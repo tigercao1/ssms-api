@@ -1,7 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { InMemoryCertificationUploadsRepository } from '../../test/helpers/certification-fakes';
+import {
+  InMemoryCertificationUploadsRepository,
+  POSTGREST_MAX_ROWS,
+} from '../../test/helpers/certification-fakes';
 import {
   ADMIN_AUTH as admin,
   certificationUploadRow,
@@ -14,21 +17,31 @@ import {
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { MailerService } from '../mailer/mailer.service';
 import { AdminCertificationUploadsController } from './admin-certification-uploads.controller';
 import { AdminCertificationUploadsService } from './admin-certification-uploads.service';
 import { AdminDocumentReviewsController } from './admin-document-reviews.controller';
 import {
   AdminDocumentReviewsService,
-  DECIDED_REVIEW_LIMIT,
   DECIDED_REVIEW_WINDOW_DAYS,
 } from './admin-document-reviews.service';
 import { CertificationUploadsRepository } from './certification-uploads.repository';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import type { DocumentReviewItem } from './document-reviews.types';
+import type { CertOrg, CertTrack } from './documents.types';
+import { DOCUMENT_REVIEWS_DEFAULT_LIMIT } from './dto/document-review.dto';
 import { PrivateStorageClient } from './private-storage.client';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const KEYS: [CertOrg, CertTrack][] = [
+  ['csia', 'regular'],
+  ['csia', 'park'],
+  ['csia', 'carving'],
+  ['casi', 'regular'],
+  ['casi', 'park'],
+  ['casi', 'carving'],
+];
 const daysAgo = (days: number) =>
   new Date(Date.now() - days * DAY_MS).toISOString();
 
@@ -65,7 +78,7 @@ async function build() {
   subjects.certifications.set(instructor.id, [
     { org: 'csia', track: 'regular', level: 2 },
   ]);
-  return { app, subjects, audit, mailer, instructor };
+  return { app, subjects, uploads, audit, mailer, instructor };
 }
 
 type Ctx = Awaited<ReturnType<typeof build>>;
@@ -81,6 +94,17 @@ describe('GET /admin/document-reviews', () => {
   afterEach(async () => {
     await ctx.app.close();
   });
+
+  async function page(query = '') {
+    const res = await http()
+      .get(`/admin/document-reviews${query}`)
+      .set('Authorization', admin)
+      .expect(200);
+    return {
+      ids: (res.body as DocumentReviewItem[]).map((i) => i.id),
+      total: res.headers[TOTAL_COUNT_HEADER.toLowerCase()],
+    };
+  }
 
   async function list(query = ''): Promise<DocumentReviewItem[]> {
     const res = await http()
@@ -217,16 +241,169 @@ describe('GET /admin/document-reviews', () => {
     ]);
   });
 
-  it(`caps recent decisions at ${DECIDED_REVIEW_LIMIT}`, async () => {
-    for (let i = 0; i <= DECIDED_REVIEW_LIMIT; i += 1) {
-      seedUpload({
-        instructor_id: ctx.instructor.id,
-        review_status: 'approved',
-        reviewed_at: daysAgo(1),
-      });
-    }
+  it.each([
+    ['?limit=101'],
+    ['?limit=0'],
+    ['?page=0'],
+    ['?page=x'],
+    ['?status=decided&limit=1.5'],
+  ])('400s on %s', async (query) => {
+    await http()
+      .get(`/admin/document-reviews${query}`)
+      .set('Authorization', admin)
+      .expect(400);
+  });
 
-    expect(await list('?status=decided')).toHaveLength(DECIDED_REVIEW_LIMIT);
+  it(`pages with page and limit, defaulting to ${DOCUMENT_REVIEWS_DEFAULT_LIMIT}, and reports the total past the end`, async () => {
+    const instructors = Array.from({ length: 10 }, (_, i) =>
+      ctx.subjects.seedInstructor({ email: `coach${i}@example.com` }),
+    );
+    const seeded = instructors.flatMap((instructor) =>
+      KEYS.map(([org, track]) =>
+        seedUpload({
+          instructor_id: instructor.id,
+          org,
+          track,
+          review_status: 'pending',
+        }),
+      ),
+    );
+    const ids = seeded.map((row) => row.id);
+
+    await expect(page()).resolves.toEqual({
+      ids: ids.slice(0, DOCUMENT_REVIEWS_DEFAULT_LIMIT),
+      total: '60',
+    });
+    await expect(page('?page=2')).resolves.toEqual({
+      ids: ids.slice(DOCUMENT_REVIEWS_DEFAULT_LIMIT),
+      total: '60',
+    });
+    await expect(page('?status=pending&page=3&limit=20')).resolves.toEqual({
+      ids: ids.slice(40),
+      total: '60',
+    });
+    await expect(page('?page=9&limit=20')).resolves.toEqual({
+      ids: [],
+      total: '60',
+    });
+    await expect(page('?status=decided')).resolves.toEqual({
+      ids: [],
+      total: '0',
+    });
+    expect(ctx.uploads.reviewQueries.slice(0, 2)).toEqual([
+      expect.objectContaining({
+        status: 'pending',
+        limit: DOCUMENT_REVIEWS_DEFAULT_LIMIT,
+        offset: 0,
+      }),
+      expect.objectContaining({
+        status: 'pending',
+        limit: DOCUMENT_REVIEWS_DEFAULT_LIMIT,
+        offset: DOCUMENT_REVIEWS_DEFAULT_LIMIT,
+      }),
+    ]);
+  });
+
+  it('breaks ties on the submitted and decided times by id', async () => {
+    const other = ctx.subjects.seedInstructor({ email: 'olive@example.com' });
+    const at = '2026-10-10T12:00:00.000Z';
+    const pending = [ctx.instructor.id, other.id]
+      .map((instructorId) =>
+        seedUpload({
+          instructor_id: instructorId,
+          review_status: 'pending',
+          inserted_at: at,
+        }),
+      )
+      .map((row) => row.id)
+      .sort();
+    const decidedAt = daysAgo(1);
+    const decided = [ctx.instructor.id, other.id]
+      .map((instructorId) =>
+        seedUpload({
+          instructor_id: instructorId,
+          org: 'casi',
+          review_status: 'approved',
+          reviewed_at: decidedAt,
+        }),
+      )
+      .map((row) => row.id)
+      .sort();
+
+    await expect(page()).resolves.toEqual({ ids: pending, total: '2' });
+    await expect(page('?limit=1&page=2')).resolves.toEqual({
+      ids: [pending[1]],
+      total: '2',
+    });
+    await expect(page('?status=decided')).resolves.toEqual({
+      ids: decided,
+      total: '2',
+    });
+  });
+
+  it(`pages past ${POSTGREST_MAX_ROWS} rows with the right total, order and current uploads`, async () => {
+    const instructors = Array.from({ length: 200 }, (_, i) =>
+      ctx.subjects.seedInstructor({ email: `coach${i}@example.com` }),
+    );
+    const superseded = new Set(
+      instructors.slice(0, 50).flatMap((instructor) =>
+        KEYS.map(
+          ([org, track]) =>
+            seedUpload({
+              instructor_id: instructor.id,
+              org,
+              track,
+              review_status: 'pending',
+            }).id,
+        ),
+      ),
+    );
+    const current = instructors.flatMap((instructor) =>
+      KEYS.map(
+        ([org, track]) =>
+          seedUpload({
+            instructor_id: instructor.id,
+            org,
+            track,
+            review_status: 'pending',
+          }).id,
+      ),
+    );
+    expect(current.length + superseded.size).toBeGreaterThan(
+      POSTGREST_MAX_ROWS,
+    );
+    expect(current.length).toBeGreaterThan(POSTGREST_MAX_ROWS);
+
+    const seen: string[] = [];
+    for (let n = 1; n <= 13; n += 1) {
+      const { ids, total } = await page(`?page=${n}&limit=100`);
+      expect(total).toBe(String(current.length));
+      seen.push(...ids);
+    }
+    expect(seen).toEqual(current);
+    expect(seen.some((id) => superseded.has(id))).toBe(false);
+    expect(ctx.uploads.reviewQueries.every((q) => q.limit <= 100)).toBe(true);
+  });
+
+  it(`pages past ${POSTGREST_MAX_ROWS} recent decisions, newest first`, async () => {
+    const decided = Array.from(
+      { length: POSTGREST_MAX_ROWS + 100 },
+      (_, i) =>
+        seedUpload({
+          instructor_id: ctx.instructor.id,
+          review_status: i % 2 ? 'rejected' : 'approved',
+          reviewed_at: new Date(Date.now() - (i + 1) * 60_000).toISOString(),
+        }).id,
+    );
+
+    await expect(page('?status=decided&page=11&limit=100')).resolves.toEqual({
+      ids: decided.slice(1000),
+      total: String(decided.length),
+    });
+    await expect(page('?status=decided&page=12&limit=100')).resolves.toEqual({
+      ids: [],
+      total: String(decided.length),
+    });
   });
 
   it('moves an item from pending to decided once reviewed through the certification review endpoint', async () => {

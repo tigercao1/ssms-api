@@ -1,6 +1,8 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { Roles, RolesGuard } from '../admin/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { TOTAL_COUNT_HEADER } from '../config/cors';
 import { AdminDocumentReviewsService } from './admin-document-reviews.service';
 import type { DocumentReviewItem } from './document-reviews.types';
 import { DocumentReviewsQueryDto } from './dto/document-review.dto';
@@ -12,7 +14,12 @@ export class AdminDocumentReviewsController {
   constructor(private readonly reviews: AdminDocumentReviewsService) {}
 
   @Get()
-  list(@Query() query: DocumentReviewsQueryDto): Promise<DocumentReviewItem[]> {
-    return this.reviews.list(query.status ?? 'pending');
+  async list(
+    @Query() query: DocumentReviewsQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<DocumentReviewItem[]> {
+    const { items, total } = await this.reviews.list(query);
+    res.setHeader(TOTAL_COUNT_HEADER, String(total));
+    return items;
   }
 }

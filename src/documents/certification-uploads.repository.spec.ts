@@ -2,7 +2,6 @@ import { recordingSupabase } from '../../test/helpers/lessons-fakes';
 import { DatabaseError } from '../database/db-result';
 import {
   EXPIRY_CANDIDATE_COLUMNS,
-  REVIEW_CANDIDATE_COLUMNS,
   SupabaseCertificationUploadsRepository,
 } from './certification-uploads.repository';
 import {
@@ -97,31 +96,34 @@ describe('SupabaseCertificationUploadsRepository', () => {
     );
   });
 
-  it('lists pending and recently reviewed uploads with their instructor', async () => {
+  it('reads a page of the review queue through certification_upload_reviews', async () => {
+    const row = { id: ID, total_count: 1 };
     const { client, queries } = recordingSupabase({
-      certification_uploads: [ok([{ id: ID }]), ok(null), ok([{ id: ID }])],
+      'rpc:certification_upload_reviews': [ok([row]), ok(null)],
     });
     const repo = new SupabaseCertificationUploadsRepository(client);
-    await expect(repo.listPendingReview()).resolves.toEqual([{ id: ID }]);
-    await expect(repo.listPendingReview()).resolves.toEqual([]);
-    await expect(
-      repo.listReviewedSince('2026-10-01T00:00:00.000Z', 50),
-    ).resolves.toEqual([{ id: ID }]);
-    expect(queries[0].ops).toEqual([
-      ['select', REVIEW_CANDIDATE_COLUMNS],
-      ['eq', 'review_status', 'pending'],
-      ['order', 'inserted_at', { ascending: true }],
-    ]);
-    expect(queries[2].ops).toEqual([
-      ['select', REVIEW_CANDIDATE_COLUMNS],
-      ['in', 'review_status', ['approved', 'rejected']],
-      ['gte', 'reviewed_at', '2026-10-01T00:00:00.000Z'],
-      ['order', 'reviewed_at', { ascending: false }],
-      ['limit', 50],
-    ]);
-    expect(REVIEW_CANDIDATE_COLUMNS).toContain(
-      'instructor:instructors(id, email, first_name, last_name, display_name_en, display_name_zh)',
-    );
+    const query = {
+      status: 'decided' as const,
+      since: '2026-10-01T00:00:00.000Z',
+      limit: 50,
+      offset: 100,
+    };
+    await expect(repo.listReviewQueue(query)).resolves.toEqual([row]);
+    await expect(repo.listReviewQueue(query)).resolves.toEqual([]);
+    expect(queries[0]).toEqual({
+      table: 'rpc:certification_upload_reviews',
+      ops: [
+        [
+          'rpc',
+          {
+            p_status: 'decided',
+            p_since: '2026-10-01T00:00:00.000Z',
+            p_limit: 50,
+            p_offset: 100,
+          },
+        ],
+      ],
+    });
   });
 
   it('reads upload keys and certifications in instructor-id chunks', async () => {
@@ -193,13 +195,14 @@ describe('SupabaseCertificationUploadsRepository', () => {
         r.listExpiryCandidates('a', 'b'),
     ],
     [
-      'listPendingReview',
-      (r: SupabaseCertificationUploadsRepository) => r.listPendingReview(),
-    ],
-    [
-      'listReviewedSince',
+      'listReviewQueue',
       (r: SupabaseCertificationUploadsRepository) =>
-        r.listReviewedSince('a', 1),
+        r.listReviewQueue({
+          status: 'pending',
+          since: 'a',
+          limit: 1,
+          offset: 0,
+        }),
     ],
     [
       'listUploadKeys',
@@ -218,6 +221,7 @@ describe('SupabaseCertificationUploadsRepository', () => {
     const { client } = recordingSupabase({
       certification_uploads: fail,
       instructor_certifications: fail,
+      'rpc:certification_upload_reviews': fail,
     });
     await expect(
       call(new SupabaseCertificationUploadsRepository(client)),

@@ -144,6 +144,9 @@ jobs:
       - name: Approve activated invites checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/approve_activated_invites_checks.sql
 
+      - name: Certification upload reviews checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/certification_upload_reviews_checks.sql
+
       # Mirrors what the post-merge job does to dev and prod: the base branch's
       # migrations are already applied, and only this PR's new files run.
       - name: Apply on top of base branch (PRs only)

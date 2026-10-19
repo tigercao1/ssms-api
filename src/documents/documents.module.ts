@@ -49,6 +49,8 @@ import { MeCertificationUploadsController } from './me-certification-uploads.con
 import { MeCertificationUploadsService } from './me-certification-uploads.service';
 import { MeDocumentsController } from './me-documents.controller';
 import { MeDocumentsService } from './me-documents.service';
+import { MeEmploymentLetterController } from './me-employment-letter.controller';
+import { EmploymentLetterService } from './employment-letter.service';
 import { PdfWorkQueue } from './pdf-work-queue';
 import {
   PrivateStorageClient,
@@ -62,6 +64,7 @@ import {
     AdminDocumentAssignmentsController,
     AdminDocumentExportsController,
     MeDocumentsController,
+    MeEmploymentLetterController,
     AdminDocumentRemindersController,
     InternalDocumentsController,
     MeCertificationUploadsController,
@@ -94,6 +97,7 @@ import {
     DocumentPublishingService,
     DocumentAssignmentsService,
     MeDocumentsService,
+    EmploymentLetterService,
     DocumentSigningService,
     {
       provide: DocumentCompletedHandler,

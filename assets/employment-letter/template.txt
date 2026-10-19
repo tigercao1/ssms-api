@@ -1,0 +1,13 @@
+# PLACEHOLDER TEMPLATE: replace with the official SSnow employment letter
+
+{{issue_date}}
+
+To whom it may concern,
+
+This letter confirms that {{legal_name}} is employed by SSnow as a ski and snowboard instructor for the {{season}} season ({{season_start}} to {{season_end}}).
+
+Please contact SSnow if you need any further information.
+
+Sincerely,
+
+SSnow

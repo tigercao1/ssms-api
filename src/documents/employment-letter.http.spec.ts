@@ -31,7 +31,7 @@ import { PdfWorkQueue } from './pdf-work-queue';
 jest.setTimeout(30_000);
 
 const binary = (
-  res: NodeJS.ReadableStream,
+  res: request.Response,
   done: (err: Error | null, body: Buffer) => void,
 ) => {
   const chunks: Buffer[] = [];

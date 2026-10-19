@@ -9,6 +9,7 @@ import {
   type ExpiryCandidateRow,
   type InstructorCertificationKeyRow,
   type NewCertificationUploadRow,
+  type ReviewCandidateRow,
 } from '../../src/documents/certification-uploads.repository';
 import type {
   CertificationUploadRow,
@@ -128,6 +129,54 @@ export class InMemoryCertificationUploadsRepository extends CertificationUploads
           };
         }),
     );
+  }
+
+  listPendingReview(): Promise<ReviewCandidateRow[]> {
+    return Promise.resolve(
+      this.rows
+        .filter((r) => r.review_status === 'pending')
+        .sort((a, b) => a.inserted_at.localeCompare(b.inserted_at))
+        .map((r) => this.withReviewInstructor(r)),
+    );
+  }
+
+  listReviewedSince(
+    since: string,
+    limit: number,
+  ): Promise<ReviewCandidateRow[]> {
+    return Promise.resolve(
+      this.rows
+        .filter(
+          (r) =>
+            r.review_status !== 'pending' &&
+            r.reviewed_at !== null &&
+            r.reviewed_at >= since,
+        )
+        .sort((a, b) =>
+          (b.reviewed_at ?? '').localeCompare(a.reviewed_at ?? ''),
+        )
+        .slice(0, limit)
+        .map((r) => this.withReviewInstructor(r)),
+    );
+  }
+
+  private withReviewInstructor(
+    row: CertificationUploadRow,
+  ): ReviewCandidateRow {
+    const instructor = this.subjects.instructors.get(row.instructor_id);
+    return {
+      ...row,
+      instructor: instructor
+        ? {
+            id: instructor.id,
+            email: instructor.email,
+            first_name: instructor.first_name,
+            last_name: instructor.last_name,
+            display_name_en: instructor.display_name_en,
+            display_name_zh: null,
+          }
+        : null,
+    };
   }
 
   listUploadKeys(

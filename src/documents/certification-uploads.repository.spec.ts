@@ -2,6 +2,7 @@ import { recordingSupabase } from '../../test/helpers/lessons-fakes';
 import { DatabaseError } from '../database/db-result';
 import {
   EXPIRY_CANDIDATE_COLUMNS,
+  REVIEW_CANDIDATE_COLUMNS,
   SupabaseCertificationUploadsRepository,
 } from './certification-uploads.repository';
 import {
@@ -96,6 +97,33 @@ describe('SupabaseCertificationUploadsRepository', () => {
     );
   });
 
+  it('lists pending and recently reviewed uploads with their instructor', async () => {
+    const { client, queries } = recordingSupabase({
+      certification_uploads: [ok([{ id: ID }]), ok(null), ok([{ id: ID }])],
+    });
+    const repo = new SupabaseCertificationUploadsRepository(client);
+    await expect(repo.listPendingReview()).resolves.toEqual([{ id: ID }]);
+    await expect(repo.listPendingReview()).resolves.toEqual([]);
+    await expect(
+      repo.listReviewedSince('2026-10-01T00:00:00.000Z', 50),
+    ).resolves.toEqual([{ id: ID }]);
+    expect(queries[0].ops).toEqual([
+      ['select', REVIEW_CANDIDATE_COLUMNS],
+      ['eq', 'review_status', 'pending'],
+      ['order', 'inserted_at', { ascending: true }],
+    ]);
+    expect(queries[2].ops).toEqual([
+      ['select', REVIEW_CANDIDATE_COLUMNS],
+      ['in', 'review_status', ['approved', 'rejected']],
+      ['gte', 'reviewed_at', '2026-10-01T00:00:00.000Z'],
+      ['order', 'reviewed_at', { ascending: false }],
+      ['limit', 50],
+    ]);
+    expect(REVIEW_CANDIDATE_COLUMNS).toContain(
+      'instructor:instructors(id, email, first_name, last_name, display_name_en, display_name_zh)',
+    );
+  });
+
   it('reads upload keys and certifications in instructor-id chunks', async () => {
     const ids = Array.from(
       { length: INSTRUCTOR_ID_CHUNK + 1 },
@@ -163,6 +191,15 @@ describe('SupabaseCertificationUploadsRepository', () => {
       'listExpiryCandidates',
       (r: SupabaseCertificationUploadsRepository) =>
         r.listExpiryCandidates('a', 'b'),
+    ],
+    [
+      'listPendingReview',
+      (r: SupabaseCertificationUploadsRepository) => r.listPendingReview(),
+    ],
+    [
+      'listReviewedSince',
+      (r: SupabaseCertificationUploadsRepository) =>
+        r.listReviewedSince('a', 1),
     ],
     [
       'listUploadKeys',

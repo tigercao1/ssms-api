@@ -18,6 +18,9 @@ export const EXPIRY_INSTRUCTOR_COLUMNS =
   'id, auth_user_id, email, display_name_en, preferred_language, is_active, ' +
   'approval_status';
 export const EXPIRY_CANDIDATE_COLUMNS = `${CERTIFICATION_UPLOAD_COLUMNS}, instructor:instructors(${EXPIRY_INSTRUCTOR_COLUMNS})`;
+export const REVIEW_INSTRUCTOR_COLUMNS =
+  'id, email, first_name, last_name, display_name_en, display_name_zh';
+export const REVIEW_CANDIDATE_COLUMNS = `${CERTIFICATION_UPLOAD_COLUMNS}, instructor:instructors(${REVIEW_INSTRUCTOR_COLUMNS})`;
 
 /** A confirmed upload, inserted with the id issued at presign time. */
 export type NewCertificationUploadRow = Pick<
@@ -61,6 +64,20 @@ export interface ExpiryCandidateRow extends CertificationUploadRow {
   instructor: ExpiryInstructorRow | null;
 }
 
+/** The instructor shown next to an upload in the review queue. */
+export interface ReviewInstructorRow {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  display_name_en: string | null;
+  display_name_zh: string | null;
+}
+
+export interface ReviewCandidateRow extends CertificationUploadRow {
+  instructor: ReviewInstructorRow | null;
+}
+
 /** Enough of an upload to tell which one is current per `(instructor, org, track)`. */
 export interface CertificationUploadKeyRow {
   id: string;
@@ -94,6 +111,13 @@ export abstract class CertificationUploadsRepository {
     fromDate: string,
     toDateExclusive: string,
   ): Promise<ExpiryCandidateRow[]>;
+  /** Pending uploads, oldest first, with their instructor. */
+  abstract listPendingReview(): Promise<ReviewCandidateRow[]>;
+  /** Uploads approved or rejected at or after `since`, newest decision first, with their instructor. */
+  abstract listReviewedSince(
+    since: string,
+    limit: number,
+  ): Promise<ReviewCandidateRow[]>;
   /** Every upload of the given instructors (keys only). */
   abstract listUploadKeys(
     instructorIds: string[],
@@ -176,6 +200,33 @@ export class SupabaseCertificationUploadsRepository extends CertificationUploads
       ExpiryCandidateRow[]
     >;
     check(error, 'list expiring certification uploads');
+    return data ?? [];
+  }
+
+  async listPendingReview(): Promise<ReviewCandidateRow[]> {
+    const { data, error } = (await this.supabase
+      .from(CERTIFICATION_UPLOADS_TABLE)
+      .select(REVIEW_CANDIDATE_COLUMNS)
+      .eq('review_status', 'pending')
+      .order('inserted_at', { ascending: true })) as DbResult<
+      ReviewCandidateRow[]
+    >;
+    check(error, 'list pending certification uploads');
+    return data ?? [];
+  }
+
+  async listReviewedSince(
+    since: string,
+    limit: number,
+  ): Promise<ReviewCandidateRow[]> {
+    const { data, error } = (await this.supabase
+      .from(CERTIFICATION_UPLOADS_TABLE)
+      .select(REVIEW_CANDIDATE_COLUMNS)
+      .in('review_status', ['approved', 'rejected'])
+      .gte('reviewed_at', since)
+      .order('reviewed_at', { ascending: false })
+      .limit(limit)) as DbResult<ReviewCandidateRow[]>;
+    check(error, 'list reviewed certification uploads');
     return data ?? [];
   }
 

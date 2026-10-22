@@ -36,6 +36,8 @@ function toActor(user: SupabaseJwtPayload, userAgent?: string): AuditActor {
 
 const PageId = () => Param('id', new ParseUUIDPipe({ version: '4' }));
 
+const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
+
 @Controller('admin/pages')
 @UseGuards(SupabaseAuthGuard, RolesGuard, DocsStorageConfiguredGuard)
 @Roles('admin')
@@ -93,6 +95,22 @@ export class PublicPagesController {
     return new StreamableFile(body, {
       type: 'text/plain; charset=utf-8',
       length: body.length,
+    });
+  }
+
+  @Get(':id/download')
+  @Header('X-Content-Type-Options', 'nosniff')
+  @Header('Cache-Control', 'no-store')
+  async download(
+    @PageId() id: string,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<StreamableFile> {
+    const file = await this.pages.downloadContent(id, toActor(user, userAgent));
+    return new StreamableFile(file.body, {
+      type: HTML_CONTENT_TYPE,
+      disposition: `attachment; filename="${file.filename}"`,
+      length: file.body.length,
     });
   }
 

@@ -30,6 +30,7 @@ export const AUDIT_ACTIONS = {
   pageCreate: 'page.create',
   pageUpdate: 'page.update',
   pageUpload: 'page.upload',
+  pageDownload: 'page.download',
   pagePublish: 'page.publish',
   pageUnpublish: 'page.unpublish',
   pageDelete: 'page.delete',

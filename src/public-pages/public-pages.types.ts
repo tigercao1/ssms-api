@@ -19,6 +19,11 @@ export interface PublicPage {
   updatedAt: string;
 }
 
+export interface PublicPageDownload {
+  filename: string;
+  body: Buffer;
+}
+
 export interface PublicPageRow {
   id: string;
   slug: string;

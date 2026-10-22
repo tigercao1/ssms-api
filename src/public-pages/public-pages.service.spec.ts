@@ -308,6 +308,62 @@ describe('PublicPagesService', () => {
     });
   });
 
+  describe('downloadContent', () => {
+    it('returns the draft bytes named after the slug and audits the download', async () => {
+      const { service, audit } = build();
+      const page = await service.create('faq', 'FAQ', actor);
+      await service.uploadContent(page.id, html, actor);
+      await expect(service.downloadContent(page.id, actor)).resolves.toEqual({
+        filename: 'faq.html',
+        body: html,
+      });
+      expect(audit.entries.at(-1)).toEqual({
+        action: 'page.download',
+        actor,
+        targetType: 'public_page',
+        targetId: page.id,
+        metadata: { slug: 'faq', sizeBytes: html.length, sha256: sha(html) },
+      });
+    });
+
+    it('returns the latest upload rather than the published copy', async () => {
+      const { service } = build();
+      const page = await service.create('faq', 'FAQ', actor);
+      await service.uploadContent(page.id, html, actor);
+      await service.publish(page.id, actor);
+      const next = Buffer.from('<h1>v2</h1>');
+      await service.uploadContent(page.id, next, actor);
+      await expect(service.downloadContent(page.id, actor)).resolves.toEqual({
+        filename: 'faq.html',
+        body: next,
+      });
+    });
+
+    it('404s without auditing when nothing was uploaded', async () => {
+      const { service, audit } = build();
+      const page = await service.create('faq', 'FAQ', actor);
+      await expect(
+        service.downloadContent(page.id, actor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(audit.entries.map((e) => e.action)).toEqual(['page.create']);
+    });
+
+    it('502s and audits the inconsistency when the Worker is missing the draft', async () => {
+      const { service, storage, audit } = build();
+      const page = await service.create('faq', 'FAQ', actor);
+      await service.uploadContent(page.id, html, actor);
+      storage.objects.clear();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      await expect(service.downloadContent(page.id, actor)).rejects.toThrow(
+        new BadGatewayException(DOCS_STORAGE_UNAVAILABLE),
+      );
+      expect(audit.entries.at(-1)).toMatchObject({
+        action: 'page.storage_inconsistent',
+        metadata: { operation: 'download', object: 'drafts/faq.html' },
+      });
+    });
+  });
+
   describe('publish', () => {
     it('400s without content', async () => {
       const { service, storage } = build();

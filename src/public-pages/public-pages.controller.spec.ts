@@ -125,6 +125,7 @@ describe('/admin/pages', () => {
             .send(html),
       ],
       ['GET content', (r) => r.get(`/admin/pages/${UNKNOWN_ID}/content`)],
+      ['GET download', (r) => r.get(`/admin/pages/${UNKNOWN_ID}/download`)],
       ['POST publish', (r) => r.post(`/admin/pages/${UNKNOWN_ID}/publish`)],
       ['POST unpublish', (r) => r.post(`/admin/pages/${UNKNOWN_ID}/unpublish`)],
       ['DELETE', (r) => r.delete(`/admin/pages/${UNKNOWN_ID}`)],
@@ -365,6 +366,71 @@ describe('/admin/pages', () => {
         .set('Authorization', admin)
         .expect(502);
       expect(res.body).toMatchObject({ message: DOCS_STORAGE_UNAVAILABLE });
+    });
+  });
+
+  describe('GET /admin/pages/:id/download', () => {
+    it('returns the uploaded bytes as an HTML attachment and audits it', async () => {
+      const page = await createPage();
+      const latin1 = Buffer.from([0x3c, 0x70, 0x3e, 0x63, 0x61, 0x66, 0xe9]);
+      await upload(page.id, latin1).expect(200);
+      const res = await http()
+        .get(`/admin/pages/${page.id}/download`)
+        .set('Authorization', admin)
+        .buffer(true)
+        .parse((response, done) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => done(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect(res.headers['content-type']).toBe('text/html; charset=utf-8');
+      expect(res.headers['content-disposition']).toBe(
+        'attachment; filename="winter-rates.html"',
+      );
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.body).toEqual(latin1);
+      expect(ctx.audit.entries.at(-1)).toMatchObject({
+        action: 'page.download',
+        actor: { userId: ADMIN_ID, role: 'admin' },
+        targetType: 'public_page',
+        targetId: page.id,
+        metadata: { slug: 'winter-rates', sizeBytes: latin1.length },
+      });
+    });
+
+    it('404s without auditing when nothing was uploaded', async () => {
+      const page = await createPage();
+      await http()
+        .get(`/admin/pages/${page.id}/download`)
+        .set('Authorization', admin)
+        .expect(404);
+      expect(ctx.audit.entries.map((e) => e.action)).toEqual(['page.create']);
+    });
+
+    it('404s for an unknown page', async () => {
+      await http()
+        .get(`/admin/pages/${UNKNOWN_ID}/download`)
+        .set('Authorization', admin)
+        .expect(404);
+    });
+
+    it('502s when the draft object is missing but the database has one', async () => {
+      const page = await createPage();
+      await upload(page.id).expect(200);
+      ctx.storage.objects.clear();
+      jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementationOnce(() => undefined);
+      const res = await http()
+        .get(`/admin/pages/${page.id}/download`)
+        .set('Authorization', admin)
+        .expect(502);
+      expect(res.body).toMatchObject({ message: DOCS_STORAGE_UNAVAILABLE });
+      expect(ctx.audit.entries.map((e) => e.action)).not.toContain(
+        'page.download',
+      );
     });
   });
 

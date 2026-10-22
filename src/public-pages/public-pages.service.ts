@@ -28,6 +28,7 @@ import {
   PAGE_CONTENT_MAX_BYTES,
   publishedKey,
   type PublicPage,
+  type PublicPageDownload,
   type PublicPageRow,
 } from './public-pages.types';
 
@@ -40,7 +41,13 @@ export const PAGE_CONTENT_TOO_LARGE = `Page content must be at most ${PAGE_CONTE
 export const PAGE_CONFLICT =
   'This page was changed by someone else. Reload and try again.';
 
-type StorageOperation = 'read' | 'upload' | 'publish' | 'unpublish' | 'delete';
+type StorageOperation =
+  | 'read'
+  | 'download'
+  | 'upload'
+  | 'publish'
+  | 'unpublish'
+  | 'delete';
 
 interface ObjectSnapshot {
   key: string;
@@ -178,6 +185,23 @@ export class PublicPagesService {
       throw new NotFoundException(PAGE_CONTENT_NOT_FOUND);
     }
     return this.readDraft(page, 'read', actor);
+  }
+
+  async downloadContent(
+    id: string,
+    actor: AuditActor,
+  ): Promise<PublicPageDownload> {
+    const page = await this.load(id);
+    if (page.draft_sha256 === null) {
+      throw new NotFoundException(PAGE_CONTENT_NOT_FOUND);
+    }
+    const body = await this.readDraft(page, 'download', actor);
+    await this.record(AUDIT_ACTIONS.pageDownload, actor, page, {
+      slug: page.slug,
+      sizeBytes: body.length,
+      sha256: sha256(body),
+    });
+    return { filename: `${page.slug}.html`, body };
   }
 
   publish(id: string, actor: AuditActor): Promise<PublicPage> {

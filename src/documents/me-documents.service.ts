@@ -146,9 +146,9 @@ function toPreviewItem(template: DocumentTemplateRow): DocumentChecklistItem {
 
 export type CertificationChecklistUpload = Pick<
   CertificationUploadRow,
-  'org' | 'track' | 'review_status' | 'valid_until' | 'inserted_at'
+  'id' | 'org' | 'track' | 'review_status' | 'valid_until' | 'inserted_at'
 > &
-  Partial<Pick<CertificationUploadRow, 'id' | 'review_note'>>;
+  Partial<Pick<CertificationUploadRow, 'review_note'>>;
 
 export function toCertificationItems(
   certifications: readonly InstructorCertificationRow[],

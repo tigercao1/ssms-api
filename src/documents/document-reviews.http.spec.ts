@@ -204,6 +204,29 @@ describe('GET /admin/document-reviews', () => {
     expect((await list()).map((i) => i.id)).toEqual([newer.id]);
   });
 
+  it('reviews the queued upload as current when two share an inserted_at', async () => {
+    const insertedAt = daysAgo(1);
+    const seedTied = (id: string) =>
+      seedUpload({
+        id,
+        instructor_id: ctx.instructor.id,
+        review_status: 'pending',
+        inserted_at: insertedAt,
+      }).id;
+    seedTied('00000000-0000-4000-8000-000000000001');
+    const higher = seedTied('00000000-0000-4000-8000-000000000002');
+
+    expect((await list()).map((i) => i.id)).toEqual([higher]);
+    const res = await http()
+      .patch(`/admin/certification-uploads/${higher}`)
+      .set('Authorization', admin)
+      .send({ reviewStatus: 'approved' })
+      .expect(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({ id: higher, current: true }),
+    );
+  });
+
   it('returns an empty queue', async () => {
     await expect(list()).resolves.toEqual([]);
     await expect(list('?status=decided')).resolves.toEqual([]);

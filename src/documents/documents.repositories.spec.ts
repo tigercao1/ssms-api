@@ -373,7 +373,7 @@ describe('bulk per-instructor reads', () => {
       ['select', CERTIFICATION_UPLOAD_COLUMNS],
       ['in', 'instructor_id', ['i1', 'i2']],
       ['order', 'inserted_at', { ascending: false }],
-      ['order', 'id', { ascending: true }],
+      ['order', 'id', { ascending: false }],
       ['range', 0, 999],
     ]);
     await expect(repo.listCertificationUploadsFor(['i1'])).rejects.toThrow(
@@ -518,6 +518,7 @@ describe('SupabaseDocumentSubjectsRepository', () => {
       ['select', CERTIFICATION_UPLOAD_COLUMNS],
       ['eq', 'instructor_id', ID],
       ['order', 'inserted_at', { ascending: false }],
+      ['order', 'id', { ascending: false }],
     ]);
   });
 

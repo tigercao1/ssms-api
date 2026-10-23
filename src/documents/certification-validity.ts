@@ -24,6 +24,7 @@ export interface CertificationUploadStatus {
 
 /** The fields needed to pick the current upload per `(org, track)`. */
 export interface KeyedCertificationUpload {
+  id: string;
   org: CertOrg;
   track: CertTrack;
   insertedAt: string;
@@ -140,7 +141,22 @@ export function certificationKey(org: CertOrg, track: CertTrack): string {
   return `${org}:${track}`;
 }
 
-/** The latest upload per `(org, track)` (by `insertedAt`), keyed by {@link certificationKey}. */
+function epochMicros(timestamp: string): number {
+  const fraction = /\.(\d+)/.exec(timestamp)?.[1] ?? '';
+  return (
+    Date.parse(timestamp) * 1000 + Number(fraction.padEnd(6, '0').slice(3, 6))
+  );
+}
+
+function isLater(
+  upload: KeyedCertificationUpload,
+  than: KeyedCertificationUpload,
+): boolean {
+  const byTime = epochMicros(upload.insertedAt) - epochMicros(than.insertedAt);
+  return byTime === 0 ? upload.id > than.id : byTime > 0;
+}
+
+/** The latest upload per `(org, track)` (by `insertedAt`, then `id`), keyed by {@link certificationKey}. */
 export function currentUploads<T extends KeyedCertificationUpload>(
   uploads: readonly T[],
 ): Map<string, T> {
@@ -148,7 +164,7 @@ export function currentUploads<T extends KeyedCertificationUpload>(
   for (const upload of uploads) {
     const key = certificationKey(upload.org, upload.track);
     const seen = current.get(key);
-    if (!seen || Date.parse(upload.insertedAt) > Date.parse(seen.insertedAt)) {
+    if (!seen || isLater(upload, seen)) {
       current.set(key, upload);
     }
   }

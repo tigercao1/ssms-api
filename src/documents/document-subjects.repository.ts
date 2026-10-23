@@ -147,9 +147,8 @@ export class SupabaseDocumentSubjectsRepository extends DocumentSubjectsReposito
       .from(CERTIFICATION_UPLOADS_TABLE)
       .select(CERTIFICATION_UPLOAD_COLUMNS)
       .eq('instructor_id', instructorId)
-      .order('inserted_at', { ascending: false })) as DbResult<
-      CertificationUploadRow[]
-    >;
+      .order('inserted_at', { ascending: false })
+      .order('id', { ascending: false })) as DbResult<CertificationUploadRow[]>;
     check(error, 'list certification uploads');
     return data ?? [];
   }
@@ -167,7 +166,7 @@ export class SupabaseDocumentSubjectsRepository extends DocumentSubjectsReposito
             .select(CERTIFICATION_UPLOAD_COLUMNS)
             .in('instructor_id', ids)
             .order('inserted_at', { ascending: false })
-            .order('id', { ascending: true })
+            .order('id', { ascending: false })
             .range(from, to),
         'list certification uploads',
       );

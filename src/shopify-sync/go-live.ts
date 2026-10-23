@@ -51,6 +51,7 @@ export interface GoLiveCertification {
 
 export type GoLiveUpload = Pick<
   CertificationUploadRow,
+  | 'id'
   | 'org'
   | 'track'
   | 'review_status'

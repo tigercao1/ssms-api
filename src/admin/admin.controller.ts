@@ -29,6 +29,7 @@ import {
   AdminInstructorRecord,
   CurrentUserRoleRecord,
   DeletedReferenceRecord,
+  InstructorStageCounts,
   REFERENCE_SLUG_TO_TABLE,
   ReferenceRecord,
   ReferenceSlug,
@@ -92,6 +93,11 @@ export class AdminController {
     );
     res.setHeader(TOTAL_COUNT_HEADER, String(total));
     return instructors;
+  }
+
+  @Get('instructors/stage-counts')
+  instructorStageCounts(): Promise<InstructorStageCounts> {
+    return this.admin.instructorStageCounts();
   }
 
   /** Single instructor core record (admin detail). */

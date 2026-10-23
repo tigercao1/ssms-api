@@ -84,6 +84,8 @@ export interface AdminInstructorListRecord extends AdminInstructorRecord {
   stage: InstructorStage | null;
 }
 
+export type InstructorStageCounts = Record<InstructorStage, number>;
+
 /** Optional narrowing applied to `GET /admin/instructors`. */
 export interface ListInstructorsFilter {
   status?: ApprovalStatus;

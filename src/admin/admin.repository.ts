@@ -54,7 +54,7 @@ export abstract class AdminRepository {
   /** All instructors (every status), optionally narrowed; admin-only view. */
   abstract listInstructors(
     filter: ListInstructorsFilter,
-    page?: PageRequest,
+    page: PageRequest,
   ): Promise<RowPage<AdminInstructorListRow>>;
   abstract listAllInstructors(
     filter: ListInstructorsFilter,
@@ -111,7 +111,7 @@ export class SupabaseAdminRepository extends AdminRepository {
 
   async listInstructors(
     filter: ListInstructorsFilter,
-    page?: PageRequest,
+    page: PageRequest,
   ): Promise<RowPage<AdminInstructorListRow>> {
     // Deterministic order: newest applications first, id as a stable tiebreaker.
     const ordered = this.instructorsMatching(filter, INSTRUCTOR_LIST_COLUMNS, {
@@ -119,9 +119,10 @@ export class SupabaseAdminRepository extends AdminRepository {
     })
       .order('inserted_at', { ascending: false })
       .order('id', { ascending: true });
-    const { data, error, count } = (await (page
-      ? ordered.range(page.offset, page.offset + page.limit - 1)
-      : ordered)) as CountedResult<AdminInstructorListRow[]>;
+    const { data, error, count } = (await ordered.range(
+      page.offset,
+      page.offset + page.limit - 1,
+    )) as CountedResult<AdminInstructorListRow[]>;
 
     if (error?.code === PGRST_RANGE_NOT_SATISFIABLE) {
       return { rows: [], total: await this.countInstructors(filter) };

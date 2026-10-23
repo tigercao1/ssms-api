@@ -133,7 +133,9 @@ jobs:
             -f state=success -f log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Re-check portal PRs that wait on the API
+        if: env.PORTAL_DISPATCH_TOKEN != ''
+        continue-on-error: true
+        timeout-minutes: 2
         env:
-          GH_TOKEN: ${{ secrets.PORTAL_DISPATCH_TOKEN }}
-        run: |
-          [ -z "$GH_TOKEN" ] || gh workflow run api-dependency.yml --repo tigercao1/ssms-portal --ref main
+          PORTAL_DISPATCH_TOKEN: ${{ secrets.PORTAL_DISPATCH_TOKEN }}
+        run: GH_TOKEN="$PORTAL_DISPATCH_TOKEN" gh workflow run api-dependency.yml --repo tigercao1/ssms-portal --ref main

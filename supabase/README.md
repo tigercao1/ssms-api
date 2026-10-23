@@ -106,10 +106,10 @@ After each deploy the Release runs the portal's "API dependency" workflow, so
 waiting portal PRs re-check right away. That step needs a
 `PORTAL_DISPATCH_TOKEN` secret in the `production` environment: a fine-grained
 personal access token with access to `tigercao1/ssms-portal` only and Actions
-read and write. Without the secret the step does nothing and the portal
-re-checks on its own schedule, which can lag by hours. When the token expires
-the Deploy app job fails after the deploy; replace the secret and run the
-portal workflow from its Actions tab.
+read and write. Without the secret the step is skipped and the portal
+re-checks on its own schedule, which can lag by hours. If the dispatch fails
+(e.g. the token expired), the run shows the step's error but Deploy app still
+succeeds; replace the secret and run the portal workflow from its Actions tab.
 
 ## Backups
 

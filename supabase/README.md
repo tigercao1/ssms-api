@@ -64,7 +64,10 @@ Seeds go in `seed.sql` (reference data — owned by the Reference-data agent, T4
 2. **Back up and migrate prod**: if anything is pending, an encrypted dump of
    prod is uploaded as the `pre-migration-backup-<run id>` artifact, then
    `apply`.
-3. **Deploy**: `flyctl deploy` of the same commit.
+3. **Deploy**: `flyctl deploy` of the same commit, then a deployment with task
+   `deploy:app` for it in `production-app-deploys`, an environment that holds
+   only these records; leave it without protection rules. The portal's "API
+   dependency" check counts only these, not the jobs that use `production`.
 
 Each stage needs the previous one. Database and Fly credentials live in the
 `dev` and `production` GitHub Environments, which only `main` can use.
@@ -99,6 +102,15 @@ ones the portal uses after a portal release has stopped using them. A portal PR
 that needs an API change declares `Requires API: ssms-api#<this PR>`; its
 required "API dependency" check stays pending until this PR is merged and the
 Release workflow has deployed it. Link the portal PR from this PR's description.
+
+After each deploy the Release runs the portal's "API dependency" workflow, so
+waiting portal PRs re-check right away. That step needs a
+`PORTAL_DISPATCH_TOKEN` secret in the `production` environment: a fine-grained
+personal access token with access to `tigercao1/ssms-portal` only and Actions
+read and write. Without the secret the step is skipped and the portal
+re-checks on its own schedule, which can lag by hours. If the dispatch fails
+(e.g. the token expired), the run shows the step's error but Deploy app still
+succeeds; replace the secret and run the portal workflow from its Actions tab.
 
 ## Backups
 

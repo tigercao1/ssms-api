@@ -107,6 +107,9 @@ jobs:
     needs: migrate-prod
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -117,3 +120,23 @@ jobs:
       - run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Record the deployed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id="$(gh api "repos/$GITHUB_REPOSITORY/deployments" \
+            -f ref="$RELEASE_SHA" -f environment=production-app-deploys -f task=deploy:app \
+            -F transient_environment=false -F production_environment=true \
+            -F auto_merge=false -f 'required_contexts[]' --jq .id)"
+          gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" --silent \
+            -f state=success -f log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Re-check portal PRs that wait on the API
+        if: env.PORTAL_DISPATCH_TOKEN != ''
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          PORTAL_DISPATCH_TOKEN: ${{ secrets.PORTAL_DISPATCH_TOKEN }}
+        run: GH_TOKEN="$PORTAL_DISPATCH_TOKEN" gh workflow run api-dependency.yml --repo tigercao1/ssms-portal --ref main

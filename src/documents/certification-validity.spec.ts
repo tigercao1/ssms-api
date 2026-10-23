@@ -165,6 +165,32 @@ describe('currentUploads', () => {
     expect(current.get('casi:regular')?.id).toBe('d');
     expect(current.get('csia:park')).toBeUndefined();
   });
+
+  const upload = (id: string, insertedAt: string) =>
+    ({ id, org: 'csia', track: 'regular', insertedAt }) as const;
+
+  it('breaks an inserted_at tie toward the greater id, in any input order', () => {
+    const insertedAt = '2026-10-01T12:00:00.123456+00:00';
+    const lower = upload('00000000-0000-4000-8000-000000000001', insertedAt);
+    const higher = upload('00000000-0000-4000-8000-000000000002', insertedAt);
+
+    expect(currentUploads([lower, higher]).get('csia:regular')).toBe(higher);
+    expect(currentUploads([higher, lower]).get('csia:regular')).toBe(higher);
+  });
+
+  it('compares inserted_at to the microsecond before falling back to id', () => {
+    const earlier = upload('b', '2026-10-01T12:00:00.123455+00:00');
+    const later = upload('a', '2026-10-01T12:00:00.123456+00:00');
+
+    expect(currentUploads([earlier, later]).get('csia:regular')).toBe(later);
+    expect(currentUploads([later, earlier]).get('csia:regular')).toBe(later);
+    expect(
+      currentUploads([
+        upload('b', '2026-10-01T12:00:00Z'),
+        upload('a', '2026-10-01T12:00:00.000001Z'),
+      ]).get('csia:regular')?.id,
+    ).toBe('a');
+  });
 });
 
 describe('addDays', () => {

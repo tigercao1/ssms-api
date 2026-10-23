@@ -182,6 +182,24 @@ describe('goLiveReadiness', () => {
         ]).status,
       ).toBe('pending');
     });
+
+    it('judges the upload with the greater id when two share an inserted_at, as the review queue does', () => {
+      const insertedAt = '2026-10-01T00:00:00.000000+00:00';
+      expect(
+        statusOf([
+          upload({
+            id: '00000000-0000-4000-8000-000000000001',
+            inserted_at: insertedAt,
+          }),
+          upload({
+            id: '00000000-0000-4000-8000-000000000002',
+            review_status: 'pending',
+            verified_level: null,
+            inserted_at: insertedAt,
+          }),
+        ]).status,
+      ).toBe('pending');
+    });
   });
 
   it('needs at least one verified certification', () => {

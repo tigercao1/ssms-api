@@ -1,5 +1,9 @@
 import { InternalServerErrorException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import {
+  cappedSupabase,
+  POSTGREST_MAX_ROWS,
+} from '../../test/helpers/capped-supabase';
 import { recordingSupabase } from '../../test/helpers/lessons-fakes';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
@@ -48,6 +52,7 @@ function makeSupabaseStub(result: {
     calls.order.push(a);
     return builder;
   });
+  builder.range = jest.fn(() => builder);
   builder.update = jest.fn((v: unknown) => {
     calls.update = v;
     return builder;
@@ -74,6 +79,8 @@ function makeSupabaseStub(result: {
   return { client, calls };
 }
 
+const FIRST_PAGE = { limit: 50, offset: 0 };
+
 async function build(stub: ReturnType<typeof makeSupabaseStub>) {
   const moduleRef = await Test.createTestingModule({
     providers: [
@@ -89,7 +96,7 @@ describe('SupabaseAdminRepository', () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);
 
-    await repo.listInstructors({ q: ' eric  wang ' });
+    await repo.listInstructors({ q: ' eric  wang ' }, FIRST_PAGE);
     expect(stub.calls.or).toEqual([
       [
         'display_name_en.ilike."%eric%",display_name_zh.ilike."%eric%",email.ilike."%eric%"',
@@ -100,7 +107,7 @@ describe('SupabaseAdminRepository', () => {
     ]);
 
     stub.calls.or = [];
-    await repo.listInstructors({ q: '   ' });
+    await repo.listInstructors({ q: '   ' }, FIRST_PAGE);
     expect(stub.calls.or).toEqual([]);
   });
 
@@ -108,7 +115,7 @@ describe('SupabaseAdminRepository', () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);
 
-    await repo.listInstructors({});
+    await repo.listInstructors({}, FIRST_PAGE);
 
     expect(stub.calls.from).toBe('instructors');
     expect(stub.calls.eq).toEqual([]);
@@ -122,7 +129,7 @@ describe('SupabaseAdminRepository', () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);
 
-    await repo.listInstructors({});
+    await repo.listInstructors({}, FIRST_PAGE);
 
     expect(String(stub.calls.select?.[0])).toContain('min_student_age');
   });
@@ -131,7 +138,7 @@ describe('SupabaseAdminRepository', () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);
 
-    await repo.listInstructors({});
+    await repo.listInstructors({}, FIRST_PAGE);
 
     expect(String(stub.calls.select?.[0])).toMatch(
       /, instructor_calendars\(instructor_id\)$/,
@@ -142,7 +149,10 @@ describe('SupabaseAdminRepository', () => {
     const stub = makeSupabaseStub({ data: [] });
     const repo = await build(stub);
 
-    await repo.listInstructors({ status: 'pending', isActive: false });
+    await repo.listInstructors(
+      { status: 'pending', isActive: false },
+      FIRST_PAGE,
+    );
 
     expect(stub.calls.eq).toEqual([
       ['approval_status', 'pending'],
@@ -153,23 +163,24 @@ describe('SupabaseAdminRepository', () => {
   it('listInstructors surfaces Supabase errors as 500', async () => {
     const stub = makeSupabaseStub({ error: { message: 'boom' } });
     const repo = await build(stub);
-    await expect(repo.listInstructors({})).rejects.toBeInstanceOf(
+    await expect(repo.listInstructors({}, FIRST_PAGE)).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
   });
 
-  it('listInstructors returns every match with an exact count when unpaged', async () => {
-    const rows = [{ id: 'i1' }, { id: 'i2' }];
-    const { client, queries } = recordingSupabase({
-      instructors: { data: rows, error: null, count: 2 },
-    });
-    await expect(
-      new SupabaseAdminRepository(client).listInstructors({}),
-    ).resolves.toEqual({ rows, total: 2 });
-    expect(queries[0].ops).toEqual([
-      ['select', expect.any(String), { count: 'exact' }],
-      ['order', 'inserted_at', { ascending: false }],
-      ['order', 'id', { ascending: true }],
+  it(`listAllInstructors reads past the ${POSTGREST_MAX_ROWS}-row response cap, newest first`, async () => {
+    const rows = Array.from({ length: POSTGREST_MAX_ROWS + 1 }, (_, i) => ({
+      id: `i${String(i).padStart(4, '0')}`,
+      inserted_at: '2026-01-01T00:00:00Z',
+    }));
+    const { client, requests } = cappedSupabase({ instructors: rows });
+    const listed = await new SupabaseAdminRepository(
+      client as never,
+    ).listAllInstructors({});
+    expect(listed.map((row) => row.id)).toEqual(rows.map((row) => row.id));
+    expect(requests).toEqual([
+      { table: 'instructors', range: [0, 999] },
+      { table: 'instructors', range: [1000, 1999] },
     ]);
   });
 

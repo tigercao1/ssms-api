@@ -111,23 +111,21 @@ describe('AdminService', () => {
   });
 
   describe('listInstructors (T6.3)', () => {
-    it('maps rows to camelCase records and passes the filter through', async () => {
-      repo.listInstructors.mockResolvedValue({
-        rows: [
-          {
-            ...makeRow({ approval_status: 'approved' }),
-            instructor_calendars: { instructor_id: 'i1' },
-          },
-          { ...makeRow({ id: 'i2' }), instructor_calendars: null },
-        ],
-        total: 2,
-      });
+    it('maps every row to camelCase records and passes the filter through when unpaged', async () => {
+      repo.listAllInstructors.mockResolvedValue([
+        {
+          ...makeRow({ approval_status: 'approved' }),
+          instructor_calendars: { instructor_id: 'i1' },
+        },
+        { ...makeRow({ id: 'i2' }), instructor_calendars: null },
+      ]);
       const filter: ListInstructorsFilter = { status: 'approved' };
 
       const { instructors: result, total } =
         await service.listInstructors(filter);
 
-      expect(repo.listInstructors).toHaveBeenCalledWith(filter, undefined);
+      expect(repo.listAllInstructors).toHaveBeenCalledWith(filter);
+      expect(repo.listInstructors).not.toHaveBeenCalled();
       expect(total).toBe(2);
       expect(result).toEqual([
         expect.objectContaining({
@@ -190,6 +188,36 @@ describe('AdminService', () => {
         expect(repo.listInstructors).toHaveBeenCalledWith({}, request);
       },
     );
+  });
+
+  describe('instructorStageCounts', () => {
+    it('counts every instructor under its stage, with zero for empty stages', async () => {
+      const rows = ['a', 'b', 'c', 'd'].map((id) => ({
+        ...makeRow({ id }),
+        instructor_calendars: null,
+      }));
+      repo.listAllInstructors.mockResolvedValue(rows);
+      goLive.stages.mockResolvedValueOnce(
+        new Map<string, InstructorStage>([
+          ['a', 'live'],
+          ['b', 'pending'],
+          ['c', 'live'],
+          ['d', 'deactivated'],
+        ]),
+      );
+
+      await expect(service.instructorStageCounts()).resolves.toEqual({
+        pending: 1,
+        rejected: 0,
+        deactivated: 1,
+        onboarding: 0,
+        in_review: 0,
+        going_live: 0,
+        live: 2,
+      });
+      expect(repo.listAllInstructors).toHaveBeenCalledWith({});
+      expect(goLive.stages).toHaveBeenCalledWith(['a', 'b', 'c', 'd']);
+    });
   });
 
   describe('getInstructor', () => {

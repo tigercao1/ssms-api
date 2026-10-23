@@ -6,6 +6,7 @@ import {
   startAdminApp,
 } from '../../test/helpers/admin-http';
 import {
+  type CappedRequest,
   cappedSupabase,
   POSTGREST_MAX_ROWS,
 } from '../../test/helpers/capped-supabase';
@@ -390,38 +391,103 @@ describe('GET /admin/instructors', () => {
   });
 });
 
-describe('GET /admin/instructors?stage= over a row-capped PostgREST', () => {
-  it('pages candidates past the response cap for the last page and the total', async () => {
-    const count = POSTGREST_MAX_ROWS + 1;
-    const { client, requests } = cappedSupabase({
+describe('GET /admin/instructors/stage-counts', () => {
+  let ctx: Awaited<ReturnType<typeof build>>;
+  const counts = () =>
+    request(ctx.app.getHttpServer()).get('/admin/instructors/stage-counts');
+
+  afterEach(async () => {
+    await ctx.app.close();
+  });
+
+  it('needs an admin JWT', async () => {
+    ctx = await build();
+    await counts().expect(401);
+    await counts().set('Authorization', INSTRUCTOR_AUTH).expect(403);
+    expect(ctx.repo.calls).toEqual([]);
+  });
+
+  it('counts every instructor under its stage', async () => {
+    ctx = await build(60);
+    const res = await counts().set('Authorization', admin).expect(200);
+    expect(res.body).toEqual(
+      Object.fromEntries(
+        INSTRUCTOR_STAGES.map((stage) => [
+          stage,
+          range(60, 1).filter((n) => stageOf(n) === stage).length,
+        ]),
+      ),
+    );
+    expect(ctx.repo.calls).toEqual([{ filter: {}, page: undefined }]);
+    expect(ctx.goLive.calls[0]).toHaveLength(60);
+  });
+});
+
+describe('GET /admin/instructors over a row-capped PostgREST', () => {
+  const count = POSTGREST_MAX_ROWS + 1;
+  const allLive = {
+    stages: (instructorIds: readonly string[]) =>
+      Promise.resolve(
+        new Map<string, InstructorStage>(
+          instructorIds.map((id) => [id, 'live']),
+        ),
+      ),
+  };
+  let app: Awaited<ReturnType<typeof startListApp>>;
+  let requests: CappedRequest[];
+  const get = (path: string) =>
+    request(app.getHttpServer()).get(path).set('Authorization', admin);
+
+  beforeEach(async () => {
+    const capped = cappedSupabase({
       instructors: Array.from({ length: count }, (_, i) => makeRow(i + 1)),
     });
-    const allLive = {
-      stages: (instructorIds: readonly string[]) =>
-        Promise.resolve(
-          new Map<string, InstructorStage>(
-            instructorIds.map((id) => [id, 'live']),
-          ),
-        ),
-    };
-    const app = await startListApp(
-      new SupabaseAdminRepository(client as never),
+    requests = capped.requests;
+    app = await startListApp(
+      new SupabaseAdminRepository(capped.client as never),
       allLive,
     );
-    try {
-      const res = await request(app.getHttpServer())
-        .get('/admin/instructors?stage=live&page=21&limit=50')
-        .set('Authorization', admin)
-        .expect(200);
+  });
 
-      expect(ids(res)).toEqual([instructorId(1)]);
-      expect(res.headers['x-total-count']).toBe(String(count));
-      expect(requests).toEqual([
-        { table: 'instructors', range: [0, 999] },
-        { table: 'instructors', range: [1000, 1999] },
-      ]);
-    } finally {
-      await app.close();
-    }
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('returns every instructor past the response cap when unpaged', async () => {
+    const res = await get('/admin/instructors').expect(200);
+
+    expect(ids(res)).toEqual(newestFirst(...range(count, 1)));
+    expect(res.headers['x-total-count']).toBe(String(count));
+    expect(requests).toEqual([
+      { table: 'instructors', range: [0, 999] },
+      { table: 'instructors', range: [1000, 1999] },
+    ]);
+  });
+
+  it('counts stages past the response cap', async () => {
+    const res = await get('/admin/instructors/stage-counts').expect(200);
+
+    expect(res.body).toEqual({
+      pending: 0,
+      rejected: 0,
+      deactivated: 0,
+      onboarding: 0,
+      in_review: 0,
+      going_live: 0,
+      live: count,
+    });
+  });
+
+  it('pages candidates past the response cap for the last page and the total', async () => {
+    const res = await get(
+      '/admin/instructors?stage=live&page=21&limit=50',
+    ).expect(200);
+
+    expect(ids(res)).toEqual([instructorId(1)]);
+    expect(res.headers['x-total-count']).toBe(String(count));
+    expect(requests).toEqual([
+      { table: 'instructors', range: [0, 999] },
+      { table: 'instructors', range: [1000, 1999] },
+    ]);
   });
 });

@@ -23,7 +23,10 @@ import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type { EmailTemplateVars } from '../mailer/mailer.types';
 import { GoLiveService } from '../shopify-sync/go-live.service';
-import type { InstructorStage } from '../shopify-sync/instructor-stage';
+import {
+  INSTRUCTOR_STAGES,
+  type InstructorStage,
+} from '../shopify-sync/instructor-stage';
 import { AdminRepository } from './admin.repository';
 import {
   AdminInstructorListRecord,
@@ -33,6 +36,7 @@ import {
   CreateReferenceInput,
   CurrentUserRoleRecord,
   DeletedReferenceRecord,
+  InstructorStageCounts,
   ListInstructorsFilter,
   REFERENCE_SLUG_TO_TABLE,
   REFERENCE_TABLE_TO_JUNCTION,
@@ -134,7 +138,7 @@ export class AdminService {
         ? undefined
         : { limit: size, offset: pageOffset(page ?? 1, size) };
     const { stages: wanted, ...rowFilter } = filter;
-    if (!wanted?.length) {
+    if (paging && !wanted?.length) {
       const { rows, total } = await this.repo.listInstructors(
         rowFilter,
         paging,
@@ -149,10 +153,12 @@ export class AdminService {
     }
     const rows = await this.repo.listAllInstructors(rowFilter);
     const stages = await this.goLive.stages(rows.map((row) => row.id));
-    const matching = rows.filter((row) => {
-      const stage = stages.get(row.id);
-      return stage !== undefined && wanted.includes(stage);
-    });
+    const matching = wanted?.length
+      ? rows.filter((row) => {
+          const stage = stages.get(row.id);
+          return stage !== undefined && wanted.includes(stage);
+        })
+      : rows;
     const pageRows = paging
       ? matching.slice(paging.offset, paging.offset + paging.limit)
       : matching;
@@ -162,6 +168,19 @@ export class AdminService {
       ),
       total: matching.length,
     };
+  }
+
+  async instructorStageCounts(): Promise<InstructorStageCounts> {
+    const rows = await this.repo.listAllInstructors({});
+    const stages = [
+      ...(await this.goLive.stages(rows.map((row) => row.id))).values(),
+    ];
+    return Object.fromEntries(
+      INSTRUCTOR_STAGES.map((stage) => [
+        stage,
+        stages.filter((s) => s === stage).length,
+      ]),
+    ) as InstructorStageCounts;
   }
 
   /** Fetch a single instructor's core record (admin detail). */

@@ -102,6 +102,15 @@ that needs an API change declares `Requires API: ssms-api#<this PR>`; its
 required "API dependency" check stays pending until this PR is merged and the
 Release workflow has deployed it. Link the portal PR from this PR's description.
 
+After each deploy the Release runs the portal's "API dependency" workflow, so
+waiting portal PRs re-check right away. That step needs a
+`PORTAL_DISPATCH_TOKEN` secret in the `production` environment: a fine-grained
+personal access token with access to `tigercao1/ssms-portal` only and Actions
+read and write. Without the secret the step does nothing and the portal
+re-checks on its own schedule, which can lag by hours. When the token expires
+the Deploy app job fails after the deploy; replace the secret and run the
+portal workflow from its Actions tab.
+
 ## Backups
 
 `.github/workflows/backup.yml` dumps the prod `public` schema daily

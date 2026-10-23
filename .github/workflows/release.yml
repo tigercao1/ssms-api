@@ -131,3 +131,9 @@ jobs:
             -F auto_merge=false -f 'required_contexts[]' --jq .id)"
           gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" --silent \
             -f state=success -f log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Re-check portal PRs that wait on the API
+        env:
+          GH_TOKEN: ${{ secrets.PORTAL_DISPATCH_TOKEN }}
+        run: |
+          [ -z "$GH_TOKEN" ] || gh workflow run api-dependency.yml --repo tigercao1/ssms-portal --ref main

@@ -64,7 +64,9 @@ Seeds go in `seed.sql` (reference data — owned by the Reference-data agent, T4
 2. **Back up and migrate prod**: if anything is pending, an encrypted dump of
    prod is uploaded as the `pre-migration-backup-<run id>` artifact, then
    `apply`.
-3. **Deploy**: `flyctl deploy` of the same commit.
+3. **Deploy**: `flyctl deploy` of the same commit, then a `production`
+   deployment with task `deploy:app` for it. The portal's "API dependency"
+   check counts only these, not the jobs that merely use the environment.
 
 Each stage needs the previous one. Database and Fly credentials live in the
 `dev` and `production` GitHub Environments, which only `main` can use.

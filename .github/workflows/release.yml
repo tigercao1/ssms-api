@@ -127,7 +127,8 @@ jobs:
         run: |
           set -euo pipefail
           id="$(gh api "repos/$GITHUB_REPOSITORY/deployments" \
-            -f ref="$RELEASE_SHA" -f environment=production -f task=deploy:app \
+            -f ref="$RELEASE_SHA" -f environment=production-app-deploys -f task=deploy:app \
+            -F transient_environment=false -F production_environment=true \
             -F auto_merge=false -f 'required_contexts[]' --jq .id)"
           gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" --silent \
             -f state=success -f log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

@@ -22,6 +22,17 @@ export interface InviteRecipient extends InviteRow {
   preferred_language: string | null;
 }
 
+export interface InviteEmailMove {
+  email: string;
+  tokenHash?: string;
+  expiresAt?: Date;
+}
+
+export interface InviteMoveCounts {
+  moved: number;
+  reissued: number;
+}
+
 /** `POST /activation/redeem` response. */
 export interface RedeemedInvite {
   email: string;

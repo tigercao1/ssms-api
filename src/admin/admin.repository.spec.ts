@@ -535,6 +535,91 @@ describe('SupabaseAdminRepository', () => {
     );
   });
 
+  describe('auth email', () => {
+    async function buildWithAuth(admin: Record<string, jest.Mock>) {
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          { provide: AdminRepository, useClass: SupabaseAdminRepository },
+          { provide: SUPABASE_CLIENT, useValue: { auth: { admin } } },
+        ],
+      }).compile();
+      return moduleRef.get(AdminRepository);
+    }
+
+    const users = (n: number, from = 0) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `user-${from + i}`,
+        email: `user${from + i}@example.com`,
+      }));
+
+    it('finds the auth user holding an address in any case, across pages', async () => {
+      const listUsers = jest
+        .fn()
+        .mockResolvedValueOnce({ data: { users: users(1000) }, error: null })
+        .mockResolvedValueOnce({
+          data: { users: [{ id: 'jane', email: 'Jane@Example.com' }] },
+          error: null,
+        });
+      const repo = await buildWithAuth({ listUsers });
+
+      await expect(
+        repo.findAuthUserIdByEmail('jane@example.com'),
+      ).resolves.toBe('jane');
+      expect(listUsers.mock.calls).toEqual([
+        [{ page: 1, perPage: 1000 }],
+        [{ page: 2, perPage: 1000 }],
+      ]);
+    });
+
+    it('returns null when no auth user holds the address, and 500 when listing fails', async () => {
+      const listUsers = jest
+        .fn()
+        .mockResolvedValueOnce({ data: { users: users(3) }, error: null })
+        .mockResolvedValueOnce({ data: null, error: { message: 'down' } });
+      const repo = await buildWithAuth({ listUsers });
+
+      await expect(
+        repo.findAuthUserIdByEmail('nobody@example.com'),
+      ).resolves.toBeNull();
+      await expect(
+        repo.findAuthUserIdByEmail('nobody@example.com'),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
+    it('sets the email as confirmed and maps GoTrue answers', async () => {
+      const updateUserById = jest
+        .fn()
+        .mockResolvedValueOnce({ data: { user: {} }, error: null })
+        .mockResolvedValueOnce({ data: null, error: { code: 'email_exists' } })
+        .mockResolvedValueOnce({
+          data: null,
+          error: { code: 'validation_failed' },
+        })
+        .mockResolvedValueOnce({
+          data: null,
+          error: { code: 'unexpected_failure', message: 'Error updating user' },
+        });
+      const repo = await buildWithAuth({ updateUserById });
+
+      await expect(repo.updateAuthEmail('u1', 'a@example.com')).resolves.toBe(
+        'updated',
+      );
+      expect(updateUserById).toHaveBeenCalledWith('u1', {
+        email: 'a@example.com',
+        email_confirm: true,
+      });
+      await expect(repo.updateAuthEmail('u1', 'a@example.com')).resolves.toBe(
+        'taken',
+      );
+      await expect(repo.updateAuthEmail('u1', 'a@example.com')).resolves.toBe(
+        'invalid',
+      );
+      await expect(
+        repo.updateAuthEmail('u1', 'a@example.com'),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+  });
+
   describe('revokeSessions', () => {
     async function buildWithRpc(result: {
       data: unknown;

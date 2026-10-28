@@ -551,3 +551,48 @@ describe('ActivationService.complete for an invited instructor', () => {
     expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
   });
 });
+
+describe('ActivationService.moveInvites', () => {
+  it('moves every invite of the auth user still on another address and counts the re-issued links', async () => {
+    const invites = new InMemoryInvitesRepository();
+    const sent = invites.seed({ auth_user_id: 'auth-1', email: 'old@x.test' });
+    invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'old@x.test',
+      season: '2027/28',
+      token_hash: null,
+    });
+    const already = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'new@x.test',
+    });
+    const other = invites.seed({ auth_user_id: 'auth-2', email: 'old@x.test' });
+    const dispatcher = {
+      moveTo: jest.fn((invite: InviteRecipient) =>
+        Promise.resolve(invite.id === sent.id ? 'reissued' : 'moved'),
+      ),
+    };
+    const service = new ActivationService(
+      invites,
+      {} as ActivationAuth,
+      dispatcher as unknown as InviteDispatcher,
+      {} as DocumentOnboardingService,
+      new InMemoryResendCooldownRepository(),
+      recordingAudit() as unknown as AuditService,
+    );
+
+    await expect(service.moveInvites('auth-1', 'new@x.test')).resolves.toEqual({
+      moved: 2,
+      reissued: 1,
+    });
+    const moved = dispatcher.moveTo.mock.calls.map(([invite]) => invite.id);
+    expect(moved).toHaveLength(2);
+    expect(moved).not.toContain(already.id);
+    expect(moved).not.toContain(other.id);
+    expect(dispatcher.moveTo).toHaveBeenCalledWith(
+      expect.objectContaining({ id: sent.id }),
+      'new@x.test',
+      NOW,
+    );
+  });
+});

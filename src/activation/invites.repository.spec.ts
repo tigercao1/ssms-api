@@ -95,6 +95,69 @@ describe('SupabaseInvitesRepository', () => {
     ]);
   });
 
+  it('lists every invite of an auth user, oldest first', async () => {
+    const { db, repo } = setup(
+      { data: [{ ...RECORD, instructors: null }], error: null },
+      ERR,
+    );
+    expect(await repo.listByAuthUser('auth-1')).toEqual([
+      { ...RECORD, display_name_en: '', preferred_language: null },
+    ]);
+    expect(db.ops(0).slice(1)).toEqual([
+      ['eq', ['auth_user_id', 'auth-1']],
+      ['order', ['created_at', { ascending: true }]],
+    ]);
+    await expect(repo.listByAuthUser('auth-1')).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+  });
+
+  it('moves an invite only while it still has the old address, with its new token', async () => {
+    const { db, repo } = setup(
+      { data: [{ id: 'inv-1' }], error: null },
+      { data: [], error: null },
+      ERR,
+    );
+    expect(
+      await repo.moveToEmail('inv-1', 'jane@example.test', {
+        email: 'jane.snow@example.test',
+        tokenHash: 'b'.repeat(64),
+        expiresAt: NOW,
+      }),
+    ).toBe(true);
+    expect(
+      await repo.moveToEmail('inv-1', 'jane@example.test', {
+        email: 'jane.snow@example.test',
+      }),
+    ).toBe(false);
+    expect(db.queries.map((q) => q.ops)).toEqual([
+      [
+        [
+          'update',
+          [
+            {
+              email: 'jane.snow@example.test',
+              token_hash: 'b'.repeat(64),
+              expires_at: NOW.toISOString(),
+            },
+          ],
+        ],
+        ['eq', ['id', 'inv-1']],
+        ['eq', ['email', 'jane@example.test']],
+        ['select', ['id']],
+      ],
+      [
+        ['update', [{ email: 'jane.snow@example.test' }]],
+        ['eq', ['id', 'inv-1']],
+        ['eq', ['email', 'jane@example.test']],
+        ['select', ['id']],
+      ],
+    ]);
+    await expect(
+      repo.moveToEmail('inv-1', 'jane@example.test', { email: 'x@y.test' }),
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
+  });
+
   it('lists unsent invites, optionally for one email', async () => {
     const { db, repo } = setup(
       { data: [{ ...RECORD, instructors: null }], error: null },

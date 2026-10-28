@@ -19,6 +19,8 @@ export type EmailTemplate =
   | 'rejected'
   | 'deactivated'
   | 'reactivated'
+  | 'email_changed.old_address'
+  | 'email_changed.new_address'
   | 'auth.confirm_signup'
   | 'auth.recovery'
   | 'auth.magic_link'
@@ -90,6 +92,14 @@ export interface EmailTemplateVars {
   rejected: GreetingVars & { reason?: string | null };
   deactivated: GreetingVars;
   reactivated: GreetingVars & { loginUrl: string };
+  'email_changed.old_address': GreetingVars & {
+    oldEmail: string;
+    newEmail: string;
+  };
+  'email_changed.new_address': GreetingVars & {
+    newEmail: string;
+    loginUrl: string;
+  };
   'auth.confirm_signup': { confirmUrl: string; code?: string | null };
   'auth.recovery': { resetUrl: string; code?: string | null };
   'auth.magic_link': { signInUrl: string; code?: string | null };

@@ -1,4 +1,5 @@
 import type {
+  InviteEmailMove,
   InviteRecipient,
   InviteRow,
 } from '../../src/activation/activation.types';
@@ -86,6 +87,27 @@ export class InMemoryInvitesRepository extends InvitesRepository {
       [...this.rows.values()].find((r) => r.auth_user_id === authUserId) ??
         null,
     );
+  }
+
+  listByAuthUser(authUserId: string): Promise<InviteRecipient[]> {
+    return Promise.resolve(this.list((r) => r.auth_user_id === authUserId));
+  }
+
+  moveToEmail(
+    id: string,
+    fromEmail: string,
+    move: InviteEmailMove,
+  ): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row || row.email !== fromEmail) {
+      return Promise.resolve(false);
+    }
+    this.patch(id, {
+      email: move.email,
+      ...(move.tokenHash ? { token_hash: move.tokenHash } : {}),
+      ...(move.expiresAt ? { expires_at: move.expiresAt.toISOString() } : {}),
+    });
+    return Promise.resolve(true);
   }
 
   listUnsent(season: string): Promise<InviteRecipient[]> {

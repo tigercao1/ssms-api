@@ -17,6 +17,7 @@ import {
   AdminInstructorListRow,
   AdminInstructorPatch,
   AdminInstructorRow,
+  AuthEmailUpdate,
   AuthUserRole,
   CreateReferenceInput,
   ListInstructorsFilter,
@@ -42,6 +43,8 @@ const INSTRUCTOR_SEARCH_COLUMNS = [
   'email',
 ];
 
+const AUTH_USERS_PAGE_SIZE = 1000;
+
 const REFERENCE_COLUMNS =
   'id, key, name, name_zh, name_en_translated_by, name_zh_translated_by, sort_order, is_active';
 
@@ -60,6 +63,11 @@ export abstract class AdminRepository {
     filter: ListInstructorsFilter,
   ): Promise<AdminInstructorListRow[]>;
   abstract findInstructorById(id: string): Promise<AdminInstructorRow | null>;
+  abstract findAuthUserIdByEmail(email: string): Promise<string | null>;
+  abstract updateAuthEmail(
+    authUserId: string,
+    email: string,
+  ): Promise<AuthEmailUpdate>;
   /** Apply a core-column patch (approval_status / is_active) and return it. */
   abstract updateInstructor(
     id: string,
@@ -204,6 +212,51 @@ export class SupabaseAdminRepository extends AdminRepository {
       );
     }
     return (data as unknown as AdminInstructorRow | null) ?? null;
+  }
+
+  async findAuthUserIdByEmail(email: string): Promise<string | null> {
+    for (let page = 1; ; page++) {
+      const { data, error } = await this.supabase.auth.admin.listUsers({
+        page,
+        perPage: AUTH_USERS_PAGE_SIZE,
+      });
+      if (error) {
+        throw new InternalServerErrorException(
+          `Failed to list auth users: ${error.message}`,
+        );
+      }
+      const match = data.users.find(
+        (user) => user.email?.toLowerCase() === email,
+      );
+      if (match) {
+        return match.id;
+      }
+      if (data.users.length < AUTH_USERS_PAGE_SIZE) {
+        return null;
+      }
+    }
+  }
+
+  async updateAuthEmail(
+    authUserId: string,
+    email: string,
+  ): Promise<AuthEmailUpdate> {
+    const { error } = await this.supabase.auth.admin.updateUserById(
+      authUserId,
+      { email, email_confirm: true },
+    );
+    if (!error) {
+      return 'updated';
+    }
+    if (error.code === 'email_exists') {
+      return 'taken';
+    }
+    if (error.code === 'validation_failed') {
+      return 'invalid';
+    }
+    throw new InternalServerErrorException(
+      `Failed to update the auth email: ${error.message}`,
+    );
   }
 
   async updateInstructor(

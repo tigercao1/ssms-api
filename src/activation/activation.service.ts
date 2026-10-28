@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS } from '../audit/audit.types';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import type {
+  InviteMoveCounts,
   InviteRow,
   RedeemedInvite,
   ResendAccepted,
@@ -152,6 +153,27 @@ export class ActivationService {
     } else {
       await this.onboarding.assignPublishedForAuthUser(authUserId);
     }
+  }
+
+  async moveInvites(
+    authUserId: string,
+    email: string,
+  ): Promise<InviteMoveCounts> {
+    const now = new Date();
+    const counts: InviteMoveCounts = { moved: 0, reissued: 0 };
+    for (const invite of await this.invites.listByAuthUser(authUserId)) {
+      if (invite.email === email) {
+        continue;
+      }
+      const outcome = await this.dispatcher.moveTo(invite, email, now);
+      if (outcome !== 'unchanged') {
+        counts.moved++;
+      }
+      if (outcome === 'reissued') {
+        counts.reissued++;
+      }
+    }
+    return counts;
   }
 
   private async resendRetryAfter(email: string): Promise<number> {

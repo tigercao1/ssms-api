@@ -148,6 +148,33 @@ export const zhCN: MessageCatalog = {
       button: '登录',
       finePrint: '您收到这封邮件，是因为您在 SSnow 有教练资料。',
     },
+    emailChanged: {
+      oldAddress: {
+        subject: '您的 SSnow 登录邮箱已被更改',
+        preheader: '俱乐部管理员更改了您账户的邮箱。',
+        heading: '登录邮箱已更改',
+        paragraphs: [
+          'SSnow 管理员已将您教练账户的邮箱从 {oldEmail} 更改为 {newEmail}。',
+          '今后请使用 {newEmail} 登录教练平台，俱乐部的邮件也会发送到该邮箱。',
+          '如果这不是您要求的更改，请立即回复这封邮件，我们会协助您保护账户安全。',
+        ],
+        finePrint:
+          '管理员更改了您的账户邮箱，因此我们将这封安全提醒发送到您之前的邮箱。',
+      },
+      newAddress: {
+        subject: '这是您新的 SSnow 登录邮箱',
+        preheader: '俱乐部管理员更改了您账户的邮箱。',
+        heading: '登录邮箱已更改',
+        paragraphs: [
+          'SSnow 管理员已将您教练账户的邮箱更改为 {newEmail}。',
+          '今后请使用该邮箱登录教练平台。',
+          '如果您没有预料到这项更改，请回复这封邮件告诉我们。',
+        ],
+        button: '登录',
+        finePrint:
+          '您收到这封邮件，是因为该邮箱刚被设为一个教练账户的登录邮箱。',
+      },
+    },
     auth: {
       confirmSignup: {
         subject: '请确认您的邮箱地址',

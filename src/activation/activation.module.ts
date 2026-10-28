@@ -42,6 +42,6 @@ import {
     },
     InviteRemindersService,
   ],
-  exports: [InviteRemindersService],
+  exports: [ActivationService, InviteRemindersService],
 })
 export class ActivationModule {}

@@ -18,6 +18,8 @@ export interface AuthUserRole {
   role: UserRole | null;
 }
 
+export type AuthEmailUpdate = 'updated' | 'taken' | 'invalid';
+
 export interface CurrentUserRoleRecord {
   role: UserRole;
 }

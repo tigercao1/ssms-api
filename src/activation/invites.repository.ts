@@ -5,7 +5,11 @@ import {
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import type { InviteRecipient, InviteRow } from './activation.types';
+import type {
+  InviteEmailMove,
+  InviteRecipient,
+  InviteRow,
+} from './activation.types';
 
 const TABLE = 'instructor_invites';
 const INVITE_COLUMNS =
@@ -51,6 +55,12 @@ export abstract class InvitesRepository {
   abstract findLatestByEmail(email: string): Promise<InviteRecipient | null>;
   /** The auth user's newest invite, or `null` when they were never invited. */
   abstract findLatestByAuthUser(authUserId: string): Promise<InviteRow | null>;
+  abstract listByAuthUser(authUserId: string): Promise<InviteRecipient[]>;
+  abstract moveToEmail(
+    id: string,
+    fromEmail: string,
+    move: InviteEmailMove,
+  ): Promise<boolean>;
   abstract listUnsent(
     season: string,
     email?: string,
@@ -143,6 +153,39 @@ export class SupabaseInvitesRepository extends InvitesRepository {
     }
     const [first] = (data ?? []) as unknown as InviteRow[];
     return first ?? null;
+  }
+
+  async listByAuthUser(authUserId: string): Promise<InviteRecipient[]> {
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .select(RECIPIENT_COLUMNS)
+      .eq('auth_user_id', authUserId)
+      .order('created_at', { ascending: true });
+    if (error) {
+      throw failure('list invites', error.message);
+    }
+    return ((data ?? []) as unknown as RecipientRecord[]).map(toRecipient);
+  }
+
+  async moveToEmail(
+    id: string,
+    fromEmail: string,
+    move: InviteEmailMove,
+  ): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from(TABLE)
+      .update({
+        email: move.email,
+        ...(move.tokenHash ? { token_hash: move.tokenHash } : {}),
+        ...(move.expiresAt ? { expires_at: move.expiresAt.toISOString() } : {}),
+      })
+      .eq('id', id)
+      .eq('email', fromEmail)
+      .select('id');
+    if (error) {
+      throw failure('move invite', error.message);
+    }
+    return ((data ?? []) as unknown[]).length > 0;
   }
 
   async listUnsent(season: string, email?: string): Promise<InviteRecipient[]> {

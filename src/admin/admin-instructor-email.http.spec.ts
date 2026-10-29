@@ -243,7 +243,7 @@ describe('PATCH /admin/instructors/:id/email', () => {
     [{ email: 'not-an-email', expectedCurrentEmail: OLD }],
     [{ email: NEW }],
     [{ email: NEW, expectedCurrentEmail: '' }],
-    [{ email: NEW, expectedCurrentEmail: OLD, revokeSessions: 'no' }],
+    [{ email: NEW, expectedCurrentEmail: OLD, revokeSessions: false }],
     [{ email: NEW, expectedCurrentEmail: OLD, role: 'admin' }],
   ])('rejects an invalid body %j with 400', async (body) => {
     ctx = await build();
@@ -312,20 +312,6 @@ describe('PATCH /admin/instructors/:id/email', () => {
     expect(JSON.stringify(ctx.audit.entries)).not.toContain(NEW);
   });
 
-  it('keeps sessions when asked to', async () => {
-    ctx = await build();
-    await patch({
-      email: NEW,
-      expectedCurrentEmail: OLD,
-      revokeSessions: false,
-    }).expect(200);
-    expect(ctx.repo.calls).not.toContain('revokeSessions');
-    expect(ctx.repo.sessions.get(AUTH_ID)).toBe(2);
-    expect(ctx.audit.entries[0].metadata).toMatchObject({
-      sessionsRevoked: null,
-    });
-  });
-
   it('re-issues a sent, unactivated invite to the new address so the old link stops working', async () => {
     ctx = await build();
     seedInvite(ctx.invites);
@@ -389,6 +375,36 @@ describe('PATCH /admin/instructors/:id/email', () => {
     ]);
   });
 
+  it("re-sends only the newest invite and kills an older season's link without extending it", async () => {
+    ctx = await build();
+    const older = seedInvite(ctx.invites, {
+      season: '2025/26',
+      created_at: '2025-09-01T00:00:00.000Z',
+      expires_at: '2025-10-01T00:00:00Z',
+    });
+    const newest = seedInvite(ctx.invites, {
+      token_hash: hashInviteToken('N'.repeat(43)),
+      created_at: '2026-09-01T00:00:00.000Z',
+    });
+
+    await change().expect(200);
+
+    const invites = ctx.mails.filter((m) => m.template === 'invite.season');
+    expect(invites).toHaveLength(1);
+    expect(invites[0].metadata).toMatchObject({ inviteId: newest.id });
+    expect(ctx.invites.rows.get(older.id)).toMatchObject({
+      email: NEW,
+      expires_at: older.expires_at,
+    });
+    expect(ctx.invites.rows.get(older.id)?.token_hash).not.toBe(
+      older.token_hash,
+    );
+    expect(ctx.audit.entries[0].metadata).toMatchObject({
+      invitesMoved: 2,
+      invitesReissued: 1,
+    });
+  });
+
   it('returns 409 email_taken when another account holds the address in any case, changing nothing', async () => {
     ctx = await build();
     const res = await change('taken@EXAMPLE.org').expect(409);
@@ -418,6 +434,36 @@ describe('PATCH /admin/instructors/:id/email', () => {
     expect(ctx.repo.calls).not.toContain('revokeSessions');
     expect(ctx.mails).toEqual([]);
     expect(ctx.audit.entries).toEqual([]);
+  });
+
+  it('carries on as a change when GoTrue answers with an error but applied it', async () => {
+    ctx = await build();
+    const { repo } = ctx;
+    jest
+      .spyOn(repo, 'updateAuthEmail')
+      .mockImplementationOnce((authUserId: string, email: string) => {
+        repo.users.get(authUserId)!.email = email;
+        repo.rows.set(INSTRUCTOR_ID, {
+          ...repo.rows.get(INSTRUCTOR_ID)!,
+          email,
+        });
+        return Promise.reject(
+          new InternalServerErrorException('gateway timeout'),
+        );
+      });
+
+    const res = await change().expect(200);
+
+    expect((res.body as AdminInstructorRecord).email).toBe(NEW);
+    expect(ctx.repo.sessions.get(AUTH_ID)).toBe(0);
+    expect(ctx.mails.map((m) => m.template)).toEqual([
+      'email_changed.old_address',
+      'email_changed.new_address',
+    ]);
+    expect(ctx.audit.entries[0].metadata).toMatchObject({
+      from: 'j***e@example.com',
+      sessionsRevoked: 2,
+    });
   });
 
   it('returns 409 email_taken when GoTrue fails because the address was taken meanwhile', async () => {

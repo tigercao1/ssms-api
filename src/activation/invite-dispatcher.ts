@@ -65,12 +65,16 @@ export class InviteDispatcher {
   async moveTo(
     invite: InviteRecipient,
     email: string,
+    resend: boolean,
     now: Date = new Date(),
   ): Promise<InviteMoveOutcome> {
     const issued = issueInviteToken(now);
     const rotate = invite.token_hash !== null;
     const reissue =
-      rotate && invite.sent_at !== null && invite.activated_at === null;
+      resend &&
+      rotate &&
+      invite.sent_at !== null &&
+      invite.activated_at === null;
     const moved = await this.invites.moveToEmail(invite.id, invite.email, {
       email,
       ...(rotate ? { tokenHash: issued.tokenHash } : {}),

@@ -553,23 +553,31 @@ describe('ActivationService.complete for an invited instructor', () => {
 });
 
 describe('ActivationService.moveInvites', () => {
-  it('moves every invite of the auth user still on another address and counts the re-issued links', async () => {
+  it('moves every invite of the auth user still on another address and lets only the newest resend its link', async () => {
     const invites = new InMemoryInvitesRepository();
-    const sent = invites.seed({ auth_user_id: 'auth-1', email: 'old@x.test' });
-    invites.seed({
+    const older = invites.seed({
       auth_user_id: 'auth-1',
       email: 'old@x.test',
-      season: '2027/28',
-      token_hash: null,
+      season: '2024/25',
+      created_at: '2024-09-01T00:00:00.000Z',
     });
     const already = invites.seed({
       auth_user_id: 'auth-1',
       email: 'new@x.test',
+      season: '2025/26',
+      created_at: '2025-09-01T00:00:00.000Z',
+    });
+    const newest = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'old@x.test',
+      season: '2026/27',
+      created_at: '2026-09-01T00:00:00.000Z',
     });
     const other = invites.seed({ auth_user_id: 'auth-2', email: 'old@x.test' });
     const dispatcher = {
-      moveTo: jest.fn((invite: InviteRecipient) =>
-        Promise.resolve(invite.id === sent.id ? 'reissued' : 'moved'),
+      moveTo: jest.fn(
+        (_invite: InviteRecipient, _email: string, resend: boolean) =>
+          Promise.resolve(resend ? 'reissued' : 'moved'),
       ),
     };
     const service = new ActivationService(
@@ -585,14 +593,12 @@ describe('ActivationService.moveInvites', () => {
       moved: 2,
       reissued: 1,
     });
+    expect(dispatcher.moveTo.mock.calls).toEqual([
+      [expect.objectContaining({ id: older.id }), 'new@x.test', false, NOW],
+      [expect.objectContaining({ id: newest.id }), 'new@x.test', true, NOW],
+    ]);
     const moved = dispatcher.moveTo.mock.calls.map(([invite]) => invite.id);
-    expect(moved).toHaveLength(2);
     expect(moved).not.toContain(already.id);
     expect(moved).not.toContain(other.id);
-    expect(dispatcher.moveTo).toHaveBeenCalledWith(
-      expect.objectContaining({ id: sent.id }),
-      'new@x.test',
-      NOW,
-    );
   });
 });

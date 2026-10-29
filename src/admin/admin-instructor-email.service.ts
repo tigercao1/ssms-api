@@ -76,14 +76,13 @@ export class AdminInstructorEmailService {
     const email = normalizeEmail(dto.email);
     const expected = normalizeEmail(dto.expectedCurrentEmail);
     const current = normalizeEmail(row.email);
-    const revokeSessions = dto.revokeSessions ?? true;
     if (current === email) {
       if (expected === email) {
         throw new BadRequestException(
           'The instructor already uses this email address',
         );
       }
-      await this.finish(row, email, revokeSessions, actor, { resumed: true });
+      await this.finish(row, email, actor, { resumed: true });
       return this.admin.getInstructor(id);
     }
     if (expected !== current) {
@@ -99,9 +98,7 @@ export class AdminInstructorEmailService {
     await this.assertAvailable(email, row.auth_user_id);
     await this.updateAuthEmail(row.auth_user_id, email);
     this.notify(row, row.email, email);
-    await this.finish(row, email, revokeSessions, actor, {
-      from: redactEmail(row.email),
-    });
+    await this.finish(row, email, actor, { from: redactEmail(row.email) });
     return this.admin.getInstructor(id);
   }
 
@@ -142,7 +139,13 @@ export class AdminInstructorEmailService {
     try {
       result = await this.repo.updateAuthEmail(authUserId, email);
     } catch (err) {
-      await this.assertAvailable(email, authUserId);
+      const holder = await this.repo.findAuthUserIdByEmail(email);
+      if (holder === authUserId) {
+        return;
+      }
+      if (holder !== null) {
+        throw emailTaken();
+      }
       throw err;
     }
     if (result === 'taken') {
@@ -189,20 +192,17 @@ export class AdminInstructorEmailService {
   private async finish(
     row: AdminInstructorRow,
     email: string,
-    revokeSessions: boolean,
     actor: AuditActor,
     metadata: Record<string, unknown>,
   ): Promise<void> {
     const failed: FollowUpStep[] = [];
     let sessionsRevoked: number | null = null;
     let invites: InviteMoveCounts | null = null;
-    if (revokeSessions) {
-      try {
-        sessionsRevoked = await this.repo.revokeSessions(row.auth_user_id);
-      } catch (err) {
-        failed.push('sessions');
-        this.logFailure(row.id, 'revoke sessions', err);
-      }
+    try {
+      sessionsRevoked = await this.repo.revokeSessions(row.auth_user_id);
+    } catch (err) {
+      failed.push('sessions');
+      this.logFailure(row.id, 'revoke sessions', err);
     }
     try {
       invites = await this.activation.moveInvites(row.auth_user_id, email);

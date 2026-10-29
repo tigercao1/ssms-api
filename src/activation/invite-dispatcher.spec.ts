@@ -208,7 +208,7 @@ describe('InviteDispatcher.moveTo', () => {
   it('rotates the link of a sent, unactivated invite and emails the new one to the new address', async () => {
     const { invites, row, mailer, dispatcher } = setup({});
     await expect(
-      dispatcher.moveTo(row, 'jane.snow@example.test', NOW),
+      dispatcher.moveTo(row, 'jane.snow@example.test', true, NOW),
     ).resolves.toBe('reissued');
 
     const request = mailer.send.mock
@@ -234,7 +234,19 @@ describe('InviteDispatcher.moveTo', () => {
       activated_at: '2026-10-02T00:00:00Z',
     });
     await expect(
-      dispatcher.moveTo(row, 'jane.snow@example.test', NOW),
+      dispatcher.moveTo(row, 'jane.snow@example.test', true, NOW),
+    ).resolves.toBe('moved');
+    const stored = invites.rows.get(row.id);
+    expect(stored?.email).toBe('jane.snow@example.test');
+    expect(stored?.token_hash).not.toBe(row.token_hash);
+    expect(stored?.expires_at).toBe(row.expires_at);
+    expect(mailer.send).not.toHaveBeenCalled();
+  });
+
+  it('kills the link of an unactivated invite it may not resend, without emailing or extending it', async () => {
+    const { invites, row, mailer, dispatcher } = setup({});
+    await expect(
+      dispatcher.moveTo(row, 'jane.snow@example.test', false, NOW),
     ).resolves.toBe('moved');
     const stored = invites.rows.get(row.id);
     expect(stored?.email).toBe('jane.snow@example.test');
@@ -250,7 +262,7 @@ describe('InviteDispatcher.moveTo', () => {
       expires_at: null,
     });
     await expect(
-      dispatcher.moveTo(row, 'jane.snow@example.test', NOW),
+      dispatcher.moveTo(row, 'jane.snow@example.test', true, NOW),
     ).resolves.toBe('moved');
     expect(invites.rows.get(row.id)).toEqual({
       ...row,
@@ -261,10 +273,10 @@ describe('InviteDispatcher.moveTo', () => {
 
   it('changes nothing when the invite was readdressed meanwhile', async () => {
     const { invites, row, mailer, dispatcher } = setup({});
-    await dispatcher.moveTo(row, 'first@example.test', NOW);
+    await dispatcher.moveTo(row, 'first@example.test', true, NOW);
     mailer.send.mockClear();
     await expect(
-      dispatcher.moveTo(row, 'second@example.test', NOW),
+      dispatcher.moveTo(row, 'second@example.test', true, NOW),
     ).resolves.toBe('unchanged');
     expect(invites.rows.get(row.id)?.email).toBe('first@example.test');
     expect(mailer.send).not.toHaveBeenCalled();

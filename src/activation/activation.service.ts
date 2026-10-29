@@ -161,11 +161,18 @@ export class ActivationService {
   ): Promise<InviteMoveCounts> {
     const now = new Date();
     const counts: InviteMoveCounts = { moved: 0, reissued: 0 };
-    for (const invite of await this.invites.listByAuthUser(authUserId)) {
+    const invites = await this.invites.listByAuthUser(authUserId);
+    const latest = invites.at(-1);
+    for (const invite of invites) {
       if (invite.email === email) {
         continue;
       }
-      const outcome = await this.dispatcher.moveTo(invite, email, now);
+      const outcome = await this.dispatcher.moveTo(
+        invite,
+        email,
+        invite === latest,
+        now,
+      );
       if (outcome !== 'unchanged') {
         counts.moved++;
       }

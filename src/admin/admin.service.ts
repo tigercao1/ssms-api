@@ -16,17 +16,28 @@ import { InstructorsService } from '../instructors/instructors.service';
 import type { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { AuditService } from '../audit/audit.service';
+import { torontoToday } from '../documents/certification-validity';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
 import { pageOffset } from '../database/pagination';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type { EmailTemplateVars } from '../mailer/mailer.types';
-import { GoLiveService } from '../shopify-sync/go-live.service';
+import {
+  GoLiveService,
+  type InstructorSummary,
+} from '../shopify-sync/go-live.service';
 import {
   INSTRUCTOR_STAGES,
   type InstructorStage,
 } from '../shopify-sync/instructor-stage';
+import {
+  hasNonAscii,
+  INSTRUCTOR_EXPORT_COLUMNS,
+  instructorExportCsv,
+  instructorExportRow,
+  MSL_LOCATION_KEY,
+} from './admin-export-csv';
 import { AdminRepository } from './admin.repository';
 import {
   AdminInstructorListRecord,
@@ -55,6 +66,17 @@ import { INSTRUCTOR_LIST_DEFAULT_LIMIT } from './dto/list-instructors-query.dto'
 export interface AdminInstructorPage {
   instructors: AdminInstructorListRecord[];
   total: number;
+}
+
+export interface InstructorExportFile {
+  filename: string;
+  body: string;
+  nonAsciiNames: number;
+}
+
+interface MatchingInstructor {
+  row: AdminInstructorListRow;
+  summary: InstructorSummary | undefined;
 }
 
 /** Postgres unique-violation — duplicate reference `key`. */
@@ -137,8 +159,8 @@ export class AdminService {
       page === undefined && limit === undefined
         ? undefined
         : { limit: size, offset: pageOffset(page ?? 1, size) };
-    const { stages: wanted, ...rowFilter } = filter;
-    if (paging && !wanted?.length) {
+    const { stages: wanted, onboarding, ...rowFilter } = filter;
+    if (paging && !wanted?.length && !onboarding) {
       const { rows, total } = await this.repo.listInstructors(
         rowFilter,
         paging,
@@ -151,23 +173,72 @@ export class AdminService {
         total,
       };
     }
-    const rows = await this.repo.listAllInstructors(rowFilter);
-    const stages = await this.goLive.stages(rows.map((row) => row.id));
-    const matching = wanted?.length
-      ? rows.filter((row) => {
-          const stage = stages.get(row.id);
-          return stage !== undefined && wanted.includes(stage);
-        })
-      : rows;
+    const matching = await this.matchingInstructors(filter);
     const pageRows = paging
       ? matching.slice(paging.offset, paging.offset + paging.limit)
       : matching;
     return {
-      instructors: pageRows.map((row) =>
-        this.toListRecord(row, stages.get(row.id)),
+      instructors: pageRows.map(({ row, summary }) =>
+        this.toListRecord(row, summary?.stage),
       ),
       total: matching.length,
     };
+  }
+
+  async exportInstructors(
+    filter: ListInstructorsFilter,
+    actor?: AuditActor,
+  ): Promise<InstructorExportFile> {
+    const [matching, mslInstructorIds] = await Promise.all([
+      this.matchingInstructors(filter),
+      this.repo.listInstructorIdsAtLocation(MSL_LOCATION_KEY),
+    ]);
+    const rows = matching.map(({ row, summary }) =>
+      instructorExportRow(row, summary, mslInstructorIds.has(row.id)),
+    );
+    const nonAsciiNames = rows.filter((row) => hasNonAscii(row.name)).length;
+    await this.audit.record({
+      action: AUDIT_ACTIONS.instructorExport,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'instructor',
+      targetId: null,
+      metadata: {
+        columns: INSTRUCTOR_EXPORT_COLUMNS,
+        filters: {
+          status: filter.status ?? null,
+          active: filter.isActive ?? null,
+          calendarConnected: filter.calendarConnected ?? null,
+          search: Boolean(filter.q),
+          stages: filter.stages ?? [],
+          onboarding: filter.onboarding ?? null,
+        },
+        rowCount: rows.length,
+        nonAsciiNames,
+      },
+    });
+    return {
+      filename: `instructors-${torontoToday()}.csv`,
+      body: instructorExportCsv(rows),
+      nonAsciiNames,
+    };
+  }
+
+  private async matchingInstructors(
+    filter: ListInstructorsFilter,
+  ): Promise<MatchingInstructor[]> {
+    const { stages: wanted, onboarding, ...rowFilter } = filter;
+    const rows = await this.repo.listAllInstructors(rowFilter);
+    const summaries = await this.goLive.summaries(rows.map((row) => row.id));
+    return rows
+      .map((row) => ({ row, summary: summaries.get(row.id) }))
+      .filter(
+        ({ summary }) =>
+          (!wanted?.length ||
+            (summary !== undefined && wanted.includes(summary.stage))) &&
+          (onboarding === undefined ||
+            (summary?.onboardingComplete === true) ===
+              (onboarding === 'complete')),
+      );
   }
 
   async instructorStageCounts(): Promise<InstructorStageCounts> {

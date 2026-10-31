@@ -535,6 +535,58 @@ describe('SupabaseAdminRepository', () => {
     );
   });
 
+  describe('listInstructorIdsAtLocation', () => {
+    it('reads every instructor linked to the location key, page by page', async () => {
+      const page = (from: number, count: number) =>
+        Array.from({ length: count }, (_, i) => ({
+          instructor_id: `i${from + i}`,
+          teaching_locations: { key: 'teaching_location.moonstone' },
+        }));
+      const { client, queries } = recordingSupabase({
+        instructors_teaching_locations: [
+          { data: page(0, POSTGREST_MAX_ROWS), error: null },
+          { data: page(POSTGREST_MAX_ROWS, 1), error: null },
+        ],
+      });
+
+      const ids = await new SupabaseAdminRepository(
+        client,
+      ).listInstructorIdsAtLocation('teaching_location.moonstone');
+
+      expect(ids.size).toBe(POSTGREST_MAX_ROWS + 1);
+      expect(ids.has('i0')).toBe(true);
+      expect(ids.has(`i${POSTGREST_MAX_ROWS}`)).toBe(true);
+      expect(queries).toEqual(
+        [0, 1].map((n) => ({
+          table: 'instructors_teaching_locations',
+          ops: [
+            ['select', 'instructor_id, teaching_locations!inner(key)'],
+            ['eq', 'teaching_locations.key', 'teaching_location.moonstone'],
+            ['order', 'instructor_id', { ascending: true }],
+            ['range', n * 1000, n * 1000 + 999],
+          ],
+        })),
+      );
+    });
+
+    it('surfaces Supabase errors', async () => {
+      const { client } = recordingSupabase({
+        instructors_teaching_locations: {
+          data: null,
+          error: { message: 'boom' },
+        },
+      });
+
+      await expect(
+        new SupabaseAdminRepository(client).listInstructorIdsAtLocation(
+          'teaching_location.moonstone',
+        ),
+      ).rejects.toThrow(
+        'Failed to list instructors at a teaching location: boom',
+      );
+    });
+  });
+
   describe('revokeSessions', () => {
     async function buildWithRpc(result: {
       data: unknown;

@@ -15,6 +15,7 @@ import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-option
  * headers and the methods the API actually uses.
  */
 export const TOTAL_COUNT_HEADER = 'X-Total-Count';
+export const NON_ASCII_NAMES_HEADER = 'X-Export-Non-Ascii-Names';
 
 export function parseAllowedOrigins(raw: string | undefined): string[] {
   if (!raw) {
@@ -31,7 +32,7 @@ export function buildCorsOptions(origins: string[]): CorsOptions {
     origin: origins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
-    exposedHeaders: [TOTAL_COUNT_HEADER],
+    exposedHeaders: [TOTAL_COUNT_HEADER, NON_ASCII_NAMES_HEADER],
     credentials: false,
     maxAge: 86400, // cache preflight for 24h
   };

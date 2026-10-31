@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentOnboardingService } from '../documents/document-onboarding.service';
-import { GoLiveService } from '../shopify-sync/go-live.service';
+import {
+  GoLiveService,
+  type InstructorSummary,
+} from '../shopify-sync/go-live.service';
 import type { InstructorStage } from '../shopify-sync/instructor-stage';
 import { BIO_TRANSLATOR } from '../bio-translation/bio-translator.interface';
 import { createBioTranslator } from '../bio-translation/bio-translation.module';
@@ -80,10 +83,22 @@ describe('AdminService', () => {
   const onboarding = {
     assignPublished: jest.fn().mockResolvedValue({ created: 0, skipped: 0 }),
   };
+  const summaryOf = (stage: InstructorStage): InstructorSummary => ({
+    stage,
+    onboardingComplete: false,
+    certifications: [],
+    trainers: [],
+  });
   const goLive = {
     stages: jest.fn(
       (ids: string[]): Promise<Map<string, InstructorStage>> =>
         Promise.resolve(new Map(ids.map((id) => [id, 'onboarding']))),
+    ),
+    summaries: jest.fn(
+      (ids: string[]): Promise<Map<string, InstructorSummary>> =>
+        Promise.resolve(
+          new Map(ids.map((id) => [id, summaryOf('onboarding')])),
+        ),
     ),
   };
   const translator = {
@@ -139,7 +154,7 @@ describe('AdminService', () => {
         expect.objectContaining({ id: 'i2', calendarConnected: false }),
       ]);
       expect(result[0]).not.toHaveProperty('instructor_calendars');
-      expect(goLive.stages).toHaveBeenCalledWith([makeRow().id, 'i2']);
+      expect(goLive.summaries).toHaveBeenCalledWith([makeRow().id, 'i2']);
     });
 
     it('lists every matching row, then filters by stage before paging', async () => {
@@ -148,13 +163,13 @@ describe('AdminService', () => {
         instructor_calendars: null,
       }));
       repo.listAllInstructors.mockResolvedValue(rows);
-      goLive.stages.mockResolvedValueOnce(
-        new Map<string, InstructorStage>([
-          ['a', 'live'],
-          ['b', 'in_review'],
-          ['c', 'live'],
-          ['d', 'pending'],
-          ['e', 'in_review'],
+      goLive.summaries.mockResolvedValueOnce(
+        new Map([
+          ['a', summaryOf('live')],
+          ['b', summaryOf('in_review')],
+          ['c', summaryOf('live')],
+          ['d', summaryOf('pending')],
+          ['e', summaryOf('in_review')],
         ]),
       );
 

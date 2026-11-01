@@ -1,4 +1,5 @@
 import {
+  HttpException,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
@@ -298,50 +299,48 @@ function meetInPairs<A extends unknown[], R>(
 
 type Ctx = Awaited<ReturnType<typeof build>>;
 
-interface Crash {
+interface Hook {
   part: 'repo' | 'audit' | 'activation';
   method: string;
   when: 'before' | 'after';
   call?: number;
 }
 
+type Crash = Hook;
+
+interface Outcome {
+  status: number;
+  body?: unknown;
+}
+
 const LONG_AGO_MS = 60 * 60 * 1000;
 
-function startDyingChange(ctx: Ctx, crash: Crash): Promise<void> {
-  let died!: () => void;
-  const dead = new Promise<void>((resolve) => {
-    died = resolve;
-  });
-  const never = new Promise<never>(() => undefined);
-  let gone = false;
+function runChange(
+  ctx: Ctx,
+  hook: Hook,
+  onHit: () => Promise<void>,
+  body = { email: NEW, expectedCurrentEmail: OLD },
+): Promise<Outcome> {
   let calls = 0;
-  const wrap = <T extends object>(part: Crash['part'], target: T): T =>
+  const wrap = <T extends object>(part: Hook['part'], target: T): T =>
     new Proxy(target, {
       get(obj, prop, receiver) {
         const value: unknown = Reflect.get(obj, prop, receiver);
         if (typeof value !== 'function') {
           return value;
         }
+        const fn = value as (...a: unknown[]) => Promise<unknown>;
+        if (part !== hook.part || prop !== hook.method) {
+          return fn.bind(obj) as unknown;
+        }
         return async (...args: unknown[]) => {
-          if (gone) {
-            return never;
+          const hit = ++calls === (hook.call ?? 1);
+          if (hit && hook.when === 'before') {
+            await onHit();
           }
-          const hit =
-            part === crash.part &&
-            prop === crash.method &&
-            ++calls === (crash.call ?? 1);
-          if (hit && crash.when === 'before') {
-            gone = true;
-            died();
-            return never;
-          }
-          const result: unknown = await (
-            value as (...a: unknown[]) => Promise<unknown>
-          ).apply(obj, args);
-          if (hit) {
-            gone = true;
-            died();
-            return never;
+          const result: unknown = await fn.apply(obj, args);
+          if (hit && hook.when === 'after') {
+            await onHit();
           }
           return result;
         };
@@ -354,14 +353,52 @@ function startDyingChange(ctx: Ctx, crash: Crash): Promise<void> {
     wrap('audit', ctx.audit) as unknown as AuditService,
     ctx.mailer as unknown as MailerService,
   );
-  service
-    .changeEmail(
-      INSTRUCTOR_ID,
-      { email: NEW, expectedCurrentEmail: OLD },
-      { userId: ADMIN_ID, role: 'admin', userAgent: null },
-    )
-    .catch(() => undefined);
-  return dead;
+  return service
+    .changeEmail(INSTRUCTOR_ID, body, {
+      userId: ADMIN_ID,
+      role: 'admin',
+      userAgent: null,
+    })
+    .then(
+      () => ({ status: 200 }),
+      (err: HttpException) => ({
+        status: err.getStatus(),
+        body: err.getResponse(),
+      }),
+    );
+}
+
+function startDyingChange(ctx: Ctx, crash: Crash): Promise<void> {
+  return new Promise<void>((died) => {
+    void runChange(ctx, crash, () => {
+      died();
+      return new Promise<never>(() => undefined);
+    });
+  });
+}
+
+function startPausedChange(
+  ctx: Ctx,
+  hook: Hook,
+  body?: { email: string; expectedCurrentEmail: string },
+) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let result!: Promise<Outcome>;
+  const reached = new Promise<void>((reach) => {
+    result = runChange(
+      ctx,
+      hook,
+      () => {
+        reach();
+        return released;
+      },
+      body,
+    );
+  });
+  return { reached, release, result };
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
@@ -1034,7 +1071,7 @@ describe('PATCH /admin/instructors/:id/email', () => {
       await expectFinished(1);
     });
 
-    it('lets a new change from the address shown win over the dead one, and refuses the dead one afterwards', async () => {
+    it('lets a new change from the address shown win over the dead one once it stops counting as running, and refuses the dead one afterwards', async () => {
       const THIRD = 'jane.third@example.org';
       await startDyingChange(ctx, {
         part: 'repo',
@@ -1042,7 +1079,11 @@ describe('PATCH /admin/instructors/:id/email', () => {
         when: 'after',
       });
 
-      await change(THIRD, NEW).expect(200);
+      const newer = change(THIRD, NEW).then((res) => res);
+      await waitFor(() => ctx.audit.changes('superseding').length > 0);
+      expect(ctx.repo.calls).toEqual([]);
+      ctx.audit.age(LONG_AGO_MS);
+      expect((await newer).status).toBe(200);
 
       expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(THIRD);
       expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(THIRD);
@@ -1063,6 +1104,298 @@ describe('PATCH /admin/instructors/:id/email', () => {
       const stale = await change().expect(409);
       expect(stale.body).toMatchObject({ code: 'stale_email' });
       expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(THIRD);
+    });
+  });
+
+  describe('when an older attempt wakes up after a newer change took over', () => {
+    const THIRD = 'jane.third@example.org';
+    const stale = {
+      status: 409,
+      body: expect.objectContaining({ code: 'stale_email' }) as unknown,
+    };
+    const notices = () =>
+      ctx.mails
+        .filter((m) => m.template.startsWith('email_changed'))
+        .map((m) => [m.template, m.to]);
+
+    beforeEach(async () => {
+      ctx = await build();
+      seedInvite(ctx.invites);
+    });
+
+    async function supersede(
+      hook: Hook,
+      { died = 'updateAuthEmail' }: { died?: string } = {},
+    ) {
+      await startDyingChange(ctx, {
+        part: 'repo',
+        method: died,
+        when: 'after',
+      });
+      ctx.audit.age(LONG_AGO_MS);
+      const retry = startPausedChange(ctx, hook);
+      await retry.reached;
+      let answered = false;
+      const newer = change(THIRD, NEW).then((res) => {
+        answered = true;
+        return res;
+      });
+      await waitFor(
+        () =>
+          answered ||
+          ctx.audit
+            .changes('superseding')
+            .some((m) => m.to === redactEmail(THIRD)),
+      );
+      retry.release();
+      return { retry: await retry.result, newer: await newer };
+    }
+
+    function expectNewerKept() {
+      expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(THIRD);
+      expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(THIRD);
+      expect([...ctx.invites.rows.values()].map((i) => i.email)).toEqual([
+        THIRD,
+      ]);
+      expect(ctx.repo.sessions.get(AUTH_ID)).toBe(0);
+      expect(ctx.audit.changes('completed')).toEqual([
+        expect.objectContaining({ to: redactEmail(THIRD) }),
+      ]);
+      expect(ctx.audit.changes('superseded')).toEqual([
+        expect.objectContaining({ to: redactEmail(NEW) }),
+      ]);
+    }
+
+    it('keeps the newer change when the resumed retry was held inside its sign-out, and refuses the retry', async () => {
+      const { retry, newer } = await supersede({
+        part: 'repo',
+        method: 'revokeSessions',
+        when: 'before',
+      });
+
+      expect(retry).toEqual(stale);
+      expect(newer.status).toBe(200);
+      expectNewerKept();
+      expect(ctx.repo.calls).toEqual([
+        `updateAuthEmail ${NEW}`,
+        'revokeSessions',
+        `updateAuthEmail ${THIRD}`,
+        'revokeSessions',
+      ]);
+      expect(notices()).toEqual([
+        ['email_changed.old_address', NEW],
+        ['email_changed.new_address', THIRD],
+      ]);
+      expect(
+        ctx.mails
+          .filter((m) => m.template === 'invite.season')
+          .map((m) => m.to),
+      ).toEqual([THIRD]);
+    });
+
+    it('keeps the newer change when the resumed retry was held inside GoTrue', async () => {
+      const { retry, newer } = await supersede(
+        { part: 'repo', method: 'updateAuthEmail', when: 'before' },
+        { died: 'claimInstructorEmail' },
+      );
+
+      expect(retry).toEqual(stale);
+      expect(newer.status).toBe(200);
+      expectNewerKept();
+      expect(ctx.repo.calls).toEqual([
+        `updateAuthEmail ${NEW}`,
+        `updateAuthEmail ${THIRD}`,
+        'revokeSessions',
+      ]);
+      expect(notices()).toEqual([
+        ['email_changed.old_address', OLD],
+        ['email_changed.new_address', THIRD],
+      ]);
+    });
+
+    it.each<[string, number, string[]]>([
+      ['updating GoTrue', 3, [`updateAuthEmail ${THIRD}`, 'revokeSessions']],
+      [
+        'signing out',
+        4,
+        [
+          `updateAuthEmail ${NEW}`,
+          `updateAuthEmail ${THIRD}`,
+          'revokeSessions',
+        ],
+      ],
+      [
+        'moving invites',
+        5,
+        [
+          `updateAuthEmail ${NEW}`,
+          'revokeSessions',
+          `updateAuthEmail ${THIRD}`,
+          'revokeSessions',
+        ],
+      ],
+      [
+        'notifying',
+        6,
+        [
+          `updateAuthEmail ${NEW}`,
+          'revokeSessions',
+          `updateAuthEmail ${THIRD}`,
+          'revokeSessions',
+        ],
+      ],
+      [
+        'writing its closing row',
+        7,
+        [
+          `updateAuthEmail ${NEW}`,
+          'revokeSessions',
+          `updateAuthEmail ${THIRD}`,
+          'revokeSessions',
+        ],
+      ],
+    ])(
+      'stops a resumed retry held just before %s once a newer change took over',
+      async (step, read, calls) => {
+        const { retry, newer } = await supersede(
+          {
+            part: 'repo',
+            method: 'listAuditEntries',
+            when: 'before',
+            call: read,
+          },
+          { died: 'claimInstructorEmail' },
+        );
+
+        expect(retry).toEqual(stale);
+        expect(newer.status).toBe(200);
+        expectNewerKept();
+        expect(ctx.repo.calls).toEqual(calls);
+        const notified = step === 'writing its closing row';
+        expect(notices()).toEqual([
+          ...(notified
+            ? [
+                ['email_changed.old_address', OLD],
+                ['email_changed.new_address', NEW],
+              ]
+            : []),
+          ['email_changed.old_address', read > 3 ? NEW : OLD],
+          ['email_changed.new_address', THIRD],
+        ]);
+      },
+    );
+
+    it('does not put the claim back when GoTrue fails for a retry that a newer change took over', async () => {
+      jest
+        .spyOn(ctx.repo, 'updateAuthEmail')
+        .mockRejectedValueOnce(new InternalServerErrorException('gotrue down'));
+      const claims = jest.spyOn(ctx.repo, 'claimInstructorEmail');
+
+      const { retry, newer } = await supersede(
+        { part: 'repo', method: 'updateAuthEmail', when: 'before' },
+        { died: 'claimInstructorEmail' },
+      );
+
+      expect(retry).toEqual(stale);
+      expect(newer.status).toBe(200);
+      expectNewerKept();
+      expect(claims.mock.calls.map(([, from, to]) => [from, to])).toEqual([
+        [OLD, NEW],
+        [NEW, THIRD],
+      ]);
+      expect(ctx.audit.changes('aborted')).toEqual([]);
+    });
+
+    it('lets an identical retry take over a change that has been silent too long, and refuses the original when it wakes', async () => {
+      const original = startPausedChange(ctx, {
+        part: 'repo',
+        method: 'updateAuthEmail',
+        when: 'before',
+      });
+      await original.reached;
+      ctx.audit.age(LONG_AGO_MS);
+
+      await change().expect(200);
+      original.release();
+
+      expect(await original.result).toEqual(stale);
+      expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(NEW);
+      expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(NEW);
+      expect([...ctx.invites.rows.values()].map((i) => i.email)).toEqual([NEW]);
+      expect(ctx.audit.changes('completed')).toHaveLength(1);
+      expect(notices()).toEqual([
+        ['email_changed.old_address', OLD],
+        ['email_changed.new_address', NEW],
+      ]);
+    });
+
+    it('lets only one of two identical retries finish a dead change', async () => {
+      await startDyingChange(ctx, {
+        part: 'repo',
+        method: 'updateAuthEmail',
+        when: 'after',
+      });
+      ctx.audit.age(LONG_AGO_MS);
+      const first = startPausedChange(ctx, {
+        part: 'activation',
+        method: 'inviteEmails',
+        when: 'after',
+      });
+      await first.reached;
+
+      await change().expect(200);
+      first.release();
+
+      expect(await first.result).toEqual(stale);
+      expect(ctx.audit.changes('completed')).toHaveLength(1);
+      expect(ctx.repo.calls).toEqual([
+        `updateAuthEmail ${NEW}`,
+        'revokeSessions',
+      ]);
+      expect(notices()).toEqual([
+        ['email_changed.old_address', OLD],
+        ['email_changed.new_address', NEW],
+      ]);
+    });
+
+    it('refuses a resumed retry that a newer change from the new address started ahead of, and lets that change finish', async () => {
+      await startDyingChange(ctx, {
+        part: 'repo',
+        method: 'updateAuthEmail',
+        when: 'after',
+      });
+      ctx.audit.age(LONG_AGO_MS);
+      const retry = startPausedChange(ctx, {
+        part: 'activation',
+        method: 'inviteEmails',
+        when: 'after',
+      });
+      await retry.reached;
+      const newer = startPausedChange(
+        ctx,
+        { part: 'repo', method: 'recordAudit', when: 'after' },
+        { email: THIRD, expectedCurrentEmail: NEW },
+      );
+      await newer.reached;
+
+      retry.release();
+      expect(await retry.result).toEqual(stale);
+      newer.release();
+      expect(await newer.result).toEqual({ status: 200 });
+
+      expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(THIRD);
+      expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(THIRD);
+      expect([...ctx.invites.rows.values()].map((i) => i.email)).toEqual([
+        THIRD,
+      ]);
+      expect(ctx.audit.changes('completed')).toEqual([
+        expect.objectContaining({ to: redactEmail(THIRD) }),
+      ]);
+      expect(ctx.repo.calls).toEqual([
+        `updateAuthEmail ${NEW}`,
+        `updateAuthEmail ${THIRD}`,
+        'revokeSessions',
+      ]);
     });
   });
 

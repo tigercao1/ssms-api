@@ -553,7 +553,7 @@ describe('ActivationService.complete for an invited instructor', () => {
 });
 
 describe('ActivationService.moveInvites', () => {
-  it('moves every invite of the auth user still on another address and lets only the newest resend its link', async () => {
+  it('moves every invite of the auth user still on one of the given addresses and lets only the newest resend its link', async () => {
     const invites = new InMemoryInvitesRepository();
     const older = invites.seed({
       auth_user_id: 'auth-1',
@@ -574,6 +574,12 @@ describe('ActivationService.moveInvites', () => {
       created_at: '2026-09-01T00:00:00.000Z',
     });
     const other = invites.seed({ auth_user_id: 'auth-2', email: 'old@x.test' });
+    const elsewhere = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'later@x.test',
+      season: '2026/27',
+      created_at: '2026-08-01T00:00:00.000Z',
+    });
     const dispatcher = {
       moveTo: jest.fn(
         (_invite: InviteRecipient, _email: string, resend: boolean) =>
@@ -589,7 +595,19 @@ describe('ActivationService.moveInvites', () => {
       recordingAudit() as unknown as AuditService,
     );
 
-    await expect(service.moveInvites('auth-1', 'new@x.test')).resolves.toEqual({
+    await expect(service.inviteEmails('auth-1')).resolves.toEqual([
+      'old@x.test',
+      'new@x.test',
+      'later@x.test',
+      'old@x.test',
+    ]);
+    await expect(
+      service.moveInvites(
+        'auth-1',
+        'new@x.test',
+        new Set(['old@x.test', 'new@x.test']),
+      ),
+    ).resolves.toEqual({
       moved: 2,
       reissued: 1,
     });
@@ -600,5 +618,6 @@ describe('ActivationService.moveInvites', () => {
     const moved = dispatcher.moveTo.mock.calls.map(([invite]) => invite.id);
     expect(moved).not.toContain(already.id);
     expect(moved).not.toContain(other.id);
+    expect(moved).not.toContain(elsewhere.id);
   });
 });

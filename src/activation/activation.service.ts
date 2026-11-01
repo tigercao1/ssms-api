@@ -155,16 +155,22 @@ export class ActivationService {
     }
   }
 
+  async inviteEmails(authUserId: string): Promise<string[]> {
+    const invites = await this.invites.listByAuthUser(authUserId);
+    return invites.map((invite) => invite.email);
+  }
+
   async moveInvites(
     authUserId: string,
     email: string,
+    from: ReadonlySet<string>,
   ): Promise<InviteMoveCounts> {
     const now = new Date();
     const counts: InviteMoveCounts = { moved: 0, reissued: 0 };
     const invites = await this.invites.listByAuthUser(authUserId);
     const latest = invites.at(-1);
     for (const invite of invites) {
-      if (invite.email === email) {
+      if (invite.email === email || !from.has(invite.email)) {
         continue;
       }
       const outcome = await this.dispatcher.moveTo(

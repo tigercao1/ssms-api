@@ -26,6 +26,7 @@ import { AdminService } from './admin.service';
 import type {
   AdminInstructorRecord,
   AdminInstructorRow,
+  AuditRecord,
   AuthEmailUpdate,
 } from './admin.types';
 import type { UpdateInstructorEmailDto } from './dto/update-instructor-email.dto';
@@ -34,8 +35,10 @@ type FollowUpStep = 'sessions' | 'invites';
 
 type ChangeStatus =
   | 'started'
+  | 'superseding'
   | 'stale'
   | 'aborted'
+  | 'superseded'
   | 'incomplete'
   | 'completed';
 
@@ -59,6 +62,7 @@ const FOLLOW_UP_LABELS: Record<FollowUpStep, string> = {
 const IN_FLIGHT_MS = 15_000;
 const IN_FLIGHT_POLL_MS = 500;
 const CHANGE_HISTORY_ROWS = 20;
+const OPEN_STATUSES: readonly unknown[] = ['started', 'superseding'];
 
 function emailTaken(): ConflictException {
   return new ConflictException({
@@ -95,6 +99,62 @@ function refused(code: string, message: string): ForbiddenException {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function latestOf(
+  history: AuditRecord[],
+  changeId: unknown,
+): AuditRecord | undefined {
+  return history.find(({ metadata }) => metadata.changeId === changeId);
+}
+
+function isOpen(record: AuditRecord | undefined): boolean {
+  return record !== undefined && OPEN_STATUSES.includes(record.metadata.status);
+}
+
+function unfinishedIn(
+  rows: AuditRecord[],
+  key: string,
+  skip?: string,
+): UnfinishedChange | null {
+  const unclaimed = new Set(
+    rows
+      .filter(
+        ({ metadata }) =>
+          metadata.status === 'stale' ||
+          (metadata.status === 'aborted' && metadata.claimRestored === true),
+      )
+      .map(({ metadata }) => metadata.changeId),
+  );
+  const chain: typeof rows = [];
+  for (const row of rows) {
+    if (
+      unclaimed.has(row.metadata.changeId) ||
+      row.metadata.changeId === skip
+    ) {
+      continue;
+    }
+    if (row.metadata.changeKey !== key) {
+      break;
+    }
+    chain.push(row);
+  }
+  const [latest] = chain;
+  if (!latest || latest.metadata.status === 'completed') {
+    return null;
+  }
+  return {
+    inFlight: isRunning(latest),
+    notified: chain.some(({ metadata }) => metadata.status === 'incomplete'),
+  };
+}
+
+function isRunning(record: AuditRecord | undefined): boolean {
+  return (
+    record !== undefined &&
+    isOpen(record) &&
+    Date.now() - Date.parse(record.insertedAt) < IN_FLIGHT_MS
+  );
 }
 
 @Injectable()
@@ -139,7 +199,7 @@ export class AdminInstructorEmailService {
           'The instructor already uses this email address',
         );
       }
-      const unfinished = await this.findUnfinished(row.id, change.key);
+      const unfinished = unfinishedIn(await this.history(row.id), change.key);
       if (!unfinished) {
         throw staleEmail();
       }
@@ -160,6 +220,7 @@ export class AdminInstructorEmailService {
     await this.assertAvailable(change.email, row.auth_user_id);
     const oldEmail =
       (await this.repo.findAuthEmail(row.auth_user_id)) ?? row.email;
+    const inviteEmails = await this.inviteEmails(row, change);
     const changeId = await this.begin(row, change, {});
     if (
       !(await this.repo.claimInstructorEmail(row.id, row.email, change.email))
@@ -167,8 +228,9 @@ export class AdminInstructorEmailService {
       await this.audit.record(this.entry(row, change, changeId, 'stale'));
       throw staleEmail();
     }
+    await this.takeOver(row, change, changeId, false);
     await this.moveAuthEmail(row, change, changeId, row.email);
-    await this.finish(row, change, changeId, oldEmail, {});
+    await this.finish(row, change, changeId, oldEmail, inviteEmails, {});
   }
 
   private async resume(
@@ -176,65 +238,102 @@ export class AdminInstructorEmailService {
     change: EmailChange,
     notified: boolean,
   ): Promise<void> {
-    const authEmail = await this.repo.findAuthEmail(row.auth_user_id);
+    const inviteEmails = await this.inviteEmails(row, change);
     const changeId = await this.begin(row, change, { resumed: true });
-    if (normalizeEmail(authEmail ?? '') !== change.email) {
-      await this.moveAuthEmail(
-        row,
-        change,
-        changeId,
-        authEmail ?? change.expected,
-      );
-    }
+    await this.takeOver(row, change, changeId, true);
+    await this.moveAuthEmail(row, change, changeId, null);
     await this.finish(
       row,
       change,
       changeId,
       notified ? null : change.expected,
-      {
-        resumed: true,
-      },
+      inviteEmails,
+      { resumed: true },
     );
   }
 
-  private async findUnfinished(
-    instructorId: string,
-    key: string,
-  ): Promise<UnfinishedChange | null> {
-    const rows = await this.repo.listAuditEntries(
+  private async inviteEmails(
+    row: AdminInstructorRow,
+    change: EmailChange,
+  ): Promise<Set<string>> {
+    return new Set([
+      change.expected,
+      ...(await this.activation.inviteEmails(row.auth_user_id)),
+    ]);
+  }
+
+  private async takeOver(
+    row: AdminInstructorRow,
+    change: EmailChange,
+    changeId: string,
+    resumed: boolean,
+  ): Promise<void> {
+    let history = await this.history(row.id);
+    if (resumed && !unfinishedIn(history, change.key, changeId)) {
+      await this.audit.record(this.entry(row, change, changeId, 'stale'));
+      throw staleEmail();
+    }
+    const mine = history.findIndex(
+      ({ metadata }) =>
+        metadata.changeId === changeId && metadata.status === 'started',
+    );
+    const supersedes = history
+      .filter(
+        ({ metadata }, index) =>
+          metadata.status === 'started' &&
+          metadata.changeId !== changeId &&
+          isOpen(latestOf(history, metadata.changeId)) &&
+          (resumed
+            ? index > mine && metadata.changeKey === change.key
+            : index > mine || metadata.resumed === true),
+      )
+      .map(({ metadata }) => metadata.changeId);
+    if (!supersedes.length) {
+      return;
+    }
+    const superseding = () =>
+      this.entry(row, change, changeId, 'superseding', { supersedes });
+    await this.repo.recordAudit(superseding());
+    let waited = false;
+    while (supersedes.some((id) => isRunning(latestOf(history, id)))) {
+      waited = true;
+      await sleep(IN_FLIGHT_POLL_MS);
+      history = await this.assertCurrent(row, change, changeId);
+    }
+    if (waited) {
+      await this.repo.recordAudit(superseding());
+    }
+  }
+
+  private async assertCurrent(
+    row: AdminInstructorRow,
+    change: EmailChange,
+    changeId: string,
+  ): Promise<AuditRecord[]> {
+    const history = await this.history(row.id);
+    const started = history.some(
+      ({ metadata }) =>
+        metadata.changeId === changeId && metadata.status === 'started',
+    );
+    const superseded = history.some(
+      ({ metadata }) =>
+        metadata.status === 'superseding' &&
+        Array.isArray(metadata.supersedes) &&
+        metadata.supersedes.includes(changeId),
+    );
+    if (started && !superseded) {
+      return history;
+    }
+    await this.audit.record(this.entry(row, change, changeId, 'superseded'));
+    throw staleEmail();
+  }
+
+  private history(instructorId: string): Promise<AuditRecord[]> {
+    return this.repo.listAuditEntries(
       AUDIT_ACTIONS.instructorEmailChange,
       instructorId,
       CHANGE_HISTORY_ROWS,
     );
-    const unclaimed = new Set(
-      rows
-        .filter(
-          ({ metadata }) =>
-            metadata.status === 'stale' ||
-            (metadata.status === 'aborted' && metadata.claimRestored === true),
-        )
-        .map(({ metadata }) => metadata.changeId),
-    );
-    const chain: typeof rows = [];
-    for (const row of rows) {
-      if (unclaimed.has(row.metadata.changeId)) {
-        continue;
-      }
-      if (row.metadata.changeKey !== key) {
-        break;
-      }
-      chain.push(row);
-    }
-    const [latest] = chain;
-    if (!latest || latest.metadata.status === 'completed') {
-      return null;
-    }
-    return {
-      inFlight:
-        latest.metadata.status === 'started' &&
-        Date.now() - Date.parse(latest.insertedAt) < IN_FLIGHT_MS,
-      notified: chain.some(({ metadata }) => metadata.status === 'incomplete'),
-    };
   }
 
   private async begin(
@@ -284,15 +383,21 @@ export class AdminInstructorEmailService {
     row: AdminInstructorRow,
     change: EmailChange,
     changeId: string,
-    restoreTo: string,
+    restoreTo: string | null,
   ): Promise<void> {
+    await this.assertCurrent(row, change, changeId);
+    const authEmail = await this.repo.findAuthEmail(row.auth_user_id);
+    if (normalizeEmail(authEmail ?? '') === change.email) {
+      return;
+    }
     try {
       await this.updateAuthEmail(row.auth_user_id, change.email);
     } catch (err) {
+      await this.assertCurrent(row, change, changeId);
       const claimRestored = await this.releaseClaim(
         row,
         change.email,
-        restoreTo,
+        restoreTo ?? authEmail ?? change.expected,
       );
       await this.audit.record(
         this.entry(row, change, changeId, 'aborted', { claimRestored }),
@@ -406,30 +511,36 @@ export class AdminInstructorEmailService {
     change: EmailChange,
     changeId: string,
     oldEmail: string | null,
+    inviteEmails: ReadonlySet<string>,
     metadata: Record<string, unknown>,
   ): Promise<void> {
     const failed: FollowUpStep[] = [];
     let sessionsRevoked: number | null = null;
     let invites: InviteMoveCounts | null = null;
+    await this.assertCurrent(row, change, changeId);
     try {
       sessionsRevoked = await this.repo.revokeSessions(row.auth_user_id);
     } catch (err) {
       failed.push('sessions');
       this.logFailure(row.id, 'revoke sessions', err);
     }
+    await this.assertCurrent(row, change, changeId);
     try {
       invites = await this.activation.moveInvites(
         row.auth_user_id,
         change.email,
+        inviteEmails,
       );
     } catch (err) {
       failed.push('invites');
       this.logFailure(row.id, 'move invites', err);
     }
     if (oldEmail !== null) {
+      await this.assertCurrent(row, change, changeId);
       this.notify(row, oldEmail, change.email);
     }
 
+    await this.assertCurrent(row, change, changeId);
     await this.audit.record(
       this.entry(
         row,

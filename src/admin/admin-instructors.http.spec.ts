@@ -19,7 +19,10 @@ import { DocumentOnboardingService } from '../documents/document-onboarding.serv
 import { InstructorsService } from '../instructors/instructors.service';
 import { MailerService } from '../mailer/mailer.service';
 import { SeasonsService } from '../seasons/seasons.service';
-import { GoLiveService } from '../shopify-sync/go-live.service';
+import {
+  GoLiveService,
+  type InstructorSummary,
+} from '../shopify-sync/go-live.service';
 import {
   INSTRUCTOR_STAGES,
   type InstructorStage,
@@ -107,6 +110,13 @@ class InMemoryInstructorList {
 const stageOf = (n: number): InstructorStage =>
   INSTRUCTOR_STAGES[n % INSTRUCTOR_STAGES.length];
 
+const summaryOf = (stage: InstructorStage): InstructorSummary => ({
+  stage,
+  onboardingComplete: false,
+  certifications: [],
+  trainers: [],
+});
+
 class StageLookup {
   calls: string[][] = [];
 
@@ -115,6 +125,11 @@ class StageLookup {
     return Promise.resolve(
       new Map(ids.map((id) => [id, stageOf(Number(id.slice(-12)))])),
     );
+  }
+
+  async summaries(ids: string[]): Promise<Map<string, InstructorSummary>> {
+    const stages = await this.stages(ids);
+    return new Map([...stages].map(([id, stage]) => [id, summaryOf(stage)]));
   }
 }
 
@@ -128,7 +143,7 @@ async function build(count = 60) {
 
 function startListApp(
   repo: Pick<AdminRepository, 'listInstructors' | 'listAllInstructors'>,
-  goLive: Pick<GoLiveService, 'stages'>,
+  goLive: Pick<GoLiveService, 'stages' | 'summaries'>,
 ) {
   return startAdminApp(
     Test.createTestingModule({
@@ -431,6 +446,10 @@ describe('GET /admin/instructors over a row-capped PostgREST', () => {
         new Map<string, InstructorStage>(
           instructorIds.map((id) => [id, 'live']),
         ),
+      ),
+    summaries: (instructorIds: readonly string[]) =>
+      Promise.resolve(
+        new Map(instructorIds.map((id) => [id, summaryOf('live')])),
       ),
   };
   let app: Awaited<ReturnType<typeof startListApp>>;

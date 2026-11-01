@@ -111,6 +111,9 @@ export abstract class AdminRepository {
   abstract setUserRole(authUserId: string, role: UserRole): Promise<void>;
   /** Delete every auth session of a user; returns how many were revoked. */
   abstract revokeSessions(authUserId: string): Promise<number>;
+  abstract listInstructorIdsAtLocation(
+    locationKey: string,
+  ): Promise<Set<string>>;
 }
 
 /** Narrow an arbitrary `app_metadata.role` claim to a known {@link UserRole}. */
@@ -475,5 +478,19 @@ export class SupabaseAdminRepository extends AdminRepository {
       );
     }
     return data ?? 0;
+  }
+
+  async listInstructorIdsAtLocation(locationKey: string): Promise<Set<string>> {
+    const rows = await fetchAllPages<{ instructor_id: string }>(
+      (from, to) =>
+        this.supabase
+          .from('instructors_teaching_locations')
+          .select('instructor_id, teaching_locations!inner(key)')
+          .eq('teaching_locations.key', locationKey)
+          .order('instructor_id', { ascending: true })
+          .range(from, to),
+      'list instructors at a teaching location',
+    );
+    return new Set(rows.map((row) => row.instructor_id));
   }
 }

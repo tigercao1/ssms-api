@@ -2,7 +2,12 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { torontoToday } from '../documents/certification-validity';
 import { DocumentSubjectsRepository } from '../documents/document-subjects.repository';
-import { MeDocumentsService } from '../documents/me-documents.service';
+import {
+  isOnboardingComplete,
+  lockFor,
+  MeDocumentsService,
+  toCertificationItems,
+} from '../documents/me-documents.service';
 import type {
   CertificationUploadRow,
   DocumentChecklistItem,
@@ -22,6 +27,8 @@ import {
   type InstructorShopifyState,
   type InstructorSnapshot,
   isVisible,
+  type SyncCertRow,
+  type SyncTrainerRow,
 } from './instructor-sync.types';
 import { LegacyRoster } from './legacy-roster';
 import { storefrontBaseUrl } from './storefront-url';
@@ -33,6 +40,13 @@ export interface GoLiveAssessment {
   readiness: GoLiveReadiness;
   publishable: InstructorSnapshot;
   snapshot: GoLiveSnapshot;
+}
+
+export interface InstructorSummary {
+  stage: InstructorStage;
+  onboardingComplete: boolean;
+  certifications: SyncCertRow[];
+  trainers: SyncTrainerRow[];
 }
 
 function goLiveSnapshot(
@@ -55,6 +69,26 @@ function isLive(
   state: InstructorShopifyState | null | undefined,
 ): boolean {
   return isVisible(snapshot.instructor) && state?.last_status === 'active';
+}
+
+function onboardingComplete(
+  snapshot: InstructorSnapshot,
+  certificationUploads: CertificationUploadRow[],
+  documents: DocumentChecklistItem[],
+  today: string,
+): boolean {
+  return (
+    lockFor(snapshot.instructor) === null &&
+    isOnboardingComplete([
+      ...documents,
+      ...toCertificationItems(
+        snapshot.certifications,
+        certificationUploads,
+        today,
+        false,
+      ),
+    ])
+  );
 }
 
 @Injectable()
@@ -98,6 +132,14 @@ export class GoLiveService {
     instructorIds: readonly string[],
     today = torontoToday(),
   ): Promise<Map<string, InstructorStage>> {
+    const summaries = await this.summaries(instructorIds, today);
+    return new Map([...summaries].map(([id, summary]) => [id, summary.stage]));
+  }
+
+  async summaries(
+    instructorIds: readonly string[],
+    today = torontoToday(),
+  ): Promise<Map<string, InstructorSummary>> {
     const snapshots = await this.repo.loadSnapshots(instructorIds);
     const found = [...snapshots.keys()];
     const visible = [...snapshots.values()]
@@ -110,19 +152,31 @@ export class GoLiveService {
     ]);
     return new Map(
       [...snapshots].map(([id, snapshot]) => {
+        const instructorUploads = uploads.get(id) ?? [];
+        const instructorDocuments = documents.get(id) ?? [];
         const goLive = goLiveSnapshot(
           snapshot,
-          uploads.get(id) ?? [],
-          documents.get(id) ?? [],
+          instructorUploads,
+          instructorDocuments,
         );
         return [
           id,
-          instructorStage(
-            goLive,
-            goLiveReadiness(goLive, today),
-            isLive(snapshot, states.get(id)),
-            today,
-          ),
+          {
+            stage: instructorStage(
+              goLive,
+              goLiveReadiness(goLive, today),
+              isLive(snapshot, states.get(id)),
+              today,
+            ),
+            onboardingComplete: onboardingComplete(
+              snapshot,
+              instructorUploads,
+              instructorDocuments,
+              today,
+            ),
+            certifications: snapshot.certifications,
+            trainers: snapshot.trainers,
+          },
         ];
       }),
     );

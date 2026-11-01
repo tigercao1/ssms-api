@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Headers,
   Param,
   ParseUUIDPipe,
@@ -18,7 +19,7 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import type { AuditActor } from '../audit/audit.types';
-import { TOTAL_COUNT_HEADER } from '../config/cors';
+import { NON_ASCII_NAMES_HEADER, TOTAL_COUNT_HEADER } from '../config/cors';
 import { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
 import { CreateSeasonDto, UpdateSeasonDto } from '../seasons/dto/season.dto';
@@ -30,6 +31,7 @@ import {
   CurrentUserRoleRecord,
   DeletedReferenceRecord,
   InstructorStageCounts,
+  ListInstructorsFilter,
   REFERENCE_SLUG_TO_TABLE,
   ReferenceRecord,
   ReferenceSlug,
@@ -38,7 +40,10 @@ import {
 } from './admin.types';
 import { CreateReferenceDto } from './dto/create-reference.dto';
 import { UpdateReferenceDto } from './dto/update-reference.dto';
-import { ListInstructorsQueryDto } from './dto/list-instructors-query.dto';
+import {
+  InstructorFiltersQueryDto,
+  ListInstructorsQueryDto,
+} from './dto/list-instructors-query.dto';
 import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateApprovalStatusDto } from './dto/update-approval-status.dto';
 import { UpdateDisplayOrderDto } from './dto/update-display-order.dto';
@@ -48,6 +53,19 @@ import { Roles, RolesGuard } from './roles.guard';
 /** Builds the audit actor from the verified admin JWT + request user-agent. */
 function toActor(user: SupabaseJwtPayload, userAgent?: string): AuditActor {
   return { userId: user.sub, role: 'admin', userAgent: userAgent ?? null };
+}
+
+function instructorFilter(
+  query: InstructorFiltersQueryDto,
+): ListInstructorsFilter {
+  return {
+    status: query.status,
+    isActive: query.active,
+    calendarConnected: query.calendarConnected,
+    q: query.q,
+    stages: query.stage,
+    onboarding: query.onboarding,
+  };
 }
 
 function parseReferenceSlug(type: string): ReferenceSlug {
@@ -81,13 +99,7 @@ export class AdminController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AdminInstructorListRecord[]> {
     const { instructors, total } = await this.admin.listInstructors(
-      {
-        status: query.status,
-        isActive: query.active,
-        calendarConnected: query.calendarConnected,
-        q: query.q,
-        stages: query.stage,
-      },
+      instructorFilter(query),
       query.page,
       query.limit,
     );
@@ -98,6 +110,28 @@ export class AdminController {
   @Get('instructors/stage-counts')
   instructorStageCounts(): Promise<InstructorStageCounts> {
     return this.admin.instructorStageCounts();
+  }
+
+  @Get('instructors/export.csv')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Cache-Control', 'no-store')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async exportInstructors(
+    @Query() query: InstructorFiltersQueryDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<string> {
+    const file = await this.admin.exportInstructors(
+      instructorFilter(query),
+      toActor(user, userAgent),
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
+    res.setHeader(NON_ASCII_NAMES_HEADER, String(file.nonAsciiNames));
+    return file.body;
   }
 
   /** Single instructor core record (admin detail). */

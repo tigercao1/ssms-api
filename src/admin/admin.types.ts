@@ -88,6 +88,9 @@ export interface AdminInstructorListRecord extends AdminInstructorRecord {
 
 export type InstructorStageCounts = Record<InstructorStage, number>;
 
+export const ONBOARDING_FILTERS = ['complete', 'incomplete'] as const;
+export type OnboardingFilter = (typeof ONBOARDING_FILTERS)[number];
+
 /** Optional narrowing applied to `GET /admin/instructors`. */
 export interface ListInstructorsFilter {
   status?: ApprovalStatus;
@@ -95,6 +98,7 @@ export interface ListInstructorsFilter {
   calendarConnected?: boolean;
   q?: string;
   stages?: InstructorStage[];
+  onboarding?: OnboardingFilter;
 }
 
 /** Mutable core columns an admin transition can write. */

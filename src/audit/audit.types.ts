@@ -13,6 +13,7 @@ export const AUDIT_ACTIONS = {
   instructorActivate: 'instructor.activate',
   instructorDeactivate: 'instructor.deactivate',
   instructorDisplayOrderUpdate: 'instructor.display_order_update',
+  instructorEmailChange: 'instructor.email_change',
   instructorExport: 'instructor.export',
   // Emitted by PATCH /admin/users/:id/role (AdminService.setUserRole).
   userRoleChange: 'user.role_change',

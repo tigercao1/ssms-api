@@ -551,3 +551,73 @@ describe('ActivationService.complete for an invited instructor', () => {
     expect(onboarding.assignPublished).toHaveBeenCalledWith('ins-1');
   });
 });
+
+describe('ActivationService.moveInvites', () => {
+  it('moves every invite of the auth user still on one of the given addresses and lets only the newest resend its link', async () => {
+    const invites = new InMemoryInvitesRepository();
+    const older = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'old@x.test',
+      season: '2024/25',
+      created_at: '2024-09-01T00:00:00.000Z',
+    });
+    const already = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'new@x.test',
+      season: '2025/26',
+      created_at: '2025-09-01T00:00:00.000Z',
+    });
+    const newest = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'old@x.test',
+      season: '2026/27',
+      created_at: '2026-09-01T00:00:00.000Z',
+    });
+    const other = invites.seed({ auth_user_id: 'auth-2', email: 'old@x.test' });
+    const elsewhere = invites.seed({
+      auth_user_id: 'auth-1',
+      email: 'later@x.test',
+      season: '2026/27',
+      created_at: '2026-08-01T00:00:00.000Z',
+    });
+    const dispatcher = {
+      moveTo: jest.fn(
+        (_invite: InviteRecipient, _email: string, resend: boolean) =>
+          Promise.resolve(resend ? 'reissued' : 'moved'),
+      ),
+    };
+    const service = new ActivationService(
+      invites,
+      {} as ActivationAuth,
+      dispatcher as unknown as InviteDispatcher,
+      {} as DocumentOnboardingService,
+      new InMemoryResendCooldownRepository(),
+      recordingAudit() as unknown as AuditService,
+    );
+
+    await expect(service.inviteEmails('auth-1')).resolves.toEqual([
+      'old@x.test',
+      'new@x.test',
+      'later@x.test',
+      'old@x.test',
+    ]);
+    await expect(
+      service.moveInvites(
+        'auth-1',
+        'new@x.test',
+        new Set(['old@x.test', 'new@x.test']),
+      ),
+    ).resolves.toEqual({
+      moved: 2,
+      reissued: 1,
+    });
+    expect(dispatcher.moveTo.mock.calls).toEqual([
+      [expect.objectContaining({ id: older.id }), 'new@x.test', false, NOW],
+      [expect.objectContaining({ id: newest.id }), 'new@x.test', true, NOW],
+    ]);
+    const moved = dispatcher.moveTo.mock.calls.map(([invite]) => invite.id);
+    expect(moved).not.toContain(already.id);
+    expect(moved).not.toContain(other.id);
+    expect(moved).not.toContain(elsewhere.id);
+  });
+});

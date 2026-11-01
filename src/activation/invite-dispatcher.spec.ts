@@ -184,3 +184,101 @@ describe('InviteDispatcher.resend', () => {
     expect(mailer.send).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('InviteDispatcher.moveTo', () => {
+  function setup(overrides: Partial<InviteRecipient>) {
+    const invites = new InMemoryInvitesRepository();
+    const row = invites.seed({
+      email: 'jane@example.test',
+      token_hash: hashInviteToken('A'.repeat(43)),
+      sent_at: '2026-10-01T00:00:00Z',
+      expires_at: '2026-10-31T00:00:00.000Z',
+      ...overrides,
+    });
+    const mailer = {
+      send: jest
+        .fn<Promise<SendOutcome>, [SendEmailRequest]>()
+        .mockResolvedValue('sent'),
+      portalLink: jest.fn((p: string) => `https://portal.test${p}`),
+    };
+    const dispatcher = new InviteDispatcher(invites, mailer);
+    return { invites, row, mailer, dispatcher };
+  }
+
+  it('rotates the link of a sent, unactivated invite and emails the new one to the new address', async () => {
+    const { invites, row, mailer, dispatcher } = setup({});
+    await expect(
+      dispatcher.moveTo(row, 'jane.snow@example.test', true, NOW),
+    ).resolves.toBe('reissued');
+
+    const request = mailer.send.mock
+      .calls[0][0] as SendEmailRequest<'invite.season'>;
+    const token = new URL(request.vars.activateUrl).searchParams.get(
+      't',
+    ) as string;
+    expect(invites.rows.get(row.id)).toMatchObject({
+      email: 'jane.snow@example.test',
+      token_hash: hashInviteToken(token),
+      expires_at: '2026-11-10T04:00:00.000Z',
+    });
+    expect(request).toMatchObject({
+      template: 'invite.season',
+      to: 'jane.snow@example.test',
+      mode: 'background',
+      idempotencyKey: `invite-${row.id}-email-2026-10-11T04:00:00.000Z`,
+    });
+  });
+
+  it('kills the link of an activated invite without emailing or extending it', async () => {
+    const { invites, row, mailer, dispatcher } = setup({
+      activated_at: '2026-10-02T00:00:00Z',
+    });
+    await expect(
+      dispatcher.moveTo(row, 'jane.snow@example.test', true, NOW),
+    ).resolves.toBe('moved');
+    const stored = invites.rows.get(row.id);
+    expect(stored?.email).toBe('jane.snow@example.test');
+    expect(stored?.token_hash).not.toBe(row.token_hash);
+    expect(stored?.expires_at).toBe(row.expires_at);
+    expect(mailer.send).not.toHaveBeenCalled();
+  });
+
+  it('kills the link of an unactivated invite it may not resend, without emailing or extending it', async () => {
+    const { invites, row, mailer, dispatcher } = setup({});
+    await expect(
+      dispatcher.moveTo(row, 'jane.snow@example.test', false, NOW),
+    ).resolves.toBe('moved');
+    const stored = invites.rows.get(row.id);
+    expect(stored?.email).toBe('jane.snow@example.test');
+    expect(stored?.token_hash).not.toBe(row.token_hash);
+    expect(stored?.expires_at).toBe(row.expires_at);
+    expect(mailer.send).not.toHaveBeenCalled();
+  });
+
+  it('only readdresses an invite that was never sent', async () => {
+    const { invites, row, mailer, dispatcher } = setup({
+      token_hash: null,
+      sent_at: null,
+      expires_at: null,
+    });
+    await expect(
+      dispatcher.moveTo(row, 'jane.snow@example.test', true, NOW),
+    ).resolves.toBe('moved');
+    expect(invites.rows.get(row.id)).toEqual({
+      ...row,
+      email: 'jane.snow@example.test',
+    });
+    expect(mailer.send).not.toHaveBeenCalled();
+  });
+
+  it('changes nothing when the invite was readdressed meanwhile', async () => {
+    const { invites, row, mailer, dispatcher } = setup({});
+    await dispatcher.moveTo(row, 'first@example.test', true, NOW);
+    mailer.send.mockClear();
+    await expect(
+      dispatcher.moveTo(row, 'second@example.test', true, NOW),
+    ).resolves.toBe('unchanged');
+    expect(invites.rows.get(row.id)?.email).toBe('first@example.test');
+    expect(mailer.send).not.toHaveBeenCalled();
+  });
+});

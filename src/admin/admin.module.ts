@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ActivationModule } from '../activation/activation.module';
 import { BioTranslationModule } from '../bio-translation/bio-translation.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { InstructorsModule } from '../instructors/instructors.module';
@@ -6,6 +7,8 @@ import { MailerModule } from '../mailer/mailer.module';
 import { MediaModule } from '../media/media.module';
 import { SeasonsModule } from '../seasons/seasons.module';
 import { ShopifySyncModule } from '../shopify-sync/shopify-sync.module';
+import { AdminInstructorEmailController } from './admin-instructor-email.controller';
+import { AdminInstructorEmailService } from './admin-instructor-email.service';
 import { AdminMediaController } from './admin-media.controller';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
@@ -28,6 +31,7 @@ import { AdminService } from './admin.service';
  */
 @Module({
   imports: [
+    ActivationModule,
     InstructorsModule,
     MailerModule,
     MediaModule,
@@ -36,9 +40,14 @@ import { AdminService } from './admin.service';
     SeasonsModule,
     ShopifySyncModule,
   ],
-  controllers: [AdminController, AdminMediaController],
+  controllers: [
+    AdminController,
+    AdminMediaController,
+    AdminInstructorEmailController,
+  ],
   providers: [
     AdminService,
+    AdminInstructorEmailService,
     { provide: AdminRepository, useClass: SupabaseAdminRepository },
   ],
 })

@@ -138,6 +138,10 @@ export interface EmailMessages {
   rejected: EmailRejectedCopy;
   deactivated: EmailCopy;
   reactivated: EmailButtonCopy;
+  emailChanged: {
+    oldAddress: EmailCopy;
+    newAddress: EmailButtonCopy;
+  };
   auth: {
     confirmSignup: EmailButtonCopy;
     recovery: EmailButtonCopy;

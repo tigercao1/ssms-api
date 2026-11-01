@@ -264,6 +264,32 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
       loginUrl: `${portalUrl}/login`,
     }),
   },
+  'email_changed.old_address': {
+    build: (catalog, vars) => ({
+      ...fill(catalog.email.emailChanged.oldAddress, vars),
+      greeting: greet(catalog, vars.displayName),
+    }),
+    sample: () => ({
+      displayName: SAMPLE_NAME,
+      oldEmail: 'lin.wei@example.com',
+      newEmail: 'lin.wei@example.org',
+    }),
+  },
+  'email_changed.new_address': {
+    build: (catalog, vars) => {
+      const copy = catalog.email.emailChanged.newAddress;
+      return {
+        ...fill(copy, vars),
+        greeting: greet(catalog, vars.displayName),
+        button: { label: copy.button, url: vars.loginUrl },
+      };
+    },
+    sample: ({ portalUrl }) => ({
+      displayName: SAMPLE_NAME,
+      newEmail: 'lin.wei@example.org',
+      loginUrl: `${portalUrl}/login`,
+    }),
+  },
   'auth.confirm_signup': {
     build: (catalog, vars) => {
       const copy = catalog.email.auth.confirmSignup;

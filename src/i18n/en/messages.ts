@@ -150,6 +150,33 @@ export const en: MessageCatalog = {
       finePrint:
         "You're receiving this because you have an instructor profile with Serendipity Snow Club.",
     },
+    emailChanged: {
+      oldAddress: {
+        subject: 'Your Serendipity Snow Club sign-in email was changed',
+        preheader: 'A club admin changed the email on your account.',
+        heading: 'Your sign-in email was changed',
+        paragraphs: [
+          'A Serendipity Snow Club admin changed the email address on your instructor account from {oldEmail} to {newEmail}.',
+          'From now on, sign in to the instructor portal with {newEmail}. Emails from the club go to that address too.',
+          "If you didn't ask for this change, reply to this email right away and we'll help secure your account.",
+        ],
+        finePrint:
+          "You're receiving this security notice at your previous email address because an admin changed your account email.",
+      },
+      newAddress: {
+        subject: 'This is now your Serendipity Snow Club sign-in email',
+        preheader: 'A club admin changed the email on your account.',
+        heading: 'Your sign-in email was changed',
+        paragraphs: [
+          'A Serendipity Snow Club admin changed the email address on your instructor account to {newEmail}.',
+          'From now on, sign in to the instructor portal with this address.',
+          "If you didn't expect this change, reply to this email and let us know.",
+        ],
+        button: 'Sign in',
+        finePrint:
+          "You're receiving this because this address was just set as the sign-in email of an instructor account.",
+      },
+    },
     auth: {
       confirmSignup: {
         subject: 'Confirm your email for Serendipity Snow Club',

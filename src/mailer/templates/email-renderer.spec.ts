@@ -19,6 +19,8 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'rejected',
   'deactivated',
   'reactivated',
+  'email_changed.old_address',
+  'email_changed.new_address',
   'auth.confirm_signup',
   'auth.recovery',
   'auth.magic_link',

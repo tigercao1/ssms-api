@@ -15,6 +15,7 @@ import { RESEND_COOLDOWN_SECONDS } from './resend-cooldown.repository';
 export type InviteTemplate = 'invite.season' | 'invite.reminder';
 export type InviteMailer = Pick<MailerService, 'send' | 'portalLink'>;
 export type ResendOutcome = SendOutcome | 'cooling_down';
+export type InviteMoveOutcome = 'reissued' | 'moved' | 'unchanged';
 
 /**
  * Issues a fresh invite token (replacing any earlier one, new 30-day expiry),
@@ -59,6 +60,40 @@ export class InviteDispatcher {
       'background',
       `invite-${invite.id}-resend-${now.toISOString()}`,
     );
+  }
+
+  async moveTo(
+    invite: InviteRecipient,
+    email: string,
+    resend: boolean,
+    now: Date = new Date(),
+  ): Promise<InviteMoveOutcome> {
+    const issued = issueInviteToken(now);
+    const rotate = invite.token_hash !== null;
+    const reissue =
+      resend &&
+      rotate &&
+      invite.sent_at !== null &&
+      invite.activated_at === null;
+    const moved = await this.invites.moveToEmail(invite.id, invite.email, {
+      email,
+      ...(rotate ? { tokenHash: issued.tokenHash } : {}),
+      ...(reissue ? { expiresAt: issued.expiresAt } : {}),
+    });
+    if (!moved) {
+      return 'unchanged';
+    }
+    if (!reissue) {
+      return 'moved';
+    }
+    void this.send(
+      { ...invite, email },
+      issued,
+      'invite.season',
+      'background',
+      `invite-${invite.id}-email-${now.toISOString()}`,
+    ).catch(() => undefined);
+    return 'reissued';
   }
 
   private send(

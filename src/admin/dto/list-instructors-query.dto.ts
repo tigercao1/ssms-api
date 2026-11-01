@@ -14,7 +14,11 @@ import {
   INSTRUCTOR_STAGES,
   type InstructorStage,
 } from '../../shopify-sync/instructor-stage';
-import type { ApprovalStatus } from '../admin.types';
+import {
+  type ApprovalStatus,
+  ONBOARDING_FILTERS,
+  type OnboardingFilter,
+} from '../admin.types';
 
 export const INSTRUCTOR_LIST_DEFAULT_LIMIT = 50;
 
@@ -31,10 +35,10 @@ function toStageList(value: unknown): unknown {
 }
 
 /**
- * Query string for `GET /admin/instructors` (T6.3). Every filter is optional;
- * with none, every instructor of every status is returned.
+ * Filters of `GET /admin/instructors` (T6.3) and its CSV export. Every filter
+ * is optional; with none, every instructor of every status is returned.
  */
-export class ListInstructorsQueryDto {
+export class InstructorFiltersQueryDto {
   /** Narrow by approval workflow state. */
   @IsOptional()
   @IsIn(['pending', 'approved', 'rejected'])
@@ -72,6 +76,12 @@ export class ListInstructorsQueryDto {
   @MaxLength(200)
   q?: string;
 
+  @IsOptional()
+  @IsIn(ONBOARDING_FILTERS)
+  onboarding?: OnboardingFilter;
+}
+
+export class ListInstructorsQueryDto extends InstructorFiltersQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -68,6 +68,15 @@ export abstract class AdminRepository {
     authUserId: string,
     email: string,
   ): Promise<AuthEmailUpdate>;
+  abstract claimInstructorEmail(
+    id: string,
+    fromEmail: string,
+    toEmail: string,
+  ): Promise<boolean>;
+  abstract findLatestAuditMetadata(
+    action: string,
+    targetId: string,
+  ): Promise<Record<string, unknown> | null>;
   /** Apply a core-column patch (approval_status / is_active) and return it. */
   abstract updateInstructor(
     id: string,
@@ -256,6 +265,47 @@ export class SupabaseAdminRepository extends AdminRepository {
     }
     throw new InternalServerErrorException(
       `Failed to update the auth email: ${error.message}`,
+    );
+  }
+
+  async claimInstructorEmail(
+    id: string,
+    fromEmail: string,
+    toEmail: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('instructors')
+      .update({ email: toEmail })
+      .eq('id', id)
+      .eq('email', fromEmail)
+      .select('id');
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to claim the instructor email: ${error.message}`,
+      );
+    }
+    return (data ?? []).length > 0;
+  }
+
+  async findLatestAuditMetadata(
+    action: string,
+    targetId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const { data, error } = await this.supabase
+      .from('audit_log')
+      .select('metadata')
+      .eq('action', action)
+      .eq('target_id', targetId)
+      .order('inserted_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to read the audit log: ${error.message}`,
+      );
+    }
+    return (
+      (data?.metadata as Record<string, unknown> | null | undefined) ?? null
     );
   }
 

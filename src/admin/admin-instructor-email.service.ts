@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import {
   ActivationService,
   normalizeEmail,
@@ -39,6 +40,21 @@ function emailTaken(): ConflictException {
     code: 'email_taken',
     message: 'Another account already uses this email address',
   });
+}
+
+function staleEmail(): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: 'stale_email',
+    message: 'The instructor email address changed after this form was opened',
+  });
+}
+
+function changeKey(instructorId: string, from: string, to: string): string {
+  return createHash('sha256')
+    .update(`${instructorId}\n${from}\n${to}`)
+    .digest('hex');
 }
 
 function refused(code: string, message: string): ForbiddenException {
@@ -76,30 +92,61 @@ export class AdminInstructorEmailService {
     const email = normalizeEmail(dto.email);
     const expected = normalizeEmail(dto.expectedCurrentEmail);
     const current = normalizeEmail(row.email);
+    const key = changeKey(row.id, expected, email);
     if (current === email) {
       if (expected === email) {
         throw new BadRequestException(
           'The instructor already uses this email address',
         );
       }
-      await this.finish(row, email, actor, { resumed: true });
+      if (!(await this.isUnfinished(row.id, key))) {
+        throw staleEmail();
+      }
+      await this.finish(row, email, actor, { resumed: true, changeKey: key });
       return this.admin.getInstructor(id);
     }
     if (expected !== current) {
-      throw new ConflictException({
-        statusCode: 409,
-        error: 'Conflict',
-        code: 'stale_email',
-        message:
-          'The instructor email address changed after this form was opened',
-      });
+      throw staleEmail();
     }
 
     await this.assertAvailable(email, row.auth_user_id);
-    await this.updateAuthEmail(row.auth_user_id, email);
+    if (!(await this.repo.claimInstructorEmail(row.id, row.email, email))) {
+      throw staleEmail();
+    }
+    try {
+      await this.updateAuthEmail(row.auth_user_id, email);
+    } catch (err) {
+      await this.releaseClaim(row, email);
+      throw err;
+    }
     this.notify(row, row.email, email);
-    await this.finish(row, email, actor, { from: redactEmail(row.email) });
+    await this.finish(row, email, actor, {
+      from: redactEmail(row.email),
+      changeKey: key,
+    });
     return this.admin.getInstructor(id);
+  }
+
+  private async isUnfinished(
+    instructorId: string,
+    key: string,
+  ): Promise<boolean> {
+    const last = await this.repo.findLatestAuditMetadata(
+      AUDIT_ACTIONS.instructorEmailChange,
+      instructorId,
+    );
+    return last?.changeKey === key && Array.isArray(last.failed);
+  }
+
+  private async releaseClaim(
+    row: AdminInstructorRow,
+    email: string,
+  ): Promise<void> {
+    try {
+      await this.repo.claimInstructorEmail(row.id, email, row.email);
+    } catch (err) {
+      this.logFailure(row.id, 'restore the instructor email', err);
+    }
   }
 
   private async assertChangeable(

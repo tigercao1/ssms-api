@@ -620,6 +620,64 @@ describe('SupabaseAdminRepository', () => {
     });
   });
 
+  describe('instructor email change', () => {
+    it('claims the instructor email only while it still holds the expected address', async () => {
+      const { client, queries } = recordingSupabase({
+        instructors: [
+          { data: [{ id: 'i1' }], error: null },
+          { data: [], error: null },
+          { data: null, error: { message: 'down' } },
+        ],
+      });
+      const repo = new SupabaseAdminRepository(client);
+
+      await expect(
+        repo.claimInstructorEmail('i1', 'Jane@example.com', 'new@example.com'),
+      ).resolves.toBe(true);
+      await expect(
+        repo.claimInstructorEmail('i1', 'Jane@example.com', 'new@example.com'),
+      ).resolves.toBe(false);
+      await expect(
+        repo.claimInstructorEmail('i1', 'Jane@example.com', 'new@example.com'),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+      expect(queries[0].ops).toEqual([
+        ['update', { email: 'new@example.com' }],
+        ['eq', 'id', 'i1'],
+        ['eq', 'email', 'Jane@example.com'],
+        ['select', 'id'],
+      ]);
+    });
+
+    it('reads the metadata of the newest audit row for an action and target', async () => {
+      const { client, queries } = recordingSupabase({
+        audit_log: [
+          { data: { metadata: { changeKey: 'k' } }, error: null },
+          { data: null, error: null },
+          { data: null, error: { message: 'down' } },
+        ],
+      });
+      const repo = new SupabaseAdminRepository(client);
+
+      await expect(
+        repo.findLatestAuditMetadata('instructor.email_change', 'i1'),
+      ).resolves.toEqual({ changeKey: 'k' });
+      await expect(
+        repo.findLatestAuditMetadata('instructor.email_change', 'i1'),
+      ).resolves.toBeNull();
+      await expect(
+        repo.findLatestAuditMetadata('instructor.email_change', 'i1'),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+      expect(queries[0].ops).toEqual([
+        ['select', 'metadata'],
+        ['eq', 'action', 'instructor.email_change'],
+        ['eq', 'target_id', 'i1'],
+        ['order', 'inserted_at', { ascending: false }],
+        ['limit', 1],
+        ['maybeSingle'],
+      ]);
+    });
+  });
+
   describe('revokeSessions', () => {
     async function buildWithRpc(result: {
       data: unknown;

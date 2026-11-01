@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { AuditEntry } from '../audit/audit.types';
 import { DbResult, ilikeAny, searchTokens } from '../database/db-result';
 import {
   type CountedResult,
@@ -17,6 +18,7 @@ import {
   AdminInstructorListRow,
   AdminInstructorPatch,
   AdminInstructorRow,
+  AuditRecord,
   AuthEmailUpdate,
   AuthUserRole,
   CreateReferenceInput,
@@ -73,10 +75,13 @@ export abstract class AdminRepository {
     fromEmail: string,
     toEmail: string,
   ): Promise<boolean>;
-  abstract findLatestAuditMetadata(
+  abstract findAuthEmail(authUserId: string): Promise<string | null>;
+  abstract recordAudit(entry: AuditEntry): Promise<void>;
+  abstract listAuditEntries(
     action: string,
     targetId: string,
-  ): Promise<Record<string, unknown> | null>;
+    limit: number,
+  ): Promise<AuditRecord[]>;
   /** Apply a core-column patch (approval_status / is_active) and return it. */
   abstract updateInstructor(
     id: string,
@@ -290,26 +295,61 @@ export class SupabaseAdminRepository extends AdminRepository {
     return (data ?? []).length > 0;
   }
 
-  async findLatestAuditMetadata(
+  async findAuthEmail(authUserId: string): Promise<string | null> {
+    const { data, error } =
+      await this.supabase.auth.admin.getUserById(authUserId);
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to read the auth user: ${error.message}`,
+      );
+    }
+    return data.user?.email ?? null;
+  }
+
+  async recordAudit(entry: AuditEntry): Promise<void> {
+    const { error } = await this.supabase.from('audit_log').insert({
+      actor_user_id: entry.actor?.userId ?? null,
+      actor_role: entry.actor?.role ?? null,
+      action: entry.action,
+      target_type: entry.targetType ?? null,
+      target_id: entry.targetId ?? null,
+      metadata: entry.metadata ?? null,
+      ip: entry.actor?.ip ?? null,
+      user_agent: entry.actor?.userAgent ?? null,
+    });
+    if (error) {
+      throw new InternalServerErrorException(
+        `Failed to write the audit log: ${error.message}`,
+      );
+    }
+  }
+
+  async listAuditEntries(
     action: string,
     targetId: string,
-  ): Promise<Record<string, unknown> | null> {
+    limit: number,
+  ): Promise<AuditRecord[]> {
     const { data, error } = await this.supabase
       .from('audit_log')
-      .select('metadata')
+      .select('metadata, inserted_at')
       .eq('action', action)
       .eq('target_id', targetId)
       .order('inserted_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(limit);
     if (error) {
       throw new InternalServerErrorException(
         `Failed to read the audit log: ${error.message}`,
       );
     }
     return (
-      (data?.metadata as Record<string, unknown> | null | undefined) ?? null
-    );
+      (data ?? []) as {
+        metadata: Record<string, unknown> | null;
+        inserted_at: string;
+      }[]
+    ).map((row) => ({
+      metadata: row.metadata ?? {},
+      insertedAt: row.inserted_at,
+    }));
   }
 
   async updateInstructor(

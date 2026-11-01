@@ -7,14 +7,18 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   ActivationService,
   normalizeEmail,
 } from '../activation/activation.service';
 import type { InviteMoveCounts } from '../activation/activation.types';
 import { AuditService } from '../audit/audit.service';
-import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
+import {
+  AUDIT_ACTIONS,
+  type AuditActor,
+  type AuditEntry,
+} from '../audit/audit.types';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService, redactEmail } from '../mailer/mailer.service';
 import { AdminRepository } from './admin.repository';
@@ -28,10 +32,33 @@ import type { UpdateInstructorEmailDto } from './dto/update-instructor-email.dto
 
 type FollowUpStep = 'sessions' | 'invites';
 
+type ChangeStatus =
+  | 'started'
+  | 'stale'
+  | 'aborted'
+  | 'incomplete'
+  | 'completed';
+
+interface EmailChange {
+  expected: string;
+  email: string;
+  key: string;
+  actor: AuditActor;
+}
+
+interface UnfinishedChange {
+  inFlight: boolean;
+  notified: boolean;
+}
+
 const FOLLOW_UP_LABELS: Record<FollowUpStep, string> = {
   sessions: 'signing the instructor out',
   invites: 'moving their invites',
 };
+
+const IN_FLIGHT_MS = 15_000;
+const IN_FLIGHT_POLL_MS = 500;
+const CHANGE_HISTORY_ROWS = 20;
 
 function emailTaken(): ConflictException {
   return new ConflictException({
@@ -66,6 +93,10 @@ function refused(code: string, message: string): ForbiddenException {
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 @Injectable()
 export class AdminInstructorEmailService {
   private readonly logger = new Logger(AdminInstructorEmailService.name);
@@ -83,69 +114,203 @@ export class AdminInstructorEmailService {
     dto: UpdateInstructorEmailDto,
     actor: AuditActor,
   ): Promise<AdminInstructorRecord> {
-    const row = await this.repo.findInstructorById(id);
-    if (!row) {
-      throw new NotFoundException('Instructor not found');
-    }
+    let row = await this.findRow(id);
     await this.assertChangeable(row, actor);
 
     const email = normalizeEmail(dto.email);
     const expected = normalizeEmail(dto.expectedCurrentEmail);
-    const current = normalizeEmail(row.email);
-    const key = changeKey(row.id, expected, email);
-    if (current === email) {
+    const change: EmailChange = {
+      expected,
+      email,
+      key: changeKey(row.id, expected, email),
+      actor,
+    };
+    for (;;) {
+      const current = normalizeEmail(row.email);
+      if (current !== email) {
+        if (expected !== current) {
+          throw staleEmail();
+        }
+        await this.start(row, change);
+        break;
+      }
       if (expected === email) {
         throw new BadRequestException(
           'The instructor already uses this email address',
         );
       }
-      if (!(await this.isUnfinished(row.id, key))) {
+      const unfinished = await this.findUnfinished(row.id, change.key);
+      if (!unfinished) {
         throw staleEmail();
       }
-      await this.finish(row, email, actor, { resumed: true, changeKey: key });
-      return this.admin.getInstructor(id);
+      if (!unfinished.inFlight) {
+        await this.resume(row, change, unfinished.notified);
+        break;
+      }
+      await sleep(IN_FLIGHT_POLL_MS);
+      row = await this.findRow(id);
     }
-    if (expected !== current) {
-      throw staleEmail();
-    }
-
-    await this.assertAvailable(email, row.auth_user_id);
-    if (!(await this.repo.claimInstructorEmail(row.id, row.email, email))) {
-      throw staleEmail();
-    }
-    try {
-      await this.updateAuthEmail(row.auth_user_id, email);
-    } catch (err) {
-      await this.releaseClaim(row, email);
-      throw err;
-    }
-    this.notify(row, row.email, email);
-    await this.finish(row, email, actor, {
-      from: redactEmail(row.email),
-      changeKey: key,
-    });
     return this.admin.getInstructor(id);
   }
 
-  private async isUnfinished(
+  private async start(
+    row: AdminInstructorRow,
+    change: EmailChange,
+  ): Promise<void> {
+    await this.assertAvailable(change.email, row.auth_user_id);
+    const oldEmail =
+      (await this.repo.findAuthEmail(row.auth_user_id)) ?? row.email;
+    const changeId = await this.begin(row, change, {});
+    if (
+      !(await this.repo.claimInstructorEmail(row.id, row.email, change.email))
+    ) {
+      await this.audit.record(this.entry(row, change, changeId, 'stale'));
+      throw staleEmail();
+    }
+    await this.moveAuthEmail(row, change, changeId, row.email);
+    await this.finish(row, change, changeId, oldEmail, {});
+  }
+
+  private async resume(
+    row: AdminInstructorRow,
+    change: EmailChange,
+    notified: boolean,
+  ): Promise<void> {
+    const authEmail = await this.repo.findAuthEmail(row.auth_user_id);
+    const changeId = await this.begin(row, change, { resumed: true });
+    if (normalizeEmail(authEmail ?? '') !== change.email) {
+      await this.moveAuthEmail(
+        row,
+        change,
+        changeId,
+        authEmail ?? change.expected,
+      );
+    }
+    await this.finish(
+      row,
+      change,
+      changeId,
+      notified ? null : change.expected,
+      {
+        resumed: true,
+      },
+    );
+  }
+
+  private async findUnfinished(
     instructorId: string,
     key: string,
-  ): Promise<boolean> {
-    const last = await this.repo.findLatestAuditMetadata(
+  ): Promise<UnfinishedChange | null> {
+    const rows = await this.repo.listAuditEntries(
       AUDIT_ACTIONS.instructorEmailChange,
       instructorId,
+      CHANGE_HISTORY_ROWS,
     );
-    return last?.changeKey === key && Array.isArray(last.failed);
+    const unclaimed = new Set(
+      rows
+        .filter(
+          ({ metadata }) =>
+            metadata.status === 'stale' ||
+            (metadata.status === 'aborted' && metadata.claimRestored === true),
+        )
+        .map(({ metadata }) => metadata.changeId),
+    );
+    const chain: typeof rows = [];
+    for (const row of rows) {
+      if (unclaimed.has(row.metadata.changeId)) {
+        continue;
+      }
+      if (row.metadata.changeKey !== key) {
+        break;
+      }
+      chain.push(row);
+    }
+    const [latest] = chain;
+    if (!latest || latest.metadata.status === 'completed') {
+      return null;
+    }
+    return {
+      inFlight:
+        latest.metadata.status === 'started' &&
+        Date.now() - Date.parse(latest.insertedAt) < IN_FLIGHT_MS,
+      notified: chain.some(({ metadata }) => metadata.status === 'incomplete'),
+    };
+  }
+
+  private async begin(
+    row: AdminInstructorRow,
+    change: EmailChange,
+    metadata: Record<string, unknown>,
+  ): Promise<string> {
+    const changeId = randomUUID();
+    await this.repo.recordAudit(
+      this.entry(row, change, changeId, 'started', metadata),
+    );
+    return changeId;
+  }
+
+  private entry(
+    row: AdminInstructorRow,
+    change: EmailChange,
+    changeId: string,
+    status: ChangeStatus,
+    metadata: Record<string, unknown> = {},
+  ): AuditEntry {
+    return {
+      action: AUDIT_ACTIONS.instructorEmailChange,
+      actor: { ...change.actor, role: 'admin' },
+      targetType: 'instructor',
+      targetId: row.id,
+      metadata: {
+        changeId,
+        changeKey: change.key,
+        status,
+        from: redactEmail(change.expected),
+        to: redactEmail(change.email),
+        ...metadata,
+      },
+    };
+  }
+
+  private async findRow(id: string): Promise<AdminInstructorRow> {
+    const row = await this.repo.findInstructorById(id);
+    if (!row) {
+      throw new NotFoundException('Instructor not found');
+    }
+    return row;
+  }
+
+  private async moveAuthEmail(
+    row: AdminInstructorRow,
+    change: EmailChange,
+    changeId: string,
+    restoreTo: string,
+  ): Promise<void> {
+    try {
+      await this.updateAuthEmail(row.auth_user_id, change.email);
+    } catch (err) {
+      const claimRestored = await this.releaseClaim(
+        row,
+        change.email,
+        restoreTo,
+      );
+      await this.audit.record(
+        this.entry(row, change, changeId, 'aborted', { claimRestored }),
+      );
+      throw err;
+    }
   }
 
   private async releaseClaim(
     row: AdminInstructorRow,
     email: string,
-  ): Promise<void> {
+    restoreTo: string,
+  ): Promise<boolean> {
     try {
-      await this.repo.claimInstructorEmail(row.id, email, row.email);
+      return await this.repo.claimInstructorEmail(row.id, email, restoreTo);
     } catch (err) {
       this.logFailure(row.id, 'restore the instructor email', err);
+      return false;
     }
   }
 
@@ -238,8 +403,9 @@ export class AdminInstructorEmailService {
 
   private async finish(
     row: AdminInstructorRow,
-    email: string,
-    actor: AuditActor,
+    change: EmailChange,
+    changeId: string,
+    oldEmail: string | null,
     metadata: Record<string, unknown>,
   ): Promise<void> {
     const failed: FollowUpStep[] = [];
@@ -252,26 +418,33 @@ export class AdminInstructorEmailService {
       this.logFailure(row.id, 'revoke sessions', err);
     }
     try {
-      invites = await this.activation.moveInvites(row.auth_user_id, email);
+      invites = await this.activation.moveInvites(
+        row.auth_user_id,
+        change.email,
+      );
     } catch (err) {
       failed.push('invites');
       this.logFailure(row.id, 'move invites', err);
     }
+    if (oldEmail !== null) {
+      this.notify(row, oldEmail, change.email);
+    }
 
-    await this.audit.record({
-      action: AUDIT_ACTIONS.instructorEmailChange,
-      actor: { ...actor, role: 'admin' },
-      targetType: 'instructor',
-      targetId: row.id,
-      metadata: {
-        ...metadata,
-        to: redactEmail(email),
-        sessionsRevoked,
-        invitesMoved: invites?.moved ?? null,
-        invitesReissued: invites?.reissued ?? null,
-        ...(failed.length ? { failed } : {}),
-      },
-    });
+    await this.audit.record(
+      this.entry(
+        row,
+        change,
+        changeId,
+        failed.length ? 'incomplete' : 'completed',
+        {
+          ...metadata,
+          sessionsRevoked,
+          invitesMoved: invites?.moved ?? null,
+          invitesReissued: invites?.reissued ?? null,
+          ...(failed.length ? { failed } : {}),
+        },
+      ),
+    );
 
     if (failed.length) {
       throw new InternalServerErrorException({

@@ -10,7 +10,6 @@ import {
   INSTRUCTOR_AUTH,
   startAdminApp,
 } from '../../test/helpers/admin-http';
-import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import {
   InMemoryInvitesRepository,
   InMemoryResendCooldownRepository,
@@ -35,6 +34,7 @@ import { AdminService } from './admin.service';
 import type {
   AdminInstructorRecord,
   AdminInstructorRow,
+  AuditRecord,
   AuthEmailUpdate,
   UserRole,
 } from './admin.types';
@@ -72,6 +72,40 @@ function makeRow(over: Partial<AdminInstructorRow> = {}): AdminInstructorRow {
   };
 }
 
+class TimedAudit {
+  readonly entries: AuditEntry[] = [];
+  private readonly times = new Map<AuditEntry, number>();
+
+  record(entry: AuditEntry): Promise<void> {
+    this.entries.push(entry);
+    this.times.set(entry, Date.now());
+    return Promise.resolve();
+  }
+
+  listed(action: string, targetId: string): AuditRecord[] {
+    return this.entries
+      .filter((e) => e.action === action && e.targetId === targetId)
+      .reverse()
+      .map((e) => ({
+        metadata: e.metadata ?? {},
+        insertedAt: new Date(this.times.get(e)!).toISOString(),
+      }));
+  }
+
+  age(ms: number): void {
+    for (const [entry, time] of this.times) {
+      this.times.set(entry, time - ms);
+    }
+  }
+
+  changes(status?: string): Record<string, unknown>[] {
+    return this.entries
+      .filter((e) => e.action === 'instructor.email_change')
+      .map((e) => e.metadata ?? {})
+      .filter((m) => status === undefined || m.status === status);
+  }
+}
+
 class InMemoryAuthRepository {
   readonly rows = new Map<string, AdminInstructorRow>();
   readonly users = new Map<string, { email: string; role: UserRole | null }>();
@@ -79,8 +113,9 @@ class InMemoryAuthRepository {
   readonly calls: string[] = [];
   updateResult: AuthEmailUpdate | null = null;
   revokeError: Error | null = null;
+  auditError: Error | null = null;
 
-  constructor(private readonly audits: AuditEntry[] = []) {}
+  constructor(private readonly audit: TimedAudit) {}
 
   findInstructorById(id: string): Promise<AdminInstructorRow | null> {
     const row = this.rows.get(id);
@@ -92,6 +127,10 @@ class InMemoryAuthRepository {
     return Promise.resolve(
       user ? { found: true, role: user.role } : { found: false, role: null },
     );
+  }
+
+  findAuthEmail(authUserId: string): Promise<string | null> {
+    return Promise.resolve(this.users.get(authUserId)?.email ?? null);
   }
 
   findAuthUserIdByEmail(email: string): Promise<string | null> {
@@ -136,14 +175,19 @@ class InMemoryAuthRepository {
     return Promise.resolve(true);
   }
 
-  findLatestAuditMetadata(
+  recordAudit(entry: AuditEntry): Promise<void> {
+    if (this.auditError) {
+      return Promise.reject(this.auditError);
+    }
+    return this.audit.record(entry);
+  }
+
+  listAuditEntries(
     action: string,
     targetId: string,
-  ): Promise<Record<string, unknown> | null> {
-    const last = this.audits
-      .filter((e) => e.action === action && e.targetId === targetId)
-      .at(-1);
-    return Promise.resolve(last?.metadata ?? null);
+    limit: number,
+  ): Promise<AuditRecord[]> {
+    return Promise.resolve(this.audit.listed(action, targetId).slice(0, limit));
   }
 
   revokeSessions(authUserId: string): Promise<number> {
@@ -161,8 +205,8 @@ async function build({
   row = makeRow(),
   role = null,
 }: { row?: AdminInstructorRow; role?: UserRole | null } = {}) {
-  const audit = recordingAudit();
-  const repo = new InMemoryAuthRepository(audit.entries);
+  const audit = new TimedAudit();
+  const repo = new InMemoryAuthRepository(audit);
   repo.rows.set(row.id, row);
   repo.users.set(row.auth_user_id, { email: row.email, role });
   repo.users.set(OTHER_AUTH_ID, { email: 'Taken@Example.org', role: 'admin' });
@@ -209,7 +253,7 @@ async function build({
       ],
     }),
   );
-  return { app, repo, mails, audit, invites, activation };
+  return { app, repo, mails, mailer, audit, invites, activation };
 }
 
 function seedInvite(
@@ -252,8 +296,83 @@ function meetInPairs<A extends unknown[], R>(
   };
 }
 
+type Ctx = Awaited<ReturnType<typeof build>>;
+
+interface Crash {
+  part: 'repo' | 'audit' | 'activation';
+  method: string;
+  when: 'before' | 'after';
+  call?: number;
+}
+
+const LONG_AGO_MS = 60 * 60 * 1000;
+
+function startDyingChange(ctx: Ctx, crash: Crash): Promise<void> {
+  let died!: () => void;
+  const dead = new Promise<void>((resolve) => {
+    died = resolve;
+  });
+  const never = new Promise<never>(() => undefined);
+  let gone = false;
+  let calls = 0;
+  const wrap = <T extends object>(part: Crash['part'], target: T): T =>
+    new Proxy(target, {
+      get(obj, prop, receiver) {
+        const value: unknown = Reflect.get(obj, prop, receiver);
+        if (typeof value !== 'function') {
+          return value;
+        }
+        return async (...args: unknown[]) => {
+          if (gone) {
+            return never;
+          }
+          const hit =
+            part === crash.part &&
+            prop === crash.method &&
+            ++calls === (crash.call ?? 1);
+          if (hit && crash.when === 'before') {
+            gone = true;
+            died();
+            return never;
+          }
+          const result: unknown = await (
+            value as (...a: unknown[]) => Promise<unknown>
+          ).apply(obj, args);
+          if (hit) {
+            gone = true;
+            died();
+            return never;
+          }
+          return result;
+        };
+      },
+    });
+  const service = new AdminInstructorEmailService(
+    wrap('repo', ctx.repo) as unknown as AdminRepository,
+    ctx.app.get(AdminService),
+    wrap('activation', ctx.activation),
+    wrap('audit', ctx.audit) as unknown as AuditService,
+    ctx.mailer as unknown as MailerService,
+  );
+  service
+    .changeEmail(
+      INSTRUCTOR_ID,
+      { email: NEW, expectedCurrentEmail: OLD },
+      { userId: ADMIN_ID, role: 'admin', userAgent: null },
+    )
+    .catch(() => undefined);
+  return dead;
+}
+
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let n = 0; n < 200 && !check(); n++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(check()).toBe(true);
+}
+
 describe('PATCH /admin/instructors/:id/email', () => {
-  let ctx: Awaited<ReturnType<typeof build>>;
+  let ctx: Ctx;
   const patch = (
     body: Record<string, unknown>,
     { id = INSTRUCTOR_ID, auth = ADMIN_AUTH } = {},
@@ -338,22 +457,36 @@ describe('PATCH /admin/instructors/:id/email', () => {
         },
       }),
     ]);
+    const attempt = {
+      changeId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown,
+      changeKey: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown,
+      from: 'j***e@example.com',
+      to: 'j***w@example.org',
+    };
     expect(ctx.audit.entries).toEqual([
       {
         action: 'instructor.email_change',
         actor: { userId: ADMIN_ID, role: 'admin', userAgent: null },
         targetType: 'instructor',
         targetId: INSTRUCTOR_ID,
+        metadata: { ...attempt, status: 'started' },
+      },
+      {
+        action: 'instructor.email_change',
+        actor: { userId: ADMIN_ID, role: 'admin', userAgent: null },
+        targetType: 'instructor',
+        targetId: INSTRUCTOR_ID,
         metadata: {
-          from: 'j***e@example.com',
-          to: 'j***w@example.org',
-          changeKey: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown,
+          ...attempt,
+          status: 'completed',
           sessionsRevoked: 2,
           invitesMoved: 0,
           invitesReissued: 0,
         },
       },
     ]);
+    const [started, completed] = ctx.audit.changes();
+    expect(completed.changeId).toBe(started.changeId);
     expect(JSON.stringify(ctx.audit.entries)).not.toContain(NEW);
   });
 
@@ -380,10 +513,9 @@ describe('PATCH /admin/instructors/:id/email', () => {
     expect(new Date(stored.expires_at!).getTime()).toBeGreaterThan(
       Date.now() + 29 * DAY_MS,
     );
-    expect(ctx.audit.entries[0].metadata).toMatchObject({
-      invitesMoved: 1,
-      invitesReissued: 1,
-    });
+    expect(ctx.audit.changes('completed')).toEqual([
+      expect.objectContaining({ invitesMoved: 1, invitesReissued: 1 }),
+    ]);
   });
 
   it('moves an unsent invite and kills the link of an activated one without emailing either', async () => {
@@ -444,10 +576,9 @@ describe('PATCH /admin/instructors/:id/email', () => {
     expect(ctx.invites.rows.get(older.id)?.token_hash).not.toBe(
       older.token_hash,
     );
-    expect(ctx.audit.entries[0].metadata).toMatchObject({
-      invitesMoved: 2,
-      invitesReissued: 1,
-    });
+    expect(ctx.audit.changes('completed')).toEqual([
+      expect.objectContaining({ invitesMoved: 2, invitesReissued: 1 }),
+    ]);
   });
 
   it('returns 409 email_taken when another account holds the address in any case, changing nothing', async () => {
@@ -465,10 +596,13 @@ describe('PATCH /admin/instructors/:id/email', () => {
     const res = await change().expect(409);
     expect(res.body).toMatchObject({ code: 'email_taken' });
     expect(ctx.mails).toEqual([]);
-    expect(ctx.audit.entries).toEqual([]);
+    expect(ctx.audit.changes().map((m) => m.status)).toEqual([
+      'started',
+      'aborted',
+    ]);
   });
 
-  it('passes other GoTrue failures through without notifying or auditing', async () => {
+  it('passes other GoTrue failures through without notifying, and audits the attempt as aborted', async () => {
     ctx = await build();
     jest
       .spyOn(ctx.repo, 'updateAuthEmail')
@@ -478,7 +612,14 @@ describe('PATCH /admin/instructors/:id/email', () => {
     await change().expect(400);
     expect(ctx.repo.calls).not.toContain('revokeSessions');
     expect(ctx.mails).toEqual([]);
-    expect(ctx.audit.entries).toEqual([]);
+    expect(ctx.audit.changes().map((m) => [m.status, m.claimRestored])).toEqual(
+      [
+        ['started', undefined],
+        ['aborted', true],
+        ['started', undefined],
+        ['aborted', true],
+      ],
+    );
   });
 
   it('carries on as a change when GoTrue answers with an error but applied it', async () => {
@@ -505,10 +646,12 @@ describe('PATCH /admin/instructors/:id/email', () => {
       'email_changed.old_address',
       'email_changed.new_address',
     ]);
-    expect(ctx.audit.entries[0].metadata).toMatchObject({
-      from: 'j***e@example.com',
-      sessionsRevoked: 2,
-    });
+    expect(ctx.audit.changes('completed')).toEqual([
+      expect.objectContaining({
+        from: 'j***e@example.com',
+        sessionsRevoked: 2,
+      }),
+    ]);
   });
 
   it('returns 409 email_taken when GoTrue fails because the address was taken meanwhile', async () => {
@@ -556,7 +699,8 @@ describe('PATCH /admin/instructors/:id/email', () => {
       failed: ['sessions'],
     });
     expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(NEW);
-    expect(ctx.audit.entries[0].metadata).toMatchObject({
+    const [incomplete] = ctx.audit.changes('incomplete');
+    expect(incomplete).toMatchObject({
       sessionsRevoked: null,
       invitesMoved: 1,
       failed: ['sessions'],
@@ -572,14 +716,27 @@ describe('PATCH /admin/instructors/:id/email', () => {
       ctx.repo.calls.filter((c) => c.startsWith('updateAuthEmail')),
     ).toEqual([`updateAuthEmail ${NEW}`]);
     expect(ctx.mails).toHaveLength(mailsAfterFirst);
-    expect(ctx.audit.entries[1].metadata).toEqual({
-      resumed: true,
-      changeKey: ctx.audit.entries[0].metadata?.changeKey,
-      to: 'j***w@example.org',
-      sessionsRevoked: 2,
-      invitesMoved: 0,
-      invitesReissued: 0,
-    });
+    expect(ctx.audit.changes().slice(2)).toEqual([
+      {
+        changeId: expect.any(String) as unknown,
+        changeKey: incomplete.changeKey,
+        status: 'started',
+        from: 'j***e@example.com',
+        to: 'j***w@example.org',
+        resumed: true,
+      },
+      {
+        changeId: expect.any(String) as unknown,
+        changeKey: incomplete.changeKey,
+        status: 'completed',
+        from: 'j***e@example.com',
+        to: 'j***w@example.org',
+        resumed: true,
+        sessionsRevoked: 2,
+        invitesMoved: 0,
+        invitesReissued: 0,
+      },
+    ]);
   });
 
   it('keeps the old invite link dead while moving invites failed, and re-issues it on retry', async () => {
@@ -604,11 +761,13 @@ describe('PATCH /admin/instructors/:id/email', () => {
         email: NEW,
       },
     );
-    expect(ctx.audit.entries[1].metadata).toMatchObject({
-      resumed: true,
-      invitesMoved: 1,
-      invitesReissued: 1,
-    });
+    expect(ctx.audit.changes('completed')).toEqual([
+      expect.objectContaining({
+        resumed: true,
+        invitesMoved: 1,
+        invitesReissued: 1,
+      }),
+    ]);
   });
 
   describe('when two requests read the same address at once', () => {
@@ -665,16 +824,20 @@ describe('PATCH /admin/instructors/:id/email', () => {
         `updateAuthEmail ${winner}`,
         'revokeSessions',
       ]);
-      expect(ctx.mails.map((m) => [m.template, m.to])).toEqual([
-        ['email_changed.old_address', OLD],
+      expect(ctx.mails.map((m) => [m.template, m.to]).sort()).toEqual([
         ['email_changed.new_address', winner],
+        ['email_changed.old_address', OLD],
         ['invite.season', winner],
       ]);
-      expect(ctx.audit.entries).toHaveLength(1);
-      expect(ctx.audit.entries[0].metadata).toMatchObject({
-        to: redactEmail(winner),
-        invitesReissued: 1,
-      });
+      expect(ctx.audit.changes('completed')).toEqual([
+        expect.objectContaining({
+          to: redactEmail(winner),
+          invitesReissued: 1,
+        }),
+      ]);
+      expect(ctx.audit.changes('stale')).toEqual([
+        expect.objectContaining({ to: redactEmail(winner === A ? B : A) }),
+      ]);
     });
 
     it('applies the same change sent twice only once, and refuses a later repeat', async () => {
@@ -692,12 +855,15 @@ describe('PATCH /admin/instructors/:id/email', () => {
         `updateAuthEmail ${NEW}`,
         'revokeSessions',
       ]);
-      expect(ctx.mails.map((m) => m.template)).toEqual([
-        'email_changed.old_address',
+      expect(ctx.mails.map((m) => m.template).sort()).toEqual([
         'email_changed.new_address',
+        'email_changed.old_address',
         'invite.season',
       ]);
-      expect(ctx.audit.entries).toHaveLength(1);
+      expect(ctx.audit.changes().map((m) => m.status)).toEqual(
+        expect.arrayContaining(['started', 'started', 'stale', 'completed']),
+      );
+      expect(ctx.audit.changes()).toHaveLength(4);
     });
   });
 
@@ -725,12 +891,17 @@ describe('PATCH /admin/instructors/:id/email', () => {
     }
     expect(ctx.repo.calls).toEqual(callsAfterFirst);
     expect(ctx.repo.sessions.get(AUTH_ID)).toBe(2);
-    expect(ctx.audit.entries).toHaveLength(1);
+    expect(ctx.audit.changes()).toHaveLength(2);
 
     await change().expect(200);
     expect(ctx.repo.sessions.get(AUTH_ID)).toBe(0);
     await change().expect(409);
-    expect(ctx.audit.entries).toHaveLength(2);
+    expect(ctx.audit.changes().map((m) => m.status)).toEqual([
+      'started',
+      'incomplete',
+      'started',
+      'completed',
+    ]);
   });
 
   it('puts the instructor email back when GoTrue refuses or fails the change', async () => {
@@ -748,5 +919,201 @@ describe('PATCH /admin/instructors/:id/email', () => {
 
     await change().expect(200);
     expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(NEW);
+  });
+
+  describe('when the API process died part way through a change', () => {
+    async function expectFinished(notices: number) {
+      expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(NEW);
+      expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(NEW);
+      expect([...ctx.invites.rows.values()].map((i) => i.email)).toEqual([NEW]);
+      expect(ctx.repo.sessions.get(AUTH_ID)).toBe(0);
+      expect(ctx.audit.changes('completed')).toHaveLength(1);
+      const sent = (template: string) =>
+        ctx.mails.filter((m) => m.template === template);
+      expect(sent('email_changed.old_address').map((m) => m.to)).toEqual(
+        Array<string>(notices).fill(OLD),
+      );
+      expect(sent('email_changed.new_address').map((m) => m.to)).toEqual(
+        Array<string>(notices).fill(NEW),
+      );
+      const [invite] = sent('invite.season');
+      expect(sent('invite.season')).toHaveLength(1);
+      await expect(ctx.activation.redeem(OLD_TOKEN)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(
+        ctx.activation.redeem(tokenOf(invite)),
+      ).resolves.toMatchObject({ email: NEW });
+    }
+
+    beforeEach(async () => {
+      ctx = await build();
+      seedInvite(ctx.invites);
+    });
+
+    it.each<[string, Crash, { gotrueFails?: boolean; notices?: number }]>([
+      [
+        'after writing the intent, before the claim',
+        { part: 'repo', method: 'recordAudit', when: 'after' },
+        {},
+      ],
+      [
+        'after the claim, before GoTrue',
+        { part: 'repo', method: 'claimInstructorEmail', when: 'after' },
+        {},
+      ],
+      [
+        'after GoTrue, before signing out',
+        { part: 'repo', method: 'updateAuthEmail', when: 'after' },
+        {},
+      ],
+      [
+        'after GoTrue failed, before putting the claim back',
+        {
+          part: 'repo',
+          method: 'claimInstructorEmail',
+          when: 'before',
+          call: 2,
+        },
+        { gotrueFails: true },
+      ],
+      [
+        'after putting the claim back, before auditing it',
+        {
+          part: 'repo',
+          method: 'claimInstructorEmail',
+          when: 'after',
+          call: 2,
+        },
+        { gotrueFails: true },
+      ],
+      [
+        'after signing out, before moving invites',
+        { part: 'repo', method: 'revokeSessions', when: 'after' },
+        {},
+      ],
+      [
+        'after moving invites and notifying, before the closing audit row',
+        { part: 'audit', method: 'record', when: 'before' },
+        { notices: 2 },
+      ],
+    ])(
+      'finishes the change on an identical retry when it died %s',
+      async (_, crash, { gotrueFails, notices = 1 }) => {
+        if (gotrueFails) {
+          jest
+            .spyOn(ctx.repo, 'updateAuthEmail')
+            .mockRejectedValueOnce(
+              new InternalServerErrorException('gotrue down'),
+            );
+        }
+        await startDyingChange(ctx, crash);
+        ctx.audit.age(LONG_AGO_MS);
+
+        const res = await change().expect(200);
+
+        expect((res.body as AdminInstructorRecord).email).toBe(NEW);
+        await expectFinished(notices);
+      },
+    );
+
+    it('waits out a change that may still be in flight, then finishes it', async () => {
+      await startDyingChange(ctx, {
+        part: 'repo',
+        method: 'claimInstructorEmail',
+        when: 'after',
+      });
+      const reads = jest.spyOn(ctx.repo, 'listAuditEntries');
+
+      const retry = change().then((res) => res);
+      await waitFor(() => reads.mock.calls.length > 0);
+      expect(ctx.repo.calls).toEqual([]);
+      ctx.audit.age(LONG_AGO_MS);
+
+      expect((await retry).status).toBe(200);
+      await expectFinished(1);
+    });
+
+    it('lets a new change from the address shown win over the dead one, and refuses the dead one afterwards', async () => {
+      const THIRD = 'jane.third@example.org';
+      await startDyingChange(ctx, {
+        part: 'repo',
+        method: 'claimInstructorEmail',
+        when: 'after',
+      });
+
+      await change(THIRD, NEW).expect(200);
+
+      expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(THIRD);
+      expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(THIRD);
+      expect([...ctx.invites.rows.values()].map((i) => i.email)).toEqual([
+        THIRD,
+      ]);
+      expect(ctx.repo.sessions.get(AUTH_ID)).toBe(0);
+      expect(
+        ctx.mails
+          .filter((m) => m.template.startsWith('email_changed'))
+          .map((m) => [m.template, m.to]),
+      ).toEqual([
+        ['email_changed.old_address', OLD],
+        ['email_changed.new_address', THIRD],
+      ]);
+
+      ctx.audit.age(LONG_AGO_MS);
+      const stale = await change().expect(409);
+      expect(stale.body).toMatchObject({ code: 'stale_email' });
+      expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(THIRD);
+    });
+  });
+
+  it('refuses a duplicate that arrives while the same change is still running, once it finishes', async () => {
+    ctx = await build();
+    seedInvite(ctx.invites);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const update = ctx.repo.updateAuthEmail.bind(
+      ctx.repo,
+    ) as InMemoryAuthRepository['updateAuthEmail'];
+    jest
+      .spyOn(ctx.repo, 'updateAuthEmail')
+      .mockImplementationOnce(async (authUserId: string, email: string) => {
+        await held;
+        return update(authUserId, email);
+      });
+    const reads = jest.spyOn(ctx.repo, 'listAuditEntries');
+
+    const first = change().then((res) => res);
+    await waitFor(() => ctx.repo.rows.get(INSTRUCTOR_ID)?.email === NEW);
+    const second = change().then((res) => res);
+    await waitFor(() => reads.mock.calls.length > 0);
+    release();
+
+    expect((await first).status).toBe(200);
+    const duplicate = await second;
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body).toMatchObject({ code: 'stale_email' });
+    expect(ctx.mails.map((m) => m.template).sort()).toEqual([
+      'email_changed.new_address',
+      'email_changed.old_address',
+      'invite.season',
+    ]);
+    expect(ctx.audit.changes().map((m) => m.status)).toEqual([
+      'started',
+      'completed',
+    ]);
+  });
+
+  it('changes nothing when the intent cannot be written first', async () => {
+    ctx = await build();
+    ctx.repo.auditError = new InternalServerErrorException('audit down');
+
+    await change().expect(500);
+
+    expect(ctx.repo.rows.get(INSTRUCTOR_ID)?.email).toBe(OLD);
+    expect(ctx.repo.users.get(AUTH_ID)?.email).toBe(OLD);
+    expect(ctx.repo.calls).toEqual([]);
+    expect(ctx.mails).toEqual([]);
   });
 });

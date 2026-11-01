@@ -618,6 +618,25 @@ describe('SupabaseAdminRepository', () => {
         repo.updateAuthEmail('u1', 'a@example.com'),
       ).rejects.toBeInstanceOf(InternalServerErrorException);
     });
+    it('reads the auth email of a user, and 500 when GoTrue fails', async () => {
+      const getUserById = jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: { user: { email: 'jane@example.com' } },
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          data: { user: null },
+          error: { message: 'x' },
+        });
+      const repo = await buildWithAuth({ getUserById });
+
+      await expect(repo.findAuthEmail('u1')).resolves.toBe('jane@example.com');
+      expect(getUserById).toHaveBeenCalledWith('u1');
+      await expect(repo.findAuthEmail('u1')).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+    });
   });
 
   describe('instructor email change', () => {
@@ -648,32 +667,73 @@ describe('SupabaseAdminRepository', () => {
       ]);
     });
 
-    it('reads the metadata of the newest audit row for an action and target', async () => {
+    it('appends an audit row and fails loudly when it cannot', async () => {
       const { client, queries } = recordingSupabase({
         audit_log: [
-          { data: { metadata: { changeKey: 'k' } }, error: null },
           { data: null, error: null },
+          { data: null, error: { message: 'down' } },
+        ],
+      });
+      const repo = new SupabaseAdminRepository(client);
+      const entry = {
+        action: 'instructor.email_change' as const,
+        actor: { userId: 'admin-1', role: 'admin' as const, userAgent: 'ua' },
+        targetType: 'instructor' as const,
+        targetId: 'i1',
+        metadata: { status: 'started' },
+      };
+
+      await expect(repo.recordAudit(entry)).resolves.toBeUndefined();
+      await expect(repo.recordAudit(entry)).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+      expect(queries[0].ops).toEqual([
+        [
+          'insert',
+          {
+            actor_user_id: 'admin-1',
+            actor_role: 'admin',
+            action: 'instructor.email_change',
+            target_type: 'instructor',
+            target_id: 'i1',
+            metadata: { status: 'started' },
+            ip: null,
+            user_agent: 'ua',
+          },
+        ],
+      ]);
+    });
+
+    it('lists the newest audit rows for an action and target with their time', async () => {
+      const { client, queries } = recordingSupabase({
+        audit_log: [
+          {
+            data: [
+              { metadata: { status: 'completed' }, inserted_at: 't2' },
+              { metadata: null, inserted_at: 't1' },
+            ],
+            error: null,
+          },
           { data: null, error: { message: 'down' } },
         ],
       });
       const repo = new SupabaseAdminRepository(client);
 
       await expect(
-        repo.findLatestAuditMetadata('instructor.email_change', 'i1'),
-      ).resolves.toEqual({ changeKey: 'k' });
+        repo.listAuditEntries('instructor.email_change', 'i1', 20),
+      ).resolves.toEqual([
+        { metadata: { status: 'completed' }, insertedAt: 't2' },
+        { metadata: {}, insertedAt: 't1' },
+      ]);
       await expect(
-        repo.findLatestAuditMetadata('instructor.email_change', 'i1'),
-      ).resolves.toBeNull();
-      await expect(
-        repo.findLatestAuditMetadata('instructor.email_change', 'i1'),
+        repo.listAuditEntries('instructor.email_change', 'i1', 20),
       ).rejects.toBeInstanceOf(InternalServerErrorException);
       expect(queries[0].ops).toEqual([
-        ['select', 'metadata'],
+        ['select', 'metadata, inserted_at'],
         ['eq', 'action', 'instructor.email_change'],
         ['eq', 'target_id', 'i1'],
         ['order', 'inserted_at', { ascending: false }],
-        ['limit', 1],
-        ['maybeSingle'],
+        ['limit', 20],
       ]);
     });
   });

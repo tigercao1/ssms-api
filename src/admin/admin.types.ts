@@ -20,6 +20,11 @@ export interface AuthUserRole {
 
 export type AuthEmailUpdate = 'updated' | 'taken' | 'invalid';
 
+export interface AuditRecord {
+  metadata: Record<string, unknown>;
+  insertedAt: string;
+}
+
 export interface CurrentUserRoleRecord {
   role: UserRole;
 }

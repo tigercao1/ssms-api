@@ -1054,6 +1054,41 @@ describe('PATCH /admin/instructors/:id/email', () => {
       },
     );
 
+    it.each<[string, Crash, boolean]>([
+      [
+        'after writing the intent',
+        { part: 'repo', method: 'recordAudit', when: 'after' },
+        false,
+      ],
+      [
+        'after putting the claim back',
+        {
+          part: 'repo',
+          method: 'claimInstructorEmail',
+          when: 'after',
+          call: 2,
+        },
+        true,
+      ],
+    ])(
+      'does not wait for the dead attempt when the identical retry comes right after it died %s',
+      async (_, crash, gotrueFails) => {
+        if (gotrueFails) {
+          jest
+            .spyOn(ctx.repo, 'updateAuthEmail')
+            .mockRejectedValueOnce(
+              new InternalServerErrorException('gotrue down'),
+            );
+        }
+        await startDyingChange(ctx, crash);
+
+        await change().expect(200);
+
+        await expectFinished(1);
+        expect(ctx.audit.changes('superseding')).toHaveLength(1);
+      },
+    );
+
     it('waits out a change that may still be in flight, then finishes it', async () => {
       await startDyingChange(ctx, {
         part: 'repo',

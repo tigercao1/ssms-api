@@ -277,25 +277,27 @@ export class AdminInstructorEmailService {
       ({ metadata }) =>
         metadata.changeId === changeId && metadata.status === 'started',
     );
-    const supersedes = history
-      .filter(
-        ({ metadata }, index) =>
-          metadata.status === 'started' &&
-          metadata.changeId !== changeId &&
-          isOpen(latestOf(history, metadata.changeId)) &&
-          (resumed
-            ? index > mine && metadata.changeKey === change.key
-            : index > mine || metadata.resumed === true),
-      )
-      .map(({ metadata }) => metadata.changeId);
-    if (!supersedes.length) {
+    const older = history.filter(
+      ({ metadata }, index) =>
+        metadata.status === 'started' &&
+        metadata.changeId !== changeId &&
+        isOpen(latestOf(history, metadata.changeId)) &&
+        (resumed
+          ? index > mine && metadata.changeKey === change.key
+          : index > mine || metadata.resumed === true),
+    );
+    if (!older.length) {
       return;
     }
+    const supersedes = older.map(({ metadata }) => metadata.changeId);
+    const otherChanges = older
+      .filter(({ metadata }) => metadata.changeKey !== change.key)
+      .map(({ metadata }) => metadata.changeId);
     const superseding = () =>
       this.entry(row, change, changeId, 'superseding', { supersedes });
     await this.repo.recordAudit(superseding());
     let waited = false;
-    while (supersedes.some((id) => isRunning(latestOf(history, id)))) {
+    while (otherChanges.some((id) => isRunning(latestOf(history, id)))) {
       waited = true;
       await sleep(IN_FLIGHT_POLL_MS);
       history = await this.assertCurrent(row, change, changeId);

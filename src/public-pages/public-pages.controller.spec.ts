@@ -24,14 +24,11 @@ import {
 import { PublicPagesController } from './public-pages.controller';
 import { PublicPagesRepository } from './public-pages.repository';
 import { PAGE_CONFLICT, PublicPagesService } from './public-pages.service';
-import {
-  PAGE_CONTENT_MAX_BYTES,
-  type PublicPage,
-  type PublicPageRow,
-} from './public-pages.types';
+import type { PublicPage, PublicPageRow } from './public-pages.types';
 
 const ADMIN_ID = '7d0f8a1e-5b2c-4e3d-9a8b-1c2d3e4f5a6b';
 const UNKNOWN_ID = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
+const MIB = 1024 * 1024;
 
 class FakeJwtGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -269,22 +266,35 @@ describe('/admin/pages', () => {
       ]);
     });
 
-    it('accepts exactly 2 MiB', async () => {
+    it('accepts exactly 10 MiB', async () => {
       const page = await createPage();
-      const res = await upload(
-        page.id,
-        Buffer.alloc(PAGE_CONTENT_MAX_BYTES, 'a'),
-      ).expect(200);
-      expect((res.body as PublicPage).sizeBytes).toBe(PAGE_CONTENT_MAX_BYTES);
+      const res = await upload(page.id, Buffer.alloc(10 * MIB, 'a')).expect(
+        200,
+      );
+      expect((res.body as PublicPage).sizeBytes).toBe(10 * MIB);
+      expect(ctx.storage.objects.get('drafts/winter-rates.html')).toHaveLength(
+        10 * MIB,
+      );
     });
 
-    it('returns 413 above 2 MiB without touching the Worker', async () => {
+    it('accepts a page over the previous 2 MiB limit', async () => {
       const page = await createPage();
-      const res = await upload(
-        page.id,
-        Buffer.alloc(PAGE_CONTENT_MAX_BYTES + 1, 'a'),
-      ).expect(413);
-      expect(res.body).toMatchObject({ statusCode: 413 });
+      const res = await upload(page.id, Buffer.alloc(2 * MIB + 1, 'a')).expect(
+        200,
+      );
+      expect((res.body as PublicPage).sizeBytes).toBe(2 * MIB + 1);
+    });
+
+    it('returns 413 above 10 MiB without touching the Worker', async () => {
+      const page = await createPage();
+      const res = await upload(page.id, Buffer.alloc(10 * MIB + 1, 'a')).expect(
+        413,
+      );
+      expect(res.body).toEqual({
+        statusCode: 413,
+        error: 'Payload Too Large',
+        message: 'Page content must be at most 10485760 bytes',
+      });
       expect(ctx.storage.calls).toEqual([]);
     });
 

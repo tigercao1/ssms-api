@@ -237,7 +237,7 @@ describe('PublicPagesService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('rejects a body above 2 MiB with 413', async () => {
+    it('rejects a body above 10 MiB with 413', async () => {
       const { service, storage } = build();
       const page = await service.create('faq', 'FAQ', actor);
       await expect(

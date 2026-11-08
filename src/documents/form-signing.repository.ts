@@ -26,7 +26,6 @@ export const FORM_COPY_EMAIL_LIMITS = {
   globalWindowSeconds: 60,
 } as const;
 
-/** A signed form assignment, written once the signed copy is stored. */
 export type NewSignedFormAssignment = DocumentAssignmentWrite & {
   id: string;
   template_id: string;
@@ -41,14 +40,11 @@ interface FormTemplateRow {
   title_zh: string | null;
 }
 
-/** Data access for signing `form` templates on the public waiver page. */
 export abstract class FormSigningRepository {
-  /** The form's newest published version in `language`; null for an unknown slug or no such version. */
   abstract findPublished(
     slug: string,
     language: DocumentLanguage,
   ): Promise<PublishedForm | null>;
-  /** The customer a signature with this email is filed under, created when none matches. */
   abstract customerForEmail(
     email: string,
     firstName: string | null,
@@ -57,7 +53,6 @@ export abstract class FormSigningRepository {
   abstract insertSigned(
     row: NewSignedFormAssignment,
   ): Promise<DocumentAssignmentRow>;
-  /** Records a signed-copy email to this address hash; false when {@link FORM_COPY_EMAIL_LIMITS} is reached. */
   abstract claimCopyEmail(emailHash: string): Promise<boolean>;
 }
 

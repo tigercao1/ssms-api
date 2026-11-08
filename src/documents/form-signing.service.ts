@@ -54,12 +54,6 @@ function splitName(full: string): [string, string | null] {
   return at > 0 ? [full.slice(0, at), full.slice(at + 1)] : [full, null];
 }
 
-/**
- * Public, no-login signing of `form` templates (customer waivers). A signature
- * is filed under the customer with the signer's email, created when none
- * matches; the signed PDF is rendered inside {@link PdfWorkQueue}, stored in
- * the private bucket and emailed to the signer.
- */
 @Injectable()
 export class FormSigningService {
   private readonly logger = new Logger(FormSigningService.name);
@@ -71,7 +65,6 @@ export class FormSigningService {
     private readonly notifications: DocumentNotificationsService,
   ) {}
 
-  /** `GET /sign/forms/:slug`: the newest published version, in the other language when `lang` has none. */
   async get(slug: string, lang: DocumentLanguage): Promise<PublicForm> {
     const other: DocumentLanguage = lang === 'en' ? 'zh' : 'en';
     const form =
@@ -90,7 +83,6 @@ export class FormSigningService {
     };
   }
 
-  /** `POST /sign/forms/:slug/complete`. */
   async complete(
     slug: string,
     dto: CompleteFormDto,

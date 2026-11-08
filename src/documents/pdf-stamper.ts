@@ -376,7 +376,6 @@ export function auditRows(audit: StampAudit): [string, string][] {
   ];
 }
 
-/** Appends the bilingual signature record pages to `doc`. */
 export function drawAuditPage(
   doc: PDFDocument,
   font: PDFFont,

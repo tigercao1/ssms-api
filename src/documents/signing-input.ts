@@ -57,7 +57,6 @@ export function isValidDate(value: string): boolean {
   );
 }
 
-/** Decodes a base64 or `data:image/png;base64,` PNG of at most {@link MAX_SIGNATURE_PNG_BYTES}. */
 export function decodeSignaturePng(name: string, encoded: unknown): Uint8Array {
   if (typeof encoded !== 'string') {
     throw new SigningInputError(`Signature ${name} needs a base64 PNG`);

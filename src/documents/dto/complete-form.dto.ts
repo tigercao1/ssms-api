@@ -8,7 +8,7 @@ import {
 } from 'class-validator';
 import { DOCUMENT_LANGUAGES, type DocumentLanguage } from '../documents.types';
 
-/** Body of `POST /sign/forms/:slug/complete`; the service checks answers against the version's fields. */
+/** Body of `POST /sign/forms/:slug/complete`. */
 export class CompleteFormDto {
   @IsIn(DOCUMENT_LANGUAGES)
   lang!: DocumentLanguage;

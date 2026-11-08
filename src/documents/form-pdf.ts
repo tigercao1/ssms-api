@@ -107,11 +107,6 @@ function drawMarkdown(cursor: Cursor, markdown: string): void {
   }
 }
 
-/**
- * Renders a signed form: the title and waiver text as shown to the signer,
- * every field with its answer or drawn signature, then the bilingual audit
- * page. Returns the saved bytes with their SHA-256.
- */
 export async function renderFormPdf(input: FormPdfInput): Promise<StampedPdf> {
   const doc = await PDFDocument.create({ updateMetadata: false });
   doc.registerFontkit(fontkit);

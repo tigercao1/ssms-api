@@ -3,7 +3,6 @@ import type { DocumentLanguage } from './documents.types';
 export const FORM_FIELD_TYPES = ['text', 'email', 'date', 'signature'] as const;
 export type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
 
-/** One field of a form version, in that version's language. */
 export interface FormField {
   key: string;
   type: FormFieldType;
@@ -11,7 +10,6 @@ export interface FormField {
   required: boolean;
 }
 
-/** The fields every form needs: who signed and where their copy goes. */
 export const SIGNER_NAME_KEY = 'participant_name';
 export const SIGNER_EMAIL_KEY = 'email';
 
@@ -54,7 +52,6 @@ const WAIVER_FIELDS = [
   ),
 ];
 
-/** The default waiver field list, labelled in `language`. */
 export function defaultWaiverFields(language: DocumentLanguage): FormField[] {
   return WAIVER_FIELDS.map(({ label, ...rest }) => ({
     ...rest,
@@ -62,7 +59,6 @@ export function defaultWaiverFields(language: DocumentLanguage): FormField[] {
   }));
 }
 
-/** A `document_form_versions` row. */
 export interface FormVersionRow {
   template_id: string;
   language: DocumentLanguage;
@@ -78,7 +74,6 @@ export interface FormVersionRow {
   updated_at: string;
 }
 
-/** A form template with its newest published version in one language. */
 export interface PublishedForm {
   templateId: string;
   slug: string;

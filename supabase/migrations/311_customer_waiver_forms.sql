@@ -1,7 +1,3 @@
--- Customer waivers: a `form` template kind (waiver text in markdown plus a
--- field list, one version history per language), signed on a public page by
--- customers who need not exist in Shopify yet.
-
 alter table document_templates
   drop constraint document_templates_kind_check,
   add constraint document_templates_kind_check
@@ -64,14 +60,11 @@ alter table document_assignments
     constraint document_assignments_form_version_positive
     check (form_version > 0);
 
--- A customer may sign the same waiver many times (each child, each season),
--- so only instructor assignments stay unique per template and season.
 drop index document_assignments_open_key;
 create unique index document_assignments_open_key
   on document_assignments (template_id, subject_type, subject_id, coalesce(season, ''))
   where status <> 'archived' and subject_type = 'instructor';
 
--- Waiver signers who are not Shopify customers get a row without a Shopify id.
 alter table customers alter column shopify_customer_id drop not null;
 
 create or replace function public.reconcile_customer_deletions(
@@ -108,9 +101,6 @@ begin
 end;
 $$;
 
--- The customer a waiver is filed under: the oldest live row with this email
--- (Shopify customers first), else a new row. Serialised per email so two
--- signatures sent at once cannot create two rows.
 create function public.waiver_customer_for_email(
   p_email text,
   p_first_name text,

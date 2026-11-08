@@ -78,7 +78,6 @@ export interface PngHeaderOptions {
   animated?: boolean;
 }
 
-/** A PNG of all-zero rows, which compresses to almost nothing at any size. */
 export function blankPng(
   width: number,
   height: number,

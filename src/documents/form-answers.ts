@@ -25,7 +25,6 @@ const BIT_DEPTHS_BY_COLOUR_TYPE: Record<number, readonly number[]> = {
   6: [8],
 };
 
-/** Checked form answers: trimmed text by key, signature PNGs by key, and who signed. */
 export interface FormAnswers {
   signerName: string;
   signerEmail: string;
@@ -112,11 +111,6 @@ function parseValue(field: FormField, raw: unknown): string {
   return field.type === 'email' ? value.toLowerCase() : value;
 }
 
-/**
- * Checks answers and signatures against a form version's fields: no unknown
- * keys, every required field present, emails and dates well formed, and
- * signature PNGs within the size and pixel caps. Throws {@link SigningInputError}.
- */
 export function parseFormAnswers(
   fields: readonly FormField[],
   answers: Record<string, unknown>,

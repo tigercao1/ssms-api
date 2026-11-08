@@ -31,7 +31,6 @@ interface FakeForm {
   versions: FormVersionRow[];
 }
 
-/** A published form version with the default waiver fields. */
 export function formVersion(
   templateId: string,
   language: DocumentLanguage,
@@ -58,11 +57,6 @@ export function formVersion(
   };
 }
 
-/**
- * In-memory forms, customers and signed assignments. `customerForEmail`
- * mirrors `waiver_customer_for_email`: the oldest live row with the email,
- * Shopify customers first, else a new row; names are never matched.
- */
 export class InMemoryFormSigningRepository extends FormSigningRepository {
   readonly forms: FakeForm[] = [];
   readonly customers: FakeCustomer[] = [];

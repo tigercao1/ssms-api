@@ -25,7 +25,6 @@ class FlyClientIpThrottlerGuard extends ThrottlerGuard {
   }
 }
 
-/** Per-client-IP throttle for the public form signing endpoints, with its own storage. */
 @Injectable()
 export class SignFormsThrottlerGuard
   implements CanActivate, OnApplicationShutdown

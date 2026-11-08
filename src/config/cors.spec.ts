@@ -31,6 +31,7 @@ describe('buildCorsOptions', () => {
     expect(opts.exposedHeaders).toEqual([
       'X-Total-Count',
       'X-Export-Non-Ascii-Names',
+      'Content-Disposition',
     ]);
     expect(opts.methods).toEqual(
       expect.arrayContaining(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),

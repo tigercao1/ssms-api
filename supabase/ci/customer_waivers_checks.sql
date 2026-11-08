@@ -140,6 +140,58 @@ begin
 end
 $$;
 
+insert into auth.users (id, email) values ('11111111-1111-4111-8111-111111111802', 'ci-other@example.com');
+insert into instructors (id, auth_user_id, email, approval_status, is_active) values
+  ('22222222-2222-4222-8222-222222222802', '11111111-1111-4111-8111-111111111802',
+   'ci-other@example.com', 'approved', true);
+insert into customers (id, shopify_customer_id, first_name, last_name, email) values
+  ('77777777-7777-4777-8777-777777777804', 4804, 'Ada', 'Wu', 'ada@example.com');
+insert into classes (id, instructor_id, starts_at, ends_at, status) values
+  ('44444444-4444-4444-8444-444444444801', '22222222-2222-4222-8222-222222222801', '2026-12-01 10:00Z', '2026-12-01 12:00Z', 'scheduled'),
+  ('44444444-4444-4444-8444-444444444802', '22222222-2222-4222-8222-222222222801', '2026-12-02 10:00Z', '2026-12-02 12:00Z', 'cancelled'),
+  ('44444444-4444-4444-8444-444444444803', '22222222-2222-4222-8222-222222222802', '2026-12-03 10:00Z', '2026-12-03 12:00Z', 'scheduled');
+insert into class_participants (class_id, customer_id) values
+  ('44444444-4444-4444-8444-444444444801', '77777777-7777-4777-8777-777777777802'),
+  ('44444444-4444-4444-8444-444444444802', '77777777-7777-4777-8777-777777777803'),
+  ('44444444-4444-4444-8444-444444444803', '77777777-7777-4777-8777-777777777804'),
+  ('44444444-4444-4444-8444-444444444803', '77777777-7777-4777-8777-777777777802');
+
+do $$
+begin
+  if (select array_agg(name || ':' || coalesce((signed_at at time zone 'UTC')::date::text, '-'))
+        from instructor_student_signatures('22222222-2222-4222-8222-222222222801', '', 100))
+     <> array['Mia Shopify:2026-11-02'] then
+    raise exception 'an instructor saw students outside their own live classes, or the wrong signing date';
+  end if;
+  if (select array_agg(name || ':' || coalesce((signed_at at time zone 'UTC')::date::text, '-') order by name)
+        from instructor_student_signatures('22222222-2222-4222-8222-222222222802', null, 100))
+     <> array['Ada Wu:-', 'Mia Shopify:2026-11-02'] then
+    raise exception 'the other instructor''s students were wrong';
+  end if;
+  if exists (select 1 from instructor_student_signatures('22222222-2222-4222-8222-222222222802', 'MIA@EXAMPLE', 100)
+              where name = 'Ada Wu') then
+    raise exception 'the student search did not filter';
+  end if;
+end
+$$;
+
+do $$
+begin
+  if (select count(*) from admin_signature_lookup('mia', 10)
+       where subject_id = '77777777-7777-4777-8777-777777777802' and assignment_id is not null) <> 2 then
+    raise exception 'the admin lookup did not list both signatures of a customer';
+  end if;
+  if not exists (select 1 from admin_signature_lookup('MIA', 10)
+                  where subject_id = '77777777-7777-4777-8777-777777777801' and assignment_id is null) then
+    raise exception 'the admin lookup left out a customer who signed nothing';
+  end if;
+  if (select array_agg(distinct subject_type) from admin_signature_lookup('ci-waiver@', 10))
+     <> array['instructor'] then
+    raise exception 'the admin lookup did not find an instructor by email';
+  end if;
+end
+$$;
+
 set local role anon;
 do $$
 begin
@@ -159,6 +211,13 @@ do $$
 begin
   perform claim_form_copy_email(repeat('a', 64), 3, 3600, 5, 60);
   raise exception 'anon could call claim_form_copy_email';
+exception when insufficient_privilege then null;
+end
+$$;
+do $$
+begin
+  perform admin_signature_lookup('mia', 10);
+  raise exception 'anon could call admin_signature_lookup';
 exception when insufficient_privilege then null;
 end
 $$;

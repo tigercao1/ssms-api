@@ -11,6 +11,11 @@ import { AdminDocumentRemindersController } from './admin-document-reminders.con
 import { AdminDocumentAssignmentsController } from './admin-document-assignments.controller';
 import { AdminDocumentExportsController } from './admin-document-exports.controller';
 import { AdminDocumentTemplatesController } from './admin-document-templates.controller';
+import {
+  AdminFormsController,
+  AdminSignaturesController,
+} from './admin-forms.controller';
+import { AdminFormsService } from './admin-forms.service';
 import { CertificationExpiryService } from './certification-expiry.service';
 import {
   CertificationUploadsRepository,
@@ -47,6 +52,10 @@ import {
 } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
 import {
+  FormAdminRepository,
+  SupabaseFormAdminRepository,
+} from './form-admin.repository';
+import {
   FormSigningRepository,
   SupabaseFormSigningRepository,
 } from './form-signing.repository';
@@ -57,10 +66,12 @@ import { MeCertificationUploadsService } from './me-certification-uploads.servic
 import { MeDocumentsController } from './me-documents.controller';
 import { MeDocumentsService } from './me-documents.service';
 import { MeEmploymentLetterController } from './me-employment-letter.controller';
+import { MeStudentSignaturesController } from './me-student-signatures.controller';
 import { EmploymentLetterService } from './employment-letter.service';
 import { PdfWorkQueue } from './pdf-work-queue';
 import { SignFormsController } from './sign-forms.controller';
 import { SignFormsThrottlerGuard } from './sign-forms-throttler.guard';
+import { SignatureLookupsService } from './signature-lookups.service';
 import {
   PrivateStorageClient,
   R2PrivateStorageClient,
@@ -80,6 +91,9 @@ import {
     AdminCertificationUploadsController,
     AdminDocumentReviewsController,
     SignFormsController,
+    AdminFormsController,
+    AdminSignaturesController,
+    MeStudentSignaturesController,
   ],
   providers: [
     { provide: PrivateStorageClient, useClass: R2PrivateStorageClient },
@@ -131,6 +145,9 @@ import {
     { provide: FormSigningRepository, useClass: SupabaseFormSigningRepository },
     FormSigningService,
     SignFormsThrottlerGuard,
+    { provide: FormAdminRepository, useClass: SupabaseFormAdminRepository },
+    AdminFormsService,
+    SignatureLookupsService,
   ],
   exports: [
     PrivateStorageClient,

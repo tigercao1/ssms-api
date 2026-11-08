@@ -14,7 +14,7 @@ import {
 } from '../../test/helpers/form-signing-fakes';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { pdftotext } from '../../test/helpers/pdf-render';
-import { signaturePng } from '../../test/helpers/png-fixtures';
+import { blankPng, signaturePng } from '../../test/helpers/png-fixtures';
 import { MailerService } from '../mailer/mailer.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -370,6 +370,66 @@ describe('public form signing (/sign/forms)', () => {
         },
         /larger than 200 KB/,
       ],
+      [
+        'a 10,000 × 10,000 signature that compresses to 97 KB',
+        {
+          signatures: { participant_signature: png(blankPng(10_000, 10_000)) },
+        },
+        /is too large: at most 1200 pixels wide, 600 high/,
+      ],
+      [
+        'a signature wider than 1200 pixels',
+        { signatures: { participant_signature: png(blankPng(1201, 100)) } },
+        /is too large: at most 1200 pixels wide, 600 high/,
+      ],
+      [
+        'a signature taller than 600 pixels',
+        { signatures: { participant_signature: png(blankPng(300, 601)) } },
+        /is too large: at most 1200 pixels wide, 600 high/,
+      ],
+      [
+        'a 1200 × 600 signature, over the total pixel budget',
+        { signatures: { participant_signature: png(blankPng(1200, 600)) } },
+        /is too large: at most 1200 pixels wide, 600 high/,
+      ],
+      [
+        'an interlaced signature',
+        {
+          signatures: {
+            participant_signature: png(blankPng(300, 100, { interlace: 1 })),
+          },
+        },
+        /8-bit, non-interlaced, single-frame PNG/,
+      ],
+      [
+        'a 16-bit signature',
+        {
+          signatures: {
+            participant_signature: png(
+              blankPng(300, 100, { bitDepth: 16, colorType: 6 }),
+            ),
+          },
+        },
+        /8-bit, non-interlaced, single-frame PNG/,
+      ],
+      [
+        'an animated signature',
+        {
+          signatures: {
+            participant_signature: png(blankPng(300, 100, { animated: true })),
+          },
+        },
+        /8-bit, non-interlaced, single-frame PNG/,
+      ],
+      [
+        'a signature with a truncated header',
+        {
+          signatures: {
+            participant_signature: png(blankPng(300, 100).subarray(0, 20)),
+          },
+        },
+        /not a PNG/,
+      ],
       ['no consent', { consent: false }, /Agree to sign/],
     ])('400s for %s and stores nothing', async (_case, overrides, message) => {
       const res = await complete(validBody(overrides)).expect(400);
@@ -378,6 +438,39 @@ describe('public form signing (/sign/forms)', () => {
       expect(forms.signed).toHaveLength(0);
       expect(storage.objects.size).toBe(0);
       expect(mailer.sent).toHaveLength(0);
+    });
+
+    it('accepts the largest signature the signing site exports, 1000 × 600', async () => {
+      const big = signaturePng(1000, 600);
+      expect(big.length).toBeLessThan(150 * 1024);
+
+      await complete(
+        validBody({ signatures: { participant_signature: png(big) } }),
+      ).expect(201);
+
+      expect(forms.signed).toHaveLength(1);
+    });
+
+    it('rejects a 10,000 × 10,000 signature without decoding it', async () => {
+      const bomb = png(blankPng(10_000, 10_000));
+      global.gc?.();
+      const before = process.memoryUsage().rss;
+      let peak = before;
+      const sampler = setInterval(() => {
+        peak = Math.max(peak, process.memoryUsage().rss);
+      }, 5);
+
+      await complete(
+        validBody({ signatures: { participant_signature: bomb } }),
+      ).expect(400);
+
+      clearInterval(sampler);
+      peak = Math.max(peak, process.memoryUsage().rss);
+      console.log(
+        `10,000 × 10,000 signature: RSS +${((peak - before) / 1024 / 1024).toFixed(1)} MB`,
+      );
+      expect(peak - before).toBeLessThan(50 * 1024 * 1024);
+      expect(storage.objects.size).toBe(0);
     });
 
     it('removes the stored PDF when the signature cannot be recorded', async () => {

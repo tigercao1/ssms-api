@@ -11,6 +11,20 @@ import {
   SigningInputError,
 } from './signing-input';
 
+export const MAX_FORM_SIGNATURE_WIDTH = 1200;
+export const MAX_FORM_SIGNATURE_HEIGHT = 600;
+export const MAX_FORM_SIGNATURE_PIXELS = 1000 * 600;
+
+const PNG_SIGNATURE_LENGTH = 8;
+const IHDR_LENGTH = 13;
+const BIT_DEPTHS_BY_COLOUR_TYPE: Record<number, readonly number[]> = {
+  0: [1, 2, 4, 8],
+  2: [8],
+  3: [1, 2, 4, 8],
+  4: [8],
+  6: [8],
+};
+
 /** Checked form answers: trimmed text by key, signature PNGs by key, and who signed. */
 export interface FormAnswers {
   signerName: string;
@@ -20,6 +34,59 @@ export interface FormAnswers {
 }
 
 const name = (field: FormField) => `${field.label} (${field.key})`;
+
+function readSignaturePng(label: string, raw: unknown): Uint8Array {
+  const png = Buffer.from(decodeSignaturePng(label, raw));
+  const notPng = () => new SigningInputError(`Signature ${label} is not a PNG`);
+  const unsupported = () =>
+    new SigningInputError(
+      `Signature ${label} must be an 8-bit, non-interlaced, single-frame PNG`,
+    );
+  if (
+    png.length < PNG_SIGNATURE_LENGTH + 8 + IHDR_LENGTH ||
+    png.readUInt32BE(PNG_SIGNATURE_LENGTH) !== IHDR_LENGTH ||
+    png.toString('ascii', 12, 16) !== 'IHDR'
+  ) {
+    throw notPng();
+  }
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  const [bitDepth, colourType, compression, filter, interlace] = png.subarray(
+    24,
+    29,
+  );
+  if (
+    width === 0 ||
+    height === 0 ||
+    width > MAX_FORM_SIGNATURE_WIDTH ||
+    height > MAX_FORM_SIGNATURE_HEIGHT ||
+    width * height > MAX_FORM_SIGNATURE_PIXELS
+  ) {
+    throw new SigningInputError(
+      `Signature ${label} is too large: at most ${MAX_FORM_SIGNATURE_WIDTH} pixels wide, ${MAX_FORM_SIGNATURE_HEIGHT} high and ${MAX_FORM_SIGNATURE_PIXELS} in total`,
+    );
+  }
+  if (
+    !BIT_DEPTHS_BY_COLOUR_TYPE[colourType]?.includes(bitDepth) ||
+    compression !== 0 ||
+    filter !== 0 ||
+    interlace !== 0
+  ) {
+    throw unsupported();
+  }
+  let offset = PNG_SIGNATURE_LENGTH;
+  while (offset + 8 <= png.length) {
+    const type = png.toString('ascii', offset + 4, offset + 8);
+    if (type === 'acTL') {
+      throw unsupported();
+    }
+    if (type === 'IDAT') {
+      return png;
+    }
+    offset += 12 + png.readUInt32BE(offset);
+  }
+  throw notPng();
+}
 
 function parseValue(field: FormField, raw: unknown): string {
   if (raw !== undefined && raw !== null && typeof raw !== 'string') {
@@ -48,7 +115,7 @@ function parseValue(field: FormField, raw: unknown): string {
 /**
  * Checks answers and signatures against a form version's fields: no unknown
  * keys, every required field present, emails and dates well formed, and
- * signature PNGs within the size cap. Throws {@link SigningInputError}.
+ * signature PNGs within the size and pixel caps. Throws {@link SigningInputError}.
  */
 export function parseFormAnswers(
   fields: readonly FormField[],
@@ -78,7 +145,7 @@ export function parseFormAnswers(
     if (field.type === 'signature') {
       const raw = signatures[field.key];
       if (raw !== undefined && raw !== null && raw !== '') {
-        parsed.signatures[field.key] = decodeSignaturePng(name(field), raw);
+        parsed.signatures[field.key] = readSignaturePng(name(field), raw);
       } else if (field.required) {
         throw new SigningInputError(`Signature ${name(field)} is required`);
       }

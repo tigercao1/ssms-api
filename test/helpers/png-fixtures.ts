@@ -70,3 +70,39 @@ export function signaturePng(
     chunk('IEND', Buffer.alloc(0)),
   ]);
 }
+
+export interface PngHeaderOptions {
+  bitDepth?: number;
+  colorType?: number;
+  interlace?: number;
+  animated?: boolean;
+}
+
+/** A PNG of all-zero rows, which compresses to almost nothing at any size. */
+export function blankPng(
+  width: number,
+  height: number,
+  {
+    bitDepth = 8,
+    colorType = 0,
+    interlace = 0,
+    animated = false,
+  }: PngHeaderOptions = {},
+): Buffer {
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType] ?? 1;
+  const rowBytes = 1 + Math.ceil((width * channels * bitDepth) / 8);
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([bitDepth, colorType, 0, 0, interlace], 8);
+  const actl = Buffer.alloc(8);
+  actl.writeUInt32BE(1000, 0);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    ...(animated ? [chunk('acTL', actl)] : []),
+    ...(colorType === 3 ? [chunk('PLTE', Buffer.alloc(3))] : []),
+    chunk('IDAT', deflateSync(Buffer.alloc(rowBytes * height), { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}

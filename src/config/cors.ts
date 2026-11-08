@@ -32,7 +32,11 @@ export function buildCorsOptions(origins: string[]): CorsOptions {
     origin: origins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
-    exposedHeaders: [TOTAL_COUNT_HEADER, NON_ASCII_NAMES_HEADER],
+    exposedHeaders: [
+      TOTAL_COUNT_HEADER,
+      NON_ASCII_NAMES_HEADER,
+      'Content-Disposition',
+    ],
     credentials: false,
     maxAge: 86400, // cache preflight for 24h
   };

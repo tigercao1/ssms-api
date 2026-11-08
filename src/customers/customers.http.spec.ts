@@ -477,7 +477,7 @@ describe('customers admin HTTP', () => {
         .expect(200);
       expect(res.headers['access-control-allow-origin']).toBe(PORTAL_ORIGIN);
       expect(res.headers['access-control-expose-headers']).toBe(
-        'X-Total-Count,X-Export-Non-Ascii-Names',
+        'X-Total-Count,X-Export-Non-Ascii-Names,Content-Disposition',
       );
     });
   });

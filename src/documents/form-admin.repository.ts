@@ -60,12 +60,14 @@ export abstract class FormAdminRepository {
   abstract update(
     id: string,
     patch: FormTemplateWrite,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplateRow | null>;
   abstract updateDraft(
     templateId: string,
     language: DocumentLanguage,
     expected: FormDraftSource,
     draft: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<FormVersionRow | null>;
   abstract insertDraft(
     templateId: string,
@@ -146,12 +148,17 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
   async update(
     id: string,
     patch: FormTemplateWrite,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplateRow | null> {
-    const { data, error } = (await this.supabase
+    let query = this.supabase
       .from(DOCUMENT_TEMPLATES_TABLE)
       .update(patch)
       .eq('id', id)
-      .eq('kind', 'form')
+      .eq('kind', 'form');
+    if (expectedUpdatedAt !== undefined) {
+      query = query.eq('updated_at', expectedUpdatedAt);
+    }
+    const { data, error } = (await query
       .select(FORM_COLUMNS)
       .maybeSingle()) as DbResult<FormTemplateRow>;
     check(error, 'update form template');
@@ -163,6 +170,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
     language: DocumentLanguage,
     expected: FormDraftSource,
     draft: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<FormVersionRow | null> {
     let query = this.supabase
       .from(DOCUMENT_FORM_VERSIONS_TABLE)
@@ -173,6 +181,9 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
     for (const column of ['source_key', 'source_sha256'] as const) {
       const value = expected[column];
       query = value === null ? query.is(column, null) : query.eq(column, value);
+    }
+    if (expectedUpdatedAt !== undefined) {
+      query = query.eq('updated_at', expectedUpdatedAt);
     }
     const { data, error } = (await query
       .select(FORM_VERSION_COLUMNS)

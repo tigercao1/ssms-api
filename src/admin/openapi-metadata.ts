@@ -428,6 +428,9 @@ export default async () => {
               titleEn: { required: true, type: () => String },
               titleZh: { required: false, type: () => String, nullable: true },
             },
+            ExpectedRevisionDto: {
+              expectedUpdatedAt: { required: false, type: () => String },
+            },
             UpdateFormDto: {
               titleEn: { required: false, type: () => String },
               titleZh: { required: false, type: () => String, nullable: true },

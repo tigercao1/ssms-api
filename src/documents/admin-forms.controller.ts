@@ -25,6 +25,7 @@ import { AdminFormsService } from './admin-forms.service';
 import type { DocumentLanguage, UploadUrl } from './documents.types';
 import {
   CreateFormDto,
+  ExpectedRevisionDto,
   FormSourceUploadUrlDto,
   PutFormPlacementsDto,
   SaveFormDraftDto,
@@ -96,10 +97,16 @@ export class AdminFormsController {
   publish(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('lang', parseDocumentLanguage()) lang: DocumentLanguage,
+    @Body() dto: ExpectedRevisionDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
   ): Promise<FormTemplate> {
-    return this.forms.publish(id, lang, toActor(user, userAgent));
+    return this.forms.publish(
+      id,
+      lang,
+      toActor(user, userAgent),
+      dto.expectedUpdatedAt,
+    );
   }
 
   @Post(':id/versions/:lang/source/upload-url')
@@ -146,6 +153,7 @@ export class AdminFormsController {
       lang,
       dto.placements,
       toActor(user, userAgent),
+      dto.expectedUpdatedAt,
     );
   }
 }

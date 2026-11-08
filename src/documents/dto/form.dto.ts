@@ -7,6 +7,7 @@ import {
   IsEmail,
   IsIn,
   IsInt,
+  IsISO8601,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -55,7 +56,13 @@ export class CreateFormDto {
   titleZh?: string | null;
 }
 
-export class UpdateFormDto {
+export class ExpectedRevisionDto {
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt?: string;
+}
+
+export class UpdateFormDto extends ExpectedRevisionDto {
   @IsOptional()
   @Transform(trim)
   @IsString()
@@ -93,7 +100,7 @@ export class FormFieldDto {
 }
 
 /** `PUT /admin/documents/forms/:id/versions/:lang`; `fields` defaults to the current ones, else the default waiver fields. */
-export class SaveFormDraftDto {
+export class SaveFormDraftDto extends ExpectedRevisionDto {
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -145,7 +152,7 @@ export class FormPlacementDto {
 }
 
 /** `PUT /admin/documents/forms/:id/versions/:lang/placements`: replaces the draft's placements. */
-export class PutFormPlacementsDto {
+export class PutFormPlacementsDto extends ExpectedRevisionDto {
   @IsArray()
   @ArrayMaxSize(FORM_MAX_PLACEMENTS)
   @ValidateNested({ each: true })

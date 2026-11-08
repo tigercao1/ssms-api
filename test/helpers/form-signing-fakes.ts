@@ -277,16 +277,25 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
   update(
     id: string,
     patch: FormTemplateWrite,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplateRow | null> {
     const form = this.forms.get(id);
-    if (form) {
-      Object.assign(form, {
-        ...(patch.title_en !== undefined && { title_en: patch.title_en }),
-        ...(patch.title_zh !== undefined && { title_zh: patch.title_zh }),
-        ...(patch.email_copy !== undefined && { email_copy: patch.email_copy }),
-      });
+    if (
+      !form ||
+      (expectedUpdatedAt !== undefined && form.updated_at !== expectedUpdatedAt)
+    ) {
+      return Promise.resolve(null);
     }
-    return Promise.resolve(form ?? null);
+    this.writes += 1;
+    Object.assign(form, {
+      ...(patch.title_en !== undefined && { title_en: patch.title_en }),
+      ...(patch.title_zh !== undefined && { title_zh: patch.title_zh }),
+      ...(patch.email_copy !== undefined && { email_copy: patch.email_copy }),
+      updated_at: new Date(
+        Date.UTC(2026, 10, 1, 0, 0, this.writes),
+      ).toISOString(),
+    });
+    return Promise.resolve(structuredClone(form));
   }
 
   private draftOf(templateId: string, language: DocumentLanguage) {
@@ -300,12 +309,15 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
     language: DocumentLanguage,
     expected: FormDraftSource,
     draft: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<FormVersionRow | null> {
     const row = this.draftOf(templateId, language);
     return Promise.resolve(
       row &&
         row.source_key === expected.source_key &&
-        row.source_sha256 === expected.source_sha256
+        row.source_sha256 === expected.source_sha256 &&
+        (expectedUpdatedAt === undefined ||
+          row.updated_at === expectedUpdatedAt)
         ? this.touch(row, draft)
         : null,
     );

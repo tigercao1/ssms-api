@@ -321,6 +321,38 @@ describe('form versions with an original PDF', () => {
       ]);
     });
 
+    it('409s a placements save from a stale revision and chains saves with the returned updatedAt', async () => {
+      const id = await draftForm();
+      const opened = (await uploadPdf(id, await pdfFixture('normal'))).languages
+        .en.draft!;
+      const path = `/admin/documents/forms/${id}/versions/en/placements`;
+
+      const placed = (
+        (
+          await admin
+            .put(path, {
+              placements: PLACEMENTS,
+              expectedUpdatedAt: opened.updatedAt,
+            })
+            .expect(200)
+        ).body as FormTemplate
+      ).languages.en.draft!;
+      expect(placed.updatedAt).not.toBe(opened.updatedAt);
+
+      const res = await admin
+        .put(path, { placements: [], expectedUpdatedAt: opened.updatedAt })
+        .expect(409);
+      expect((res.body as { message: string }).message).toBe(
+        'This form was changed by someone else; reload it and try again',
+      );
+      expect(draftOf(id).placements).toEqual(PLACEMENTS);
+
+      await admin
+        .put(path, { placements: [], expectedUpdatedAt: placed.updatedAt })
+        .expect(200);
+      expect(draftOf(id).placements).toEqual([]);
+    });
+
     it('carries the PDF into the next draft, and removing it there keeps the published copy', async () => {
       const id = await draftForm();
       await uploadPdf(id, await pdfFixture('normal'));

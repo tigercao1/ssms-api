@@ -315,6 +315,162 @@ describe('form templates and signature lookups', () => {
     });
   });
 
+  describe('expectedUpdatedAt', () => {
+    const CHANGED =
+      'This form was changed by someone else; reload it and try again';
+    const draftPath = (id: string) =>
+      `/admin/documents/forms/${id}/versions/en`;
+    const text = (bodyMarkdown: string, expectedUpdatedAt?: string) => ({
+      title: 'Lesson waiver',
+      bodyMarkdown,
+      ...(expectedUpdatedAt !== undefined && { expectedUpdatedAt }),
+    });
+    const saveDraft = async (
+      id: string,
+      bodyMarkdown: string,
+      expectedUpdatedAt?: string,
+    ) =>
+      (
+        (
+          await admin
+            .put(draftPath(id), text(bodyMarkdown, expectedUpdatedAt))
+            .expect(200)
+        ).body as FormTemplate
+      ).languages.en.draft!;
+    const storedDraft = (id: string) =>
+      repo.forms.get(id)!.versions.find((v) => !v.published_at);
+
+    it('409s a draft save from a stale revision and leaves the draft untouched', async () => {
+      const { id } = await createForm();
+      const opened = await saveDraft(id, '# v1');
+      await saveDraft(id, '# v2 by someone else', opened.updatedAt);
+      const before = structuredClone(storedDraft(id));
+      const auditCount = audit.entries.length;
+
+      const res = await admin
+        .put(draftPath(id), text('# v3 from a stale tab', opened.updatedAt))
+        .expect(409);
+
+      expect((res.body as { message: string }).message).toBe(CHANGED);
+      expect(storedDraft(id)).toEqual(before);
+      expect(audit.entries).toHaveLength(auditCount);
+    });
+
+    it('chains draft saves with each returned updatedAt', async () => {
+      const { id } = await createForm();
+      const first = await saveDraft(id, '# v1');
+
+      const second = await saveDraft(id, '# v2', first.updatedAt);
+      const third = await saveDraft(id, '# v3', second.updatedAt);
+
+      expect(second.updatedAt).not.toBe(first.updatedAt);
+      expect(third.updatedAt).not.toBe(second.updatedAt);
+      expect(third).toMatchObject({
+        version: 1,
+        bodyMarkdown: '# v3',
+        updatedAt: storedDraft(id)!.updated_at,
+      });
+    });
+
+    it('saves over a newer draft as before when expectedUpdatedAt is absent', async () => {
+      const { id } = await createForm();
+      const first = await saveDraft(id, '# v1');
+      await saveDraft(id, '# v2', first.updatedAt);
+
+      const last = await saveDraft(id, '# v3 without a revision');
+
+      expect(last).toMatchObject({
+        version: 1,
+        bodyMarkdown: '# v3 without a revision',
+      });
+    });
+
+    it('409s a draft save expecting a draft that was published meanwhile, without starting a new draft', async () => {
+      const { id } = await createForm();
+      const opened = await saveDraft(id, '# v1');
+      await admin.post(`${draftPath(id)}/publish`).expect(200);
+
+      await admin
+        .put(draftPath(id), text('# v2', opened.updatedAt))
+        .expect(409);
+
+      expect(storedDraft(id)).toBeUndefined();
+    });
+
+    it('400s an expectedUpdatedAt that is not an ISO timestamp', async () => {
+      const { id } = await createForm();
+
+      await admin.put(draftPath(id), text('# v1', 'yesterday')).expect(400);
+      await admin
+        .post(`${draftPath(id)}/publish`, { expectedUpdatedAt: 'yesterday' })
+        .expect(400);
+    });
+
+    it('publishes only the revision the caller saw', async () => {
+      const { id } = await createForm();
+      const opened = await saveDraft(id, '# v1');
+      const newer = await saveDraft(id, '# v2', opened.updatedAt);
+
+      const res = await admin
+        .post(`${draftPath(id)}/publish`, {
+          expectedUpdatedAt: opened.updatedAt,
+        })
+        .expect(409);
+      expect((res.body as { message: string }).message).toBe(CHANGED);
+      expect(storedDraft(id)).toMatchObject({ body_markdown: '# v2' });
+
+      const form = (
+        await admin
+          .post(`${draftPath(id)}/publish`, {
+            expectedUpdatedAt: newer.updatedAt,
+          })
+          .expect(200)
+      ).body as FormTemplate;
+      expect(form.languages.en.published).toMatchObject({
+        bodyMarkdown: '# v2',
+        updatedAt: expect.any(String) as unknown,
+      });
+    });
+
+    it('409s a title edit from a stale revision and chains edits with the returned updatedAt', async () => {
+      const { id, updatedAt } = await createForm();
+      const edited = (
+        await admin
+          .patch(`/admin/documents/forms/${id}`, {
+            titleEn: 'Ski waiver',
+            expectedUpdatedAt: updatedAt,
+          })
+          .expect(200)
+      ).body as FormTemplate;
+      expect(edited.updatedAt).not.toBe(updatedAt);
+
+      const res = await admin
+        .patch(`/admin/documents/forms/${id}`, {
+          emailCopy: false,
+          expectedUpdatedAt: updatedAt,
+        })
+        .expect(409);
+      expect((res.body as { message: string }).message).toBe(CHANGED);
+      expect(repo.forms.get(id)).toMatchObject({
+        title_en: 'Ski waiver',
+        email_copy: true,
+      });
+
+      await admin
+        .patch(`/admin/documents/forms/${id}`, {
+          emailCopy: false,
+          expectedUpdatedAt: edited.updatedAt,
+        })
+        .expect(200);
+      await admin
+        .patch(`/admin/documents/forms/${randomUUID()}`, {
+          titleEn: 'X',
+          expectedUpdatedAt: updatedAt,
+        })
+        .expect(404);
+    });
+  });
+
   describe('GET /admin/signatures', () => {
     const row = (
       overrides: Partial<SignatureLookupRow>,

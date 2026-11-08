@@ -280,11 +280,18 @@ export class AdminFormsService {
     if (Object.keys(patch).length === 0) {
       throw new BadRequestException(FORM_NOTHING_TO_UPDATE);
     }
-    const row = await this.repo.update(id, {
-      ...patch,
-      updated_by: actor.userId ?? null,
-    });
+    const row = await this.repo.update(
+      id,
+      { ...patch, updated_by: actor.userId ?? null },
+      dto.expectedUpdatedAt,
+    );
     if (!row) {
+      if (
+        dto.expectedUpdatedAt !== undefined &&
+        (await this.repo.findById(id))
+      ) {
+        throw new ConflictException(FORM_DRAFT_CHANGED);
+      }
       throw new NotFoundException(FORM_TEMPLATE_NOT_FOUND);
     }
     await this.record(AUDIT_ACTIONS.documentTemplateUpdate, id, actor, {
@@ -329,16 +336,26 @@ export class AdminFormsService {
         : NO_SOURCE),
       updated_by: actor.userId ?? null,
     };
-    let saved: FormVersionRow | null;
+    let saved: FormVersionRow | null | undefined;
     try {
       saved =
-        (draft && (await this.repo.updateDraft(id, language, draft, write))) ||
-        (await this.repo.insertDraft(
+        draft &&
+        (await this.repo.updateDraft(
           id,
           language,
-          (latest?.version ?? 0) + 1,
+          draft,
           write,
+          dto.expectedUpdatedAt,
         ));
+      if (!saved && dto.expectedUpdatedAt !== undefined) {
+        throw new ConflictException(FORM_DRAFT_CHANGED);
+      }
+      saved ??= await this.repo.insertDraft(
+        id,
+        language,
+        (latest?.version ?? 0) + 1,
+        write,
+      );
     } catch (err) {
       if (hasCode(err, PG_UNIQUE_VIOLATION)) {
         throw new ConflictException(FORM_DRAFT_CHANGED);
@@ -357,6 +374,7 @@ export class AdminFormsService {
     id: string,
     language: DocumentLanguage,
     actor: AuditActor,
+    expectedUpdatedAt?: string,
     now = new Date(),
   ): Promise<FormTemplate> {
     const { draft } = versionsOf(await this.load(id), language);
@@ -370,7 +388,7 @@ export class AdminFormsService {
     const published = await this.repo.publishDraft(
       id,
       language,
-      draft.updated_at,
+      expectedUpdatedAt ?? draft.updated_at,
       actor.userId ?? null,
       now.toISOString(),
     );
@@ -478,16 +496,20 @@ export class AdminFormsService {
     language: DocumentLanguage,
     placements: FormPlacement[],
     actor: AuditActor,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplate> {
     const draft = await this.loadDraft(id, language);
     if (!draft.source_key) {
       throw new BadRequestException(FORM_NO_SOURCE);
     }
     validatePlacements(placements, draft);
-    await this.updateDraft(id, language, draft, {
-      placements,
-      updated_by: actor.userId ?? null,
-    });
+    await this.updateDraft(
+      id,
+      language,
+      draft,
+      { placements, updated_by: actor.userId ?? null },
+      expectedUpdatedAt,
+    );
     await this.record(AUDIT_ACTIONS.documentFormPlacementsUpdate, id, actor, {
       language,
       version: draft.version,
@@ -532,8 +554,17 @@ export class AdminFormsService {
     language: DocumentLanguage,
     expected: FormDraftSource,
     patch: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<void> {
-    if (!(await this.repo.updateDraft(id, language, expected, patch))) {
+    if (
+      !(await this.repo.updateDraft(
+        id,
+        language,
+        expected,
+        patch,
+        expectedUpdatedAt,
+      ))
+    ) {
       throw new ConflictException(FORM_DRAFT_CHANGED);
     }
   }

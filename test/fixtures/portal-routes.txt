@@ -1,4 +1,5 @@
 DELETE /admin/api-tokens/:id
+DELETE /admin/documents/forms/:id/versions/:lang/source
 DELETE /admin/documents/templates/:id
 DELETE /admin/documents/templates/:id/translations/:language
 DELETE /admin/instructors/:id/photo/:slot
@@ -68,6 +69,7 @@ GET /admin/reference/seasons
 GET /admin/shopify-sync/instructors/:id
 GET /admin/shopify-sync/status
 GET /admin/signatures
+GET /admin/signatures/check
 GET /admin/users/:id/role
 GET /health
 GET /me/documents
@@ -90,6 +92,7 @@ GET /reference/languages
 GET /reference/seasons
 GET /reference/teaching-locations
 GET /sign/forms/:slug
+GET /sign/forms/:slug/original
 PATCH /admin/booking/classes/:id
 PATCH /admin/certification-uploads/:id
 PATCH /admin/class-imports/:id/rows/:rowNo
@@ -130,6 +133,8 @@ POST /admin/documents/assignments/:id/archive
 POST /admin/documents/assignments/:id/remind
 POST /admin/documents/forms
 POST /admin/documents/forms/:id/versions/:lang/publish
+POST /admin/documents/forms/:id/versions/:lang/source/confirm
+POST /admin/documents/forms/:id/versions/:lang/source/upload-url
 POST /admin/documents/templates
 POST /admin/documents/templates/:id/audience
 POST /admin/documents/templates/:id/exports
@@ -177,6 +182,7 @@ POST /webhooks/shopify
 PUT /admin/booking/settings
 PUT /admin/class-imports/event-map
 PUT /admin/documents/forms/:id/versions/:lang
+PUT /admin/documents/forms/:id/versions/:lang/placements
 PUT /admin/documents/templates/:id/fields
 PUT /admin/documents/templates/:id/translations/:language/fields
 PUT /admin/pages/:id/content

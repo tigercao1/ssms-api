@@ -16,16 +16,23 @@ import type {
   DocumentLanguage,
 } from './documents.types';
 import type { CompleteFormDto } from './dto/complete-form.dto';
+import { MAX_FORM_PDF_BYTES } from './dto/form.dto';
 import { type FormAnswers, parseFormAnswers } from './form-answers';
 import { renderFormPdf } from './form-pdf';
 import { FormSigningRepository } from './form-signing.repository';
 import type {
   CompletedForm,
+  FormVersionRow,
   PublicForm,
   PublishedForm,
 } from './form-templates.types';
+import { runPdfTask } from './pdf-isolation';
+import type { StampAudit, StampedPdf } from './pdf-stamper';
 import { PdfWorkQueue } from './pdf-work-queue';
-import { PrivateStorageClient } from './private-storage.client';
+import {
+  type PresignedUrl,
+  PrivateStorageClient,
+} from './private-storage.client';
 import { SigningInputError } from './signing-input';
 import { storageKeys } from './storage-keys';
 import { PDF_CONTENT_TYPE, sha256Hex } from './template-pdf';
@@ -35,6 +42,7 @@ export const FORM_VERSION_STALE =
   'This form has changed since it was opened; reload it and sign again';
 export const FORM_CONSENT_REQUIRED =
   'Agree to sign electronically to submit this form';
+export const FORM_NO_ORIGINAL = 'This form has no original PDF';
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const USER_AGENT_MAX_LENGTH = 512;
@@ -66,12 +74,7 @@ export class FormSigningService {
   ) {}
 
   async get(slug: string, lang: DocumentLanguage): Promise<PublicForm> {
-    const other: DocumentLanguage = lang === 'en' ? 'zh' : 'en';
-    const form =
-      (await this.published(slug, lang)) ?? (await this.published(slug, other));
-    if (!form) {
-      throw new NotFoundException(FORM_NOT_FOUND);
-    }
+    const form = await this.served(slug, lang);
     const { version } = form;
     return {
       slug: form.slug,
@@ -80,7 +83,22 @@ export class FormSigningService {
       title: version.title,
       bodyMarkdown: version.body_markdown,
       fields: version.fields,
+      hasOriginalPdf: version.source_key !== null,
+      emailCopy: form.emailCopy,
     };
+  }
+
+  async originalUrl(
+    slug: string,
+    lang: DocumentLanguage,
+  ): Promise<PresignedUrl> {
+    const { slug: name, version } = await this.served(slug, lang);
+    if (!version.source_key) {
+      throw new NotFoundException(FORM_NO_ORIGINAL);
+    }
+    return this.storage.presignGet(version.source_key, {
+      contentDisposition: `inline; filename="${name}-${version.language}-v${version.version}.pdf"`,
+    });
   }
 
   async complete(
@@ -109,8 +127,22 @@ export class FormSigningService {
     );
     return {
       status: 'signed',
-      emailed: await this.email(form, signed, answers.signerEmail),
+      emailed:
+        form.emailCopy && (await this.email(form, signed, answers.signerEmail)),
     };
+  }
+
+  private async served(
+    slug: string,
+    lang: DocumentLanguage,
+  ): Promise<PublishedForm> {
+    const other: DocumentLanguage = lang === 'en' ? 'zh' : 'en';
+    const form =
+      (await this.published(slug, lang)) ?? (await this.published(slug, other));
+    if (!form) {
+      throw new NotFoundException(FORM_NOT_FOUND);
+    }
+    return form;
   }
 
   private published(
@@ -155,30 +187,44 @@ export class FormSigningService {
     const signedAt = now.toISOString();
     const userAgent =
       evidence.userAgent?.slice(0, USER_AGENT_MAX_LENGTH) ?? null;
-    const stamped = await renderFormPdf({
-      title: version.title,
-      bodyMarkdown: version.body_markdown,
-      fields: version.fields,
-      values: answers.values,
-      signatures: answers.signatures,
-      answersHeading: ANSWERS_HEADING[version.language],
-      audit: {
-        titleEn: form.titleEn,
-        titleZh: form.titleZh,
-        templateSha256: bodySha256,
-        assignmentId: id,
-        signerName: answers.signerName,
-        signerEmail: answers.signerEmail,
-        consentEn: SIGNING_CONSENT.en,
-        consentZh: SIGNING_CONSENT.zh,
-        ip: evidence.ip,
-        userAgent,
-        viewedAt: null,
-        signedAt,
-        linkEvidence: `${form.slug}, version ${version.version}`,
-        language: version.language,
-      },
-    });
+    const source = version.source_key
+      ? await this.originalBytes(version)
+      : null;
+    const templateSha256 = source ? sha256Hex(source) : bodySha256;
+    const audit: StampAudit = {
+      titleEn: form.titleEn,
+      titleZh: form.titleZh,
+      templateSha256,
+      assignmentId: id,
+      signerName: answers.signerName,
+      signerEmail: answers.signerEmail,
+      consentEn: SIGNING_CONSENT.en,
+      consentZh: SIGNING_CONSENT.zh,
+      ip: evidence.ip,
+      userAgent,
+      viewedAt: null,
+      signedAt,
+      linkEvidence: `${form.slug}, version ${version.version}`,
+      language: version.language,
+    };
+    const stamped: StampedPdf = source
+      ? await runPdfTask('stampForm', {
+          source,
+          fields: version.fields,
+          placements: version.placements,
+          values: answers.values,
+          signatures: answers.signatures,
+          audit,
+        })
+      : await renderFormPdf({
+          title: version.title,
+          bodyMarkdown: version.body_markdown,
+          fields: version.fields,
+          values: answers.values,
+          signatures: answers.signatures,
+          answersHeading: ANSWERS_HEADING[version.language],
+          audit,
+        });
     const key = storageKeys.customerDocument(customerId, id);
     await this.storage.put(key, stamped.bytes, PDF_CONTENT_TYPE);
     let assignment: DocumentAssignmentRow;
@@ -195,7 +241,7 @@ export class FormSigningService {
         signer_user_agent: userAgent,
         consent_at: signedAt,
         completed_at: signedAt,
-        template_sha256: bodySha256,
+        template_sha256: templateSha256,
         signed_key: key,
         signed_sha256: stamped.sha256,
         field_values: answers.values,
@@ -213,6 +259,21 @@ export class FormSigningService {
       ),
       sha256: stamped.sha256,
     };
+  }
+
+  private async originalBytes(version: FormVersionRow): Promise<Buffer> {
+    const key = version.source_key!;
+    const bytes = await this.storage.getBuffer(key, MAX_FORM_PDF_BYTES);
+    if (!bytes) {
+      throw new Error(`Original PDF ${key} is missing from storage`);
+    }
+    const sha256 = sha256Hex(bytes);
+    if (sha256 !== version.source_sha256) {
+      throw new Error(
+        `Original PDF ${key} hash ${sha256} differs from the recorded ${version.source_sha256}`,
+      );
+    }
+    return bytes;
   }
 
   private async email(

@@ -17,6 +17,7 @@ import type { FormVersionRow, PublishedForm } from './form-templates.types';
 export const DOCUMENT_FORM_VERSIONS_TABLE = 'document_form_versions';
 export const FORM_VERSION_COLUMNS =
   'template_id, language, version, title, body_markdown, body_sha256, fields, ' +
+  'source_key, source_sha256, source_size_bytes, page_count, pages, placements, ' +
   'published_at, published_by, updated_by, inserted_at, updated_at';
 
 export const FORM_COPY_EMAIL_LIMITS = {
@@ -38,6 +39,7 @@ interface FormTemplateRow {
   slug: string;
   title_en: string;
   title_zh: string | null;
+  email_copy: boolean;
 }
 
 export abstract class FormSigningRepository {
@@ -70,7 +72,7 @@ export class SupabaseFormSigningRepository extends FormSigningRepository {
   ): Promise<PublishedForm | null> {
     const { data: template, error } = (await this.supabase
       .from(DOCUMENT_TEMPLATES_TABLE)
-      .select('id, slug, title_en, title_zh')
+      .select('id, slug, title_en, title_zh, email_copy')
       .eq('slug', slug)
       .eq('kind', 'form')
       .maybeSingle()) as DbResult<FormTemplateRow>;
@@ -94,6 +96,7 @@ export class SupabaseFormSigningRepository extends FormSigningRepository {
           slug: template.slug,
           titleEn: template.title_en,
           titleZh: template.title_zh,
+          emailCopy: template.email_copy,
           version,
         }
       : null;

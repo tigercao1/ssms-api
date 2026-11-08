@@ -60,6 +60,7 @@ import { MeDocumentsService } from './me-documents.service';
 import { MeEmploymentLetterController } from './me-employment-letter.controller';
 import { MeStudentSignaturesController } from './me-student-signatures.controller';
 import { EmploymentLetterService } from './employment-letter.service';
+import { SignFormsThrottlerGuard } from './sign-forms-throttler.guard';
 import { SignatureLookupsService } from './signature-lookups.service';
 
 @Module({
@@ -127,6 +128,7 @@ import { SignatureLookupsService } from './signature-lookups.service';
     { provide: FormAdminRepository, useClass: SupabaseFormAdminRepository },
     AdminFormsService,
     SignatureLookupsService,
+    SignFormsThrottlerGuard,
   ],
   exports: [
     DocumentsCoreModule,

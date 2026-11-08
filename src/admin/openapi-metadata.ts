@@ -428,9 +428,13 @@ export default async () => {
               titleEn: { required: true, type: () => String },
               titleZh: { required: false, type: () => String, nullable: true },
             },
+            ExpectedRevisionDto: {
+              expectedUpdatedAt: { required: false, type: () => String },
+            },
             UpdateFormDto: {
               titleEn: { required: false, type: () => String },
               titleZh: { required: false, type: () => String, nullable: true },
+              emailCopy: { required: false, type: () => Boolean },
             },
             FormFieldDto: {
               key: { required: true, type: () => String },
@@ -442,6 +446,11 @@ export default async () => {
               required: { required: true, type: () => Boolean },
             },
             SaveFormDraftDto: {
+              expectedUpdatedAt: {
+                required: false,
+                type: () => String,
+                nullable: true,
+              },
               title: { required: true, type: () => String },
               bodyMarkdown: { required: true, type: () => String },
               fields: {
@@ -449,6 +458,26 @@ export default async () => {
                 type: () => [t['../documents/dto/form.dto'].FormFieldDto],
                 minItems: 1,
               },
+            },
+            FormSourceUploadUrlDto: {
+              contentLength: { required: true, type: () => Number, minimum: 1 },
+            },
+            FormPlacementDto: {
+              key: { required: true, type: () => String },
+              page: { required: true, type: () => Number, minimum: 1 },
+              x: { required: true, type: () => Number },
+              y: { required: true, type: () => Number },
+              w: { required: true, type: () => Number, minimum: 1 },
+              h: { required: true, type: () => Number, minimum: 1 },
+            },
+            PutFormPlacementsDto: {
+              placements: {
+                required: true,
+                type: () => [t['../documents/dto/form.dto'].FormPlacementDto],
+              },
+            },
+            SignatureCheckQueryDto: {
+              email: { required: true, type: () => String, format: 'email' },
             },
             SignatureLookupQueryDto: {
               q: { required: true, type: () => String, minLength: 2 },

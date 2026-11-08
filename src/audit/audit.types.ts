@@ -84,6 +84,8 @@ export const AUDIT_ACTIONS = {
   documentTemplateAudienceChange: 'document_template.audience_change',
   documentTemplateDelete: 'document_template.delete',
   documentFormDraftSave: 'document_template.form_draft_save',
+  documentFormSourceRemove: 'document_template.form_source_remove',
+  documentFormPlacementsUpdate: 'document_template.form_placements_update',
   documentAssignmentCreate: 'document_assignment.create',
   documentAssignmentArchive: 'document_assignment.archive',
   documentAssignmentRemind: 'document_assignment.remind',

@@ -15,8 +15,8 @@ import type {
   SignatureLookupRow,
 } from './form-templates.types';
 
-const FORM_COLUMNS = `id, slug, title_en, title_zh, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(${FORM_VERSION_COLUMNS})`;
-const FORM_LIST_COLUMNS = `id, slug, title_en, title_zh, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(language, version, published_at)`;
+const FORM_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(${FORM_VERSION_COLUMNS})`;
+const FORM_LIST_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(language, version, published_at, source_key, updated_at)`;
 
 export interface FormDraftWrite {
   title: string;
@@ -26,10 +26,28 @@ export interface FormDraftWrite {
   updated_by: string | null;
 }
 
+export type FormSourceWrite = Pick<
+  FormVersionRow,
+  | 'source_key'
+  | 'source_sha256'
+  | 'source_size_bytes'
+  | 'page_count'
+  | 'pages'
+  | 'placements'
+>;
+
+export type FormDraftPatch = Partial<FormDraftWrite & FormSourceWrite>;
+
+export type FormDraftSource = Pick<
+  FormVersionRow,
+  'source_key' | 'source_sha256'
+>;
+
 export interface FormTemplateWrite {
   slug?: string;
   title_en?: string;
   title_zh?: string | null;
+  email_copy?: boolean;
   updated_by?: string | null;
 }
 
@@ -42,21 +60,25 @@ export abstract class FormAdminRepository {
   abstract update(
     id: string,
     patch: FormTemplateWrite,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplateRow | null>;
   abstract updateDraft(
     templateId: string,
     language: DocumentLanguage,
-    draft: FormDraftWrite,
+    expected: FormDraftSource,
+    draft: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<FormVersionRow | null>;
   abstract insertDraft(
     templateId: string,
     language: DocumentLanguage,
     version: number,
-    draft: FormDraftWrite,
+    draft: FormDraftWrite & Partial<FormSourceWrite>,
   ): Promise<FormVersionRow>;
   abstract publishDraft(
     templateId: string,
     language: DocumentLanguage,
+    expectedUpdatedAt: string,
     publishedBy: string | null,
     publishedAt: string,
   ): Promise<FormVersionRow | null>;
@@ -64,6 +86,9 @@ export abstract class FormAdminRepository {
     query: string,
     limit: number,
   ): Promise<SignatureLookupRow[]>;
+  abstract signatureCheck(
+    email: string,
+  ): Promise<{ title_en: string; signed_at: string }[]>;
   abstract studentSignatures(
     instructorId: string,
     query: string,
@@ -123,12 +148,17 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
   async update(
     id: string,
     patch: FormTemplateWrite,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplateRow | null> {
-    const { data, error } = (await this.supabase
+    let query = this.supabase
       .from(DOCUMENT_TEMPLATES_TABLE)
       .update(patch)
       .eq('id', id)
-      .eq('kind', 'form')
+      .eq('kind', 'form');
+    if (expectedUpdatedAt !== undefined) {
+      query = query.eq('updated_at', expectedUpdatedAt);
+    }
+    const { data, error } = (await query
       .select(FORM_COLUMNS)
       .maybeSingle()) as DbResult<FormTemplateRow>;
     check(error, 'update form template');
@@ -138,14 +168,24 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
   async updateDraft(
     templateId: string,
     language: DocumentLanguage,
-    draft: FormDraftWrite,
+    expected: FormDraftSource,
+    draft: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<FormVersionRow | null> {
-    const { data, error } = (await this.supabase
+    let query = this.supabase
       .from(DOCUMENT_FORM_VERSIONS_TABLE)
       .update(draft)
       .eq('template_id', templateId)
       .eq('language', language)
-      .is('published_at', null)
+      .is('published_at', null);
+    for (const column of ['source_key', 'source_sha256'] as const) {
+      const value = expected[column];
+      query = value === null ? query.is(column, null) : query.eq(column, value);
+    }
+    if (expectedUpdatedAt !== undefined) {
+      query = query.eq('updated_at', expectedUpdatedAt);
+    }
+    const { data, error } = (await query
       .select(FORM_VERSION_COLUMNS)
       .maybeSingle()) as DbResult<FormVersionRow>;
     check(error, 'save form draft');
@@ -156,7 +196,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
     templateId: string,
     language: DocumentLanguage,
     version: number,
-    draft: FormDraftWrite,
+    draft: FormDraftWrite & Partial<FormSourceWrite>,
   ): Promise<FormVersionRow> {
     const { data, error } = (await this.supabase
       .from(DOCUMENT_FORM_VERSIONS_TABLE)
@@ -173,6 +213,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
   async publishDraft(
     templateId: string,
     language: DocumentLanguage,
+    expectedUpdatedAt: string,
     publishedBy: string | null,
     publishedAt: string,
   ): Promise<FormVersionRow | null> {
@@ -182,6 +223,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
       .eq('template_id', templateId)
       .eq('language', language)
       .is('published_at', null)
+      .eq('updated_at', expectedUpdatedAt)
       .select(FORM_VERSION_COLUMNS)
       .maybeSingle()) as DbResult<FormVersionRow>;
     check(error, 'publish form draft');
@@ -197,6 +239,16 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
       p_limit: limit,
     })) as DbResult<SignatureLookupRow[]>;
     check(error, 'look up signatures');
+    return data ?? [];
+  }
+
+  async signatureCheck(
+    email: string,
+  ): Promise<{ title_en: string; signed_at: string }[]> {
+    const { data, error } = (await this.supabase.rpc('admin_signature_check', {
+      p_email: email,
+    })) as DbResult<{ title_en: string; signed_at: string }[]>;
+    check(error, 'check signatures by email');
     return data ?? [];
   }
 

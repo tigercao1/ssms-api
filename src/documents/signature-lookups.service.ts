@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { FormAdminRepository } from './form-admin.repository';
-import type { Signer, StudentSignature } from './form-templates.types';
+import type {
+  SignatureCheck,
+  Signer,
+  StudentSignature,
+} from './form-templates.types';
 import { MeDocumentsService } from './me-documents.service';
 
 export const SIGNER_LOOKUP_LIMIT = 25;
@@ -46,6 +50,15 @@ export class SignatureLookupsService {
       }
     }
     return [...signers.values()];
+  }
+
+  async check(email: string): Promise<SignatureCheck> {
+    const rows = await this.repo.signatureCheck(email);
+    return {
+      signed: rows.length > 0,
+      signedAt: rows[0]?.signed_at ?? null,
+      templateTitles: rows.map((row) => row.title_en),
+    };
   }
 
   async students(authUserId: string, query = ''): Promise<StudentSignature[]> {

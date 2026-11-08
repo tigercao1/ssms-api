@@ -1,4 +1,4 @@
-import type { DocumentLanguage } from './documents.types';
+import type { DocumentLanguage, PageGeometry } from './documents.types';
 
 export const FORM_FIELD_TYPES = ['text', 'email', 'date', 'signature'] as const;
 export type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
@@ -8,6 +8,15 @@ export interface FormField {
   type: FormFieldType;
   label: string;
   required: boolean;
+}
+
+export interface FormPlacement {
+  key: string;
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export const SIGNER_NAME_KEY = 'participant_name';
@@ -67,6 +76,12 @@ export interface FormVersionRow {
   body_markdown: string;
   body_sha256: string;
   fields: FormField[];
+  source_key: string | null;
+  source_sha256: string | null;
+  source_size_bytes: number | null;
+  page_count: number | null;
+  pages: PageGeometry[];
+  placements: FormPlacement[];
   published_at: string | null;
   published_by: string | null;
   updated_by: string | null;
@@ -79,6 +94,7 @@ export interface PublishedForm {
   slug: string;
   titleEn: string;
   titleZh: string | null;
+  emailCopy: boolean;
   version: FormVersionRow;
 }
 
@@ -90,6 +106,8 @@ export interface PublicForm {
   title: string;
   bodyMarkdown: string;
   fields: FormField[];
+  hasOriginalPdf: boolean;
+  emailCopy: boolean;
 }
 
 /** `POST /sign/forms/:slug/complete`. */
@@ -103,6 +121,7 @@ export interface FormTemplateRow {
   slug: string;
   title_en: string;
   title_zh: string | null;
+  email_copy: boolean;
   inserted_at: string;
   updated_at: string;
   versions: FormVersionRow[];
@@ -120,8 +139,20 @@ export interface FormVersion {
   bodyMarkdown: string;
   bodySha256: string;
   fields: FormField[];
+  originalPdf: FormOriginalPdf | null;
+  placements: FormPlacement[];
   publishedAt: string | null;
   updatedAt: string;
+}
+
+/** The original PDF of a form version; `url` is a short-lived GET for the editor to render. */
+export interface FormOriginalPdf {
+  sha256: string;
+  sizeBytes: number;
+  pageCount: number;
+  pages: PageGeometry[];
+  url: string;
+  urlExpiresAt: string;
 }
 
 /** `GET /admin/documents/forms/:id`. */
@@ -130,6 +161,7 @@ export interface FormTemplate {
   slug: string;
   titleEn: string;
   titleZh: string | null;
+  emailCopy: boolean;
   languages: Record<DocumentLanguage, FormLanguageVersions>;
   defaultFields: Record<DocumentLanguage, FormField[]>;
   insertedAt: string;
@@ -142,9 +174,12 @@ export interface FormTemplateSummary {
   slug: string;
   titleEn: string;
   titleZh: string | null;
+  emailCopy: boolean;
   publishedVersions: Record<DocumentLanguage, number | null>;
   hasDraft: Record<DocumentLanguage, boolean>;
+  hasOriginalPdf: Record<DocumentLanguage, boolean>;
   updatedAt: string;
+  lastChangedAt: string;
 }
 
 export interface SignatureLookupRow {
@@ -182,6 +217,13 @@ export interface Signer {
   name: string | null;
   email: string | null;
   signatures: SignedDocumentEntry[];
+}
+
+/** `GET /admin/signatures/check?email=`: whether that exact email signed anything, and what. */
+export interface SignatureCheck {
+  signed: boolean;
+  signedAt: string | null;
+  templateTitles: string[];
 }
 
 /** `GET /me/students/signatures`: name and waiver status only. */

@@ -5,7 +5,8 @@ import {
 } from '../../src/database/db-result';
 import {
   FormAdminRepository,
-  type FormDraftWrite,
+  type FormDraftPatch,
+  type FormDraftSource,
   type FormTemplateWrite,
 } from '../../src/documents/form-admin.repository';
 import {
@@ -39,6 +40,7 @@ interface FakeForm {
   slug: string;
   titleEn: string;
   titleZh: string | null;
+  emailCopy: boolean;
   versions: FormVersionRow[];
 }
 
@@ -59,6 +61,12 @@ export function formVersion(
     body_markdown: body,
     body_sha256: sha256Hex(Buffer.from(body, 'utf8')),
     fields: defaultWaiverFields(language),
+    source_key: null,
+    source_sha256: null,
+    source_size_bytes: null,
+    page_count: null,
+    pages: [],
+    placements: [],
     published_at: '2026-11-01T00:00:00.000Z',
     published_by: null,
     updated_by: null,
@@ -79,13 +87,18 @@ export class InMemoryFormSigningRepository extends FormSigningRepository {
   failCopyEmailClaim = false;
   readonly copyEmailClaims: { emailHash: string; at: number }[] = [];
 
-  seedForm(slug: string, versions: FormVersionRow[] = []): string {
+  seedForm(
+    slug: string,
+    versions: FormVersionRow[] = [],
+    emailCopy = true,
+  ): string {
     const templateId = versions[0]?.template_id ?? randomUUID();
     this.forms.push({
       templateId,
       slug,
       titleEn: 'Lesson waiver',
       titleZh: '课程免责声明',
+      emailCopy,
       versions,
     });
     return templateId;
@@ -119,6 +132,7 @@ export class InMemoryFormSigningRepository extends FormSigningRepository {
             slug: form.slug,
             titleEn: form.titleEn,
             titleZh: form.titleZh,
+            emailCopy: form.emailCopy,
             version,
           }
         : null,
@@ -209,6 +223,8 @@ const uniqueViolation = () =>
 export class InMemoryFormAdminRepository extends FormAdminRepository {
   readonly forms = new Map<string, FormTemplateRow>();
   lookupRows: SignatureLookupRow[] = [];
+  checkRows = new Map<string, { title_en: string; signed_at: string }[]>();
+  readonly checkCalls: string[] = [];
   studentRows: { name: string | null; signed_at: string | null }[] = [];
   readonly lookupCalls: { query: string; limit: number }[] = [];
   readonly studentCalls: {
@@ -217,12 +233,25 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
     limit: number;
   }[] = [];
 
+  private writes = 0;
+
   list(): Promise<FormTemplateRow[]> {
-    return Promise.resolve([...this.forms.values()]);
+    return Promise.resolve(structuredClone([...this.forms.values()]));
   }
 
   findById(id: string): Promise<FormTemplateRow | null> {
-    return Promise.resolve(this.forms.get(id) ?? null);
+    const form = this.forms.get(id);
+    return Promise.resolve(form ? structuredClone(form) : null);
+  }
+
+  private touch(row: FormVersionRow, patch: Partial<FormVersionRow>) {
+    this.writes += 1;
+    Object.assign(row, patch, {
+      updated_at: new Date(
+        Date.UTC(2026, 10, 1, 0, 0, this.writes),
+      ).toISOString(),
+    });
+    return structuredClone(row);
   }
 
   insert(
@@ -236,6 +265,7 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
       slug: row.slug,
       title_en: row.title_en,
       title_zh: row.title_zh ?? null,
+      email_copy: true,
       inserted_at: '2026-11-01T00:00:00.000Z',
       updated_at: '2026-11-01T00:00:00.000Z',
       versions: [],
@@ -247,15 +277,25 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
   update(
     id: string,
     patch: FormTemplateWrite,
+    expectedUpdatedAt?: string,
   ): Promise<FormTemplateRow | null> {
     const form = this.forms.get(id);
-    if (form) {
-      Object.assign(form, {
-        ...(patch.title_en !== undefined && { title_en: patch.title_en }),
-        ...(patch.title_zh !== undefined && { title_zh: patch.title_zh }),
-      });
+    if (
+      !form ||
+      (expectedUpdatedAt !== undefined && form.updated_at !== expectedUpdatedAt)
+    ) {
+      return Promise.resolve(null);
     }
-    return Promise.resolve(form ?? null);
+    this.writes += 1;
+    Object.assign(form, {
+      ...(patch.title_en !== undefined && { title_en: patch.title_en }),
+      ...(patch.title_zh !== undefined && { title_zh: patch.title_zh }),
+      ...(patch.email_copy !== undefined && { email_copy: patch.email_copy }),
+      updated_at: new Date(
+        Date.UTC(2026, 10, 1, 0, 0, this.writes),
+      ).toISOString(),
+    });
+    return Promise.resolve(structuredClone(form));
   }
 
   private draftOf(templateId: string, language: DocumentLanguage) {
@@ -267,20 +307,27 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
   updateDraft(
     templateId: string,
     language: DocumentLanguage,
-    draft: FormDraftWrite,
+    expected: FormDraftSource,
+    draft: FormDraftPatch,
+    expectedUpdatedAt?: string,
   ): Promise<FormVersionRow | null> {
     const row = this.draftOf(templateId, language);
-    if (row) {
-      Object.assign(row, draft);
-    }
-    return Promise.resolve(row ?? null);
+    return Promise.resolve(
+      row &&
+        row.source_key === expected.source_key &&
+        row.source_sha256 === expected.source_sha256 &&
+        (expectedUpdatedAt === undefined ||
+          row.updated_at === expectedUpdatedAt)
+        ? this.touch(row, draft)
+        : null,
+    );
   }
 
   insertDraft(
     templateId: string,
     language: DocumentLanguage,
     version: number,
-    draft: FormDraftWrite,
+    draft: Parameters<FormAdminRepository['insertDraft']>[3],
   ): Promise<FormVersionRow> {
     const form = this.forms.get(templateId)!;
     if (
@@ -296,23 +343,25 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
       published_at: null,
     });
     form.versions.push(row);
-    return Promise.resolve(row);
+    return Promise.resolve(structuredClone(row));
   }
 
   publishDraft(
     templateId: string,
     language: DocumentLanguage,
+    expectedUpdatedAt: string,
     publishedBy: string | null,
     publishedAt: string,
   ): Promise<FormVersionRow | null> {
     const row = this.draftOf(templateId, language);
-    if (row) {
-      Object.assign(row, {
-        published_at: publishedAt,
-        published_by: publishedBy,
-      });
-    }
-    return Promise.resolve(row ?? null);
+    return Promise.resolve(
+      row && row.updated_at === expectedUpdatedAt
+        ? this.touch(row, {
+            published_at: publishedAt,
+            published_by: publishedBy,
+          })
+        : null,
+    );
   }
 
   lookupSignatures(
@@ -321,6 +370,13 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
   ): Promise<SignatureLookupRow[]> {
     this.lookupCalls.push({ query, limit });
     return Promise.resolve(this.lookupRows);
+  }
+
+  signatureCheck(
+    email: string,
+  ): Promise<{ title_en: string; signed_at: string }[]> {
+    this.checkCalls.push(email);
+    return Promise.resolve(this.checkRows.get(email) ?? []);
   }
 
   studentSignatures(

@@ -40,6 +40,11 @@ import {
   BOOKING_CLOCK,
   BookingCalendarsService,
 } from './booking-calendars.service';
+import {
+  BATCH_ROW_CONFLICT,
+  type BatchBookingResult,
+  BookingBatchService,
+} from './booking-batch.service';
 import { BookingController } from './booking.controller';
 import { BookingRepository } from './booking.repository';
 import {
@@ -90,6 +95,7 @@ async function build(google = fakeBookingGoogle()) {
       controllers: [BookingController],
       providers: [
         BookingService,
+        BookingBatchService,
         AvailabilityService,
         BookingSettingsService,
         BookingCalendarsService,
@@ -145,6 +151,7 @@ describe('booking admin HTTP', () => {
       ['PUT settings', (r) => r.put('/admin/booking/settings').send({})],
       ['GET availability', (r) => r.get('/admin/booking/availability')],
       ['POST class', (r) => r.post('/admin/booking/classes').send({})],
+      ['POST batch', (r) => r.post('/admin/booking/classes/batch').send({})],
       [
         'PATCH class',
         (r) => r.patch(`/admin/booking/classes/${UNKNOWN_ID}`).send({}),
@@ -980,6 +987,166 @@ describe('booking admin HTTP', () => {
     ])('validates the body %j', async (overrides) => {
       const res = await post(booking(overrides));
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('batch create', () => {
+    const BATCH = 'b0000000-0000-4000-8000-000000000001';
+
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    const post = (body: Record<string, unknown>) =>
+      http()
+        .post('/admin/booking/classes/batch')
+        .set('Authorization', admin)
+        .send(body);
+    const results = (res: request.Response) => res.body as BatchBookingResult;
+
+    it('returns 200 with a result per row, committing rows independently', async () => {
+      const res = await post({
+        batchId: BATCH,
+        bookings: [
+          booking({ notes: 'first', locationId: BLUE_ID }),
+          booking({ startsAt: '2026-12-12T15:30:00.000Z' }),
+          booking({
+            instructorId: BEN_ID,
+            lessonTypeId: GROUP_90,
+            customerIds: [MEI_ID, LEO_ID],
+          }),
+          booking({
+            startsAt: '2026-12-01T15:00:00.000Z',
+            status: 'no_show',
+          }),
+        ],
+      }).expect(200);
+
+      expect(results(res).batchId).toBe(BATCH);
+      expect(results(res).results).toEqual([
+        {
+          index: 0,
+          status: 'created',
+          classes: [
+            expect.objectContaining({
+              locationName: 'Blue Mountain',
+              notes: 'first',
+              calendarSync: 'ok',
+            }),
+          ],
+        },
+        {
+          index: 1,
+          status: 'failed',
+          code: 'INSTRUCTOR_BUSY',
+          message: INSTRUCTOR_BUSY,
+        },
+        {
+          index: 2,
+          status: 'created',
+          classes: [
+            expect.objectContaining({
+              instructorId: BEN_ID,
+              endsAt: '2026-12-12T16:30:00.000Z',
+            }),
+          ],
+        },
+        {
+          index: 3,
+          status: 'created',
+          classes: [
+            expect.objectContaining({
+              status: 'no_show',
+              googleCalendarId: null,
+            }),
+          ],
+        },
+      ]);
+      expect(ctx.google.insertEvent).toHaveBeenCalledTimes(2);
+      expect(ctx.audit.entries).toHaveLength(3);
+      expect(ctx.audit.entries[0]).toMatchObject({
+        action: 'booking.class_create',
+        actor: { userId: ADMIN_ID, role: 'admin' },
+        metadata: { batch: { batchId: BATCH, index: 0 } },
+      });
+    });
+
+    it('replays a lost response without booking twice', async () => {
+      const body = {
+        batchId: BATCH,
+        bookings: [booking(), booking({ instructorId: BEN_ID })],
+      };
+      const first = await post(body).expect(200);
+      const [a, b] = await Promise.all([
+        post(body).expect(200),
+        post(body).expect(200),
+      ]);
+
+      expect(results(a)).toEqual(results(first));
+      expect(results(b)).toEqual(results(first));
+      expect(ctx.repo.classes).toHaveLength(2);
+      expect(ctx.google.insertEvent).toHaveBeenCalledTimes(2);
+      expect(ctx.audit.entries).toHaveLength(2);
+    });
+
+    it('flags a created row resubmitted with a different payload', async () => {
+      await post({ batchId: BATCH, bookings: [booking()] }).expect(200);
+      const res = await post({
+        batchId: BATCH,
+        bookings: [booking({ customerIds: [LEO_ID] })],
+      }).expect(200);
+      expect(results(res).results).toEqual([
+        expect.objectContaining({ status: 'failed', code: BATCH_ROW_CONFLICT }),
+      ]);
+      expect(ctx.repo.classes).toHaveLength(1);
+    });
+
+    it('accepts up to 20 rows', async () => {
+      const bookings = Array.from({ length: 20 }, (_, i) =>
+        booking({
+          startsAt: new Date(
+            Date.parse('2026-12-14T13:00:00.000Z') + i * 3_600_000,
+          ).toISOString(),
+        }),
+      );
+      const res = await post({ batchId: BATCH, bookings }).expect(200);
+      expect(results(res).results.map((r) => r.status)).toEqual(
+        Array(20).fill('created'),
+      );
+      expect(results(res).results.map((r) => r.index)).toEqual(
+        bookings.map((_, i) => i),
+      );
+    });
+
+    it.each([
+      ['no rows', { batchId: BATCH, bookings: [] }],
+      [
+        'more than 20 rows',
+        {
+          batchId: BATCH,
+          bookings: Array.from({ length: 21 }, () => booking()),
+        },
+      ],
+      ['a missing batch id', { bookings: [booking()] }],
+      [
+        'a batch id that is not a uuid',
+        { batchId: 'b1', bookings: [booking()] },
+      ],
+      [
+        'a repeating row',
+        {
+          batchId: BATCH,
+          bookings: [booking({ repeat: { weekly: true, count: 2 } })],
+        },
+      ],
+      [
+        'an invalid row',
+        { batchId: BATCH, bookings: [booking({ customerIds: [] })] },
+      ],
+      ['a row that is not an object', { batchId: BATCH, bookings: ['x'] }],
+    ])('rejects %s with 400 and books nothing', async (_name, body) => {
+      await post(body).expect(400);
+      expect(ctx.repo.classes).toEqual([]);
     });
   });
 

@@ -21,12 +21,16 @@ import {
 } from './booking-calendars.service';
 import { addDays, localParts, zonedInstant } from './booking-time';
 import {
+  type BatchRowCommit,
+  type BatchRowKey,
+  type BatchRowRecord,
   type BookingCustomerRow,
   type BookingInstructorRow,
   type BookingLessonTypeRow,
   BookingRepository,
   type ClassBooking,
   type EventDeletionRow,
+  type SeriesBooking,
 } from './booking.repository';
 import {
   type BookedClass,
@@ -35,6 +39,7 @@ import {
 } from './calendar-sync.service';
 import type {
   BookableStatus,
+  BookingRowDto,
   CreateBookingDto,
   UpdateBookingDto,
 } from './dto/booking.dto';
@@ -101,6 +106,16 @@ export interface SyncIssues {
   deletions: EventDeletionIssue[];
 }
 
+export type BatchRowBooking =
+  | { created: BookedClass[] }
+  | { existing: BatchRowRecord };
+
+interface BookingPlan {
+  bookings: ClassBooking[];
+  series: SeriesBooking | null;
+  metadata: Record<string, unknown>;
+}
+
 interface Occurrence {
   start: Date;
   end: Date;
@@ -120,6 +135,42 @@ export class BookingService {
     dto: CreateBookingDto,
     actor: AuditActor,
   ): Promise<BookedClass[]> {
+    const plan = await this.plan(dto, actor);
+    try {
+      await this.repo.bookClasses(plan.series, plan.bookings);
+    } catch (err) {
+      throw databaseHttp(err);
+    }
+    return this.finish(plan, actor);
+  }
+
+  async createBatchRow(
+    dto: BookingRowDto,
+    actor: AuditActor,
+    key: BatchRowKey,
+  ): Promise<BatchRowBooking> {
+    const plan = await this.plan(dto, actor);
+    let commit: BatchRowCommit;
+    try {
+      commit = await this.repo.bookBatchRow(key, plan.bookings[0]);
+    } catch (err) {
+      throw databaseHttp(err);
+    }
+    if (commit.outcome === 'existing') {
+      return { existing: commit.row };
+    }
+    return {
+      created: await this.finish(plan, actor, {
+        batchId: key.batch_id,
+        index: key.row_index,
+      }),
+    };
+  }
+
+  private async plan(
+    dto: CreateBookingDto,
+    actor: AuditActor,
+  ): Promise<BookingPlan> {
     const start = new Date(dto.startsAt);
     const past = start.getTime() < this.clock.now();
     if (past && dto.repeat) {
@@ -182,25 +233,15 @@ export class BookingService {
       created_by: actor.userId ?? null,
       customer_ids: customers.map((c) => c.id),
     }));
-    try {
-      await this.repo.bookClasses(
-        seriesId
-          ? {
-              id: seriesId,
-              count: bookings.length,
-              created_by: actor.userId ?? null,
-            }
-          : null,
-        bookings,
-      );
-    } catch (err) {
-      throw databaseHttp(err);
-    }
-    await this.audit.record({
-      action: AUDIT_ACTIONS.bookingClassCreate,
-      actor: { ...actor, role: 'admin' },
-      targetType: 'class',
-      targetId: bookings[0].id,
+    return {
+      bookings,
+      series: seriesId
+        ? {
+            id: seriesId,
+            count: bookings.length,
+            created_by: actor.userId ?? null,
+          }
+        : null,
       metadata: {
         classIds: bookings.map((b) => b.id),
         seriesId,
@@ -212,8 +253,22 @@ export class BookingService {
         past,
         addToCalendar: Boolean(addToCalendar && calendarId),
       },
+    };
+  }
+
+  private async finish(
+    plan: BookingPlan,
+    actor: AuditActor,
+    batch?: { batchId: string; index: number },
+  ): Promise<BookedClass[]> {
+    await this.audit.record({
+      action: AUDIT_ACTIONS.bookingClassCreate,
+      actor: { ...actor, role: 'admin' },
+      targetType: 'class',
+      targetId: plan.bookings[0].id,
+      metadata: batch ? { ...plan.metadata, batch } : plan.metadata,
     });
-    const ids = bookings.map((b) => b.id);
+    const ids = plan.bookings.map((b) => b.id);
     await this.sync.syncPending(ids);
     return (await this.repo.findClasses(ids)).map(toBookedClass);
   }

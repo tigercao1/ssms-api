@@ -23,6 +23,7 @@ import {
 
 export const MAX_CUSTOMERS_PER_CLASS = 20;
 export const MAX_NOTES_LENGTH = 2000;
+export const MAX_BATCH_BOOKINGS = 20;
 export const MAX_AVAILABILITY_INSTRUCTORS = 200;
 export const BOOKABLE_STATUSES = ['scheduled', 'completed', 'no_show'] as const;
 export type BookableStatus = (typeof BOOKABLE_STATUSES)[number];
@@ -67,7 +68,7 @@ export class RepeatDto {
   count!: number;
 }
 
-export class CreateBookingDto {
+export class BookingRowDto {
   @IsUUID()
   instructorId!: string;
 
@@ -96,17 +97,32 @@ export class CreateBookingDto {
   notes?: string | null;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => RepeatDto)
-  repeat?: RepeatDto;
-
-  @IsOptional()
   @IsIn(BOOKABLE_STATUSES)
   status?: BookableStatus;
 
   @IsOptional()
   @IsBoolean()
   addToCalendar?: boolean;
+}
+
+export class CreateBookingDto extends BookingRowDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RepeatDto)
+  repeat?: RepeatDto;
+}
+
+export class BatchBookingDto {
+  @IsUUID()
+  batchId!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(MAX_BATCH_BOOKINGS)
+  @IsObject({ each: true })
+  @ValidateNested({ each: true })
+  @Type(() => BookingRowDto)
+  bookings!: BookingRowDto[];
 }
 
 export class UpdateBookingDto {

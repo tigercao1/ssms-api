@@ -249,6 +249,86 @@ describe('SupabaseBookingRepository', () => {
     await expect(repo.failedClasses(5)).resolves.toEqual([]);
   });
 
+  it('reads the rows already booked for a batch', async () => {
+    const stored = { row_index: 2, payload_hash: 'h', class_id: ID };
+    const { client, queries } = bookingSupabase({
+      booking_batch_rows: { data: [stored], error: null },
+    });
+    const repo = new SupabaseBookingRepository(client);
+    await expect(repo.findBatchRows(ID)).resolves.toEqual([stored]);
+    expect(queries[0]).toEqual({
+      table: 'booking_batch_rows',
+      ops: [
+        ['select', 'row_index, payload_hash, class_id'],
+        ['eq', 'batch_id', ID],
+        ['order', 'row_index', { ascending: true }],
+      ],
+    });
+    const empty = new SupabaseBookingRepository(bookingSupabase().client);
+    await expect(empty.findBatchRows(ID)).resolves.toEqual([]);
+  });
+
+  it('books a batch row through the idempotent RPC', async () => {
+    const booking = {
+      id: ID,
+      instructor_id: ID,
+      lesson_type_id: ID,
+      location_id: null,
+      starts_at: 's',
+      ends_at: 'e',
+      status: 'scheduled' as const,
+      google_calendar_id: null,
+      notes: null,
+      created_by: null,
+      customer_ids: [ID],
+    };
+    const key = { batch_id: ID, row_index: 1, payload_hash: 'h' };
+    const { client, rpcs } = bookingSupabase({
+      'rpc:book_batch_row': {
+        data: {
+          outcome: 'existing',
+          row_index: 1,
+          payload_hash: 'old',
+          class_id: ID,
+        },
+        error: null,
+      },
+    });
+    await expect(
+      new SupabaseBookingRepository(client).bookBatchRow(key, booking),
+    ).resolves.toEqual({
+      outcome: 'existing',
+      row: { row_index: 1, payload_hash: 'old', class_id: ID },
+    });
+    expect(rpcs).toEqual([
+      {
+        name: 'book_batch_row',
+        args: {
+          p_batch_id: ID,
+          p_row_index: 1,
+          p_payload_hash: 'h',
+          p_class: booking,
+        },
+      },
+    ]);
+
+    const failing = bookingSupabase({
+      'rpc:book_batch_row': {
+        data: null,
+        error: { message: 'overlaps', code: 'SB409' },
+      },
+    });
+    await expect(
+      new SupabaseBookingRepository(failing.client).bookBatchRow(key, booking),
+    ).rejects.toMatchObject({ code: 'SB409' });
+    await expect(
+      new SupabaseBookingRepository(bookingSupabase().client).bookBatchRow(
+        key,
+        booking,
+      ),
+    ).rejects.toThrow('no row');
+  });
+
   it('keeps the database error code for the service to map', async () => {
     const { client } = bookingSupabase({
       'rpc:book_classes': {

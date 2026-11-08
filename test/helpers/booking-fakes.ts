@@ -1,4 +1,7 @@
 import {
+  type BatchRowCommit,
+  type BatchRowKey,
+  type BatchRowRecord,
   type BookingCustomerRow,
   type BookingInstructorRow,
   type BookingLessonTypeRow,
@@ -292,6 +295,7 @@ export class InMemoryBookingRepository extends BookingRepository {
     [];
   series: SeriesBooking[] = [];
   deletions: EventDeletionRow[] = [];
+  batchRows: (BatchRowRecord & { batch_id: string })[] = [];
   failNext?: DatabaseError;
   now: () => number = () => Date.parse('2026-12-10T17:00:00.000Z');
   private tick = 0;
@@ -416,6 +420,46 @@ export class InMemoryBookingRepository extends BookingRepository {
       );
     }
     return Promise.resolve();
+  }
+
+  findBatchRows(batchId: string): Promise<BatchRowRecord[]> {
+    return Promise.resolve(
+      this.batchRows
+        .filter((r) => r.batch_id === batchId)
+        .sort((a, b) => a.row_index - b.row_index)
+        .map(({ row_index, payload_hash, class_id }) => ({
+          row_index,
+          payload_hash,
+          class_id,
+        })),
+    );
+  }
+
+  async bookBatchRow(
+    key: BatchRowKey,
+    booking: ClassBooking,
+  ): Promise<BatchRowCommit> {
+    const existing = this.batchRows.find(
+      (r) => r.batch_id === key.batch_id && r.row_index === key.row_index,
+    );
+    if (existing) {
+      return {
+        outcome: 'existing',
+        row: {
+          row_index: existing.row_index,
+          payload_hash: existing.payload_hash,
+          class_id: existing.class_id,
+        },
+      };
+    }
+    await this.bookClasses(null, [booking]);
+    const row = {
+      row_index: key.row_index,
+      payload_hash: key.payload_hash,
+      class_id: booking.id,
+    };
+    this.batchRows.push({ batch_id: key.batch_id, ...row });
+    return { outcome: 'created', row };
   }
 
   rebookClass(

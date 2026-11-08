@@ -192,6 +192,29 @@ begin
 end
 $$;
 
+do $$
+declare
+  v_waiver uuid := waiver_customer_for_email('prepurchase@example.com', 'Prepurchase', 'Signer');
+  v_shopify uuid;
+begin
+  insert into document_assignments (template_id, subject_type, subject_id, status, form_version, completed_at)
+  values ('33333333-3333-4333-8333-333333333801', 'customer', v_waiver, 'completed', 1, '2026-11-03Z');
+  perform upsert_customer_if_newer(4805, 'Prepurchase', 'Signer', 'PrePurchase@example.com', null, now());
+  select id into v_shopify from customers where shopify_customer_id = 4805;
+  if v_shopify = v_waiver then
+    raise exception 'the probe expected Shopify to create a second customer row';
+  end if;
+  insert into class_participants (class_id, customer_id)
+  values ('44444444-4444-4444-8444-444444444803', v_shopify);
+
+  if (select array_agg(coalesce((signed_at at time zone 'UTC')::date::text, '-'))
+        from instructor_student_signatures('22222222-2222-4222-8222-222222222802', 'prepurchase', 100))
+     <> array['2026-11-03'] then
+    raise exception 'a waiver signed before Shopify created the same-email customer was not shown as signed';
+  end if;
+end
+$$;
+
 set local role anon;
 do $$
 begin

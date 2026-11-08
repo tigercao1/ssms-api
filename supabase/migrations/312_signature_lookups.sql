@@ -1,6 +1,3 @@
--- Admin lookup: instructors and customers whose name or email contains the
--- query, each with every document they completed (one row per signature,
--- or one row with null signature columns for someone who signed nothing).
 create function public.admin_signature_lookup(p_query text, p_limit int)
 returns table (
   subject_type    text,
@@ -61,9 +58,6 @@ revoke all on function public.admin_signature_lookup(text, int)
 grant execute on function public.admin_signature_lookup(text, int)
   to service_role;
 
--- An instructor's own students (participants of their classes that were not
--- cancelled) whose name or email contains the query, with when they last
--- signed any waiver. Returns the name and signing date only.
 create function public.instructor_student_signatures(
   p_instructor_id uuid,
   p_query text,
@@ -77,11 +71,14 @@ set search_path = public
 as $$
   select nullif(btrim(concat_ws(' ', c.first_name, c.last_name)), ''),
          (select max(a.completed_at)
-            from document_assignments a
+            from customers signer
+            join document_assignments a
+              on a.subject_type = 'customer'
+             and a.subject_id = signer.id
+             and a.status = 'completed'
             join document_templates t on t.id = a.template_id and t.kind = 'form'
-           where a.subject_type = 'customer'
-             and a.subject_id = c.id
-             and a.status = 'completed')
+           where signer.id = c.id
+              or lower(signer.email) = lower(c.email))
     from customers c
    where c.id in (
            select p.customer_id

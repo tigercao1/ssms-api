@@ -96,6 +96,7 @@ PATCH /admin/class-imports/:id/rows/:rowNo
 PATCH /admin/documents/forms/:id
 PATCH /admin/documents/templates/:id
 PATCH /admin/instructor-calendars/:instructorId
+PATCH /admin/instructors
 PATCH /admin/instructors/:id
 PATCH /admin/instructors/:id/activation
 PATCH /admin/instructors/:id/approval

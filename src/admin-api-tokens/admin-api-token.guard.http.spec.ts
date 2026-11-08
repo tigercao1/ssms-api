@@ -76,6 +76,32 @@ describe('SupabaseAuthGuard with an admin API token', () => {
       });
     });
 
+    it('bulk-edits instructors and records the token on the summary audit row', async () => {
+      const { id, token } = await seed();
+      const missing = '1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f';
+
+      const res = await http()
+        .patch('/admin/instructors')
+        .set('Authorization', bearer(token))
+        .send({ updates: [{ id: missing, displayOrder: 1 }] })
+        .expect(200);
+
+      expect(res.body).toEqual({
+        results: [
+          { id: missing, status: 'failed', error: 'Instructor not found' },
+        ],
+        summary: { updated: 0, unchanged: 0, failed: 1 },
+      });
+      expect(
+        ctx.audit.entries.find(
+          (e) => e.action === 'admin.instructors.bulk_update',
+        ),
+      ).toMatchObject({
+        actor: { userId: ADMIN, via: 'api_token', tokenId: id },
+        metadata: { rows: 1, failed: 1 },
+      });
+    });
+
     it('records the first use once and last use at most once a minute', async () => {
       const { id, token } = await seed();
       const row = () => ctx.repo.rows.find((r) => r.id === id)!;

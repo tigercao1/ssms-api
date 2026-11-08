@@ -5,6 +5,7 @@ export default async () => {
     ['../instructors/dto/trainer-status.dto']: require('../instructors/dto/trainer-status.dto'),
     ['../documents/dto/template.dto']: require('../documents/dto/template.dto'),
     ['../documents/dto/form.dto']: require('../documents/dto/form.dto'),
+    ['./dto/bulk-update-instructors.dto']: require('./dto/bulk-update-instructors.dto'),
     ['../booking/dto/booking.dto']: require('../booking/dto/booking.dto'),
     ['../insurance/dto/insurance.dto']: require('../insurance/dto/insurance.dto'),
     ['../class-import/dto/class-import.dto']: require('../class-import/dto/class-import.dto'),
@@ -578,6 +579,40 @@ export default async () => {
             ListInstructorsQueryDto: {
               page: { required: false, type: () => Number, minimum: 1 },
               limit: { required: false, type: () => Number, minimum: 1 },
+            },
+          },
+        ],
+        [
+          require('./dto/bulk-update-instructors.dto'),
+          {
+            BulkInstructorUpdateRowDto: {
+              id: { required: true, type: () => String, format: 'uuid' },
+              displayOrder: {
+                required: false,
+                type: () => Number,
+                nullable: true,
+                minimum: 0,
+                maximum: 2147483647,
+              },
+              isActive: { required: false, type: () => Boolean },
+              approvalStatus: {
+                required: false,
+                enum: ['approved', 'rejected'],
+              },
+              reason: { required: false, type: () => String, maxLength: 500 },
+            },
+            BulkUpdateInstructorsDto: {
+              updates: {
+                required: true,
+                type: () => [
+                  t['./dto/bulk-update-instructors.dto']
+                    .BulkInstructorUpdateRowDto,
+                ],
+                minItems: 1,
+                maxItems: 100,
+              },
+              dryRun: { required: false, type: () => Boolean },
+              atomic: { required: false, type: () => Boolean },
             },
           },
         ],

@@ -23,6 +23,28 @@ export interface AdminApiTokenRow {
 
 export type AdminApiTokenStatus = 'active' | 'expired' | 'revoked' | 'rotating';
 
+export interface AdminApiTokenSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  last4: string;
+  createdAt: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  status: AdminApiTokenStatus;
+}
+
+export interface IssuedAdminApiToken {
+  id: string;
+  name: string;
+  token: string;
+  prefix: string;
+  last4: string;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
 export function tokenStatus(
   row: AdminApiTokenRow,
   now: number,

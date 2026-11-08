@@ -1,6 +1,6 @@
 import {
   baseHandle,
-  handleCandidate,
+  handleCandidates,
   type HandleSource,
   isFallbackHandle,
 } from './instructor-handle';
@@ -11,7 +11,6 @@ function source(overrides: Partial<HandleSource> = {}): HandleSource {
   return {
     id: ID,
     display_name_en: 'Eddie Chen',
-    display_name_zh: null,
     first_name: null,
     ...overrides,
   };
@@ -29,65 +28,50 @@ describe('instructor handles', () => {
     expect(baseHandle(source({ display_name_en: name }))).toBe(expected);
   });
 
-  it('prefers the English display name over the legal first name and the Chinese name', () => {
+  it('prefers the English display name over the legal first name', () => {
     expect(
-      baseHandle(
-        source({
-          display_name_en: 'Vincent',
-          first_name: 'Wei',
-          display_name_zh: '小李',
-        }),
-      ),
+      baseHandle(source({ display_name_en: 'Vincent', first_name: 'Wei' })),
     ).toBe('vincent');
   });
 
   it('uses the legal first name when the English display name has no Latin characters', () => {
     expect(
-      baseHandle(
-        source({
-          display_name_en: '囧泥',
-          first_name: 'Yuhan',
-          display_name_zh: '小李',
-        }),
-      ),
+      baseHandle(source({ display_name_en: '囧泥', first_name: 'Yuhan' })),
     ).toBe('yuhan');
   });
 
-  it('uses the pinyin of the Chinese display name when neither English name slugifies', () => {
-    expect(
-      baseHandle(
-        source({
-          display_name_en: '乐乐',
-          first_name: '可平',
-          display_name_zh: '乐乐',
-        }),
-      ),
-    ).toBe('le-le');
-    expect(
-      baseHandle(source({ display_name_en: '', display_name_zh: '吕布' })),
-    ).toBe('lu-bu');
-  });
-
-  it('falls back to the uuid prefix when no name has usable characters', () => {
+  it('falls back to the uuid prefix when neither English nor legal first name slugifies', () => {
     expect(baseHandle(source({ display_name_en: '小李' }))).toBe(
       'instructor-3f1c2b7a',
     );
     expect(
-      baseHandle(source({ display_name_en: '', display_name_zh: '  ' })),
+      baseHandle(source({ display_name_en: '乐乐', first_name: '可平' })),
     ).toBe('instructor-3f1c2b7a');
+    expect(baseHandle(source({ display_name_en: '', first_name: '  ' }))).toBe(
+      'instructor-3f1c2b7a',
+    );
   });
 
   it('recognises only its own uuid-prefix fallback handles', () => {
     expect(isFallbackHandle('instructor-3f1c2b7a', ID)).toBe(true);
     expect(isFallbackHandle('instructor-3f1c2b7a-2', ID)).toBe(true);
+    expect(isFallbackHandle('instructor-3f1c2b7a-3f1c', ID)).toBe(true);
+    expect(isFallbackHandle('instructor-3f1c2b7a-3f1c2b', ID)).toBe(true);
+    expect(isFallbackHandle('instructor-3f1c2b7a-3f1c2b7a', ID)).toBe(true);
+    expect(isFallbackHandle('instructor-3f1c2b7a-9b8a', ID)).toBe(false);
     expect(isFallbackHandle('instructor-9b8a7c6d', ID)).toBe(false);
     expect(isFallbackHandle('instructor-3f1c2b7a-x', ID)).toBe(false);
     expect(isFallbackHandle('lele', ID)).toBe(false);
+    expect(isFallbackHandle('lele-3f1c', ID)).toBe(false);
+    expect(isFallbackHandle('eddie-2', ID)).toBe(false);
   });
 
-  it('numbers collisions from -2 upwards', () => {
-    expect(handleCandidate('eddie', 1)).toBe('eddie');
-    expect(handleCandidate('eddie', 2)).toBe('eddie-2');
-    expect(handleCandidate('eddie', 3)).toBe('eddie-3');
+  it('tries the plain handle, then 4, 6 and 8 hex of the instructor id', () => {
+    expect(handleCandidates('eddie', ID)).toEqual([
+      'eddie',
+      'eddie-3f1c',
+      'eddie-3f1c2b',
+      'eddie-3f1c2b7a',
+    ]);
   });
 });

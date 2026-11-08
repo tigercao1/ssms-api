@@ -115,18 +115,33 @@ describe('InstructorSyncService', () => {
       expect(query).not.toContain('our_team');
     });
 
-    it('adds -2, -3 when the handle is taken in Shopify or stored for someone else', async () => {
+    it('adds 4, then 6 hex of its own id when the handle is taken in Shopify or stored for someone else', async () => {
       const { repo, shopify, service } = setup();
       shopify.addEntry('eddie-chen', { ssms_id: OTHER_ID });
-      await repo.saveState(OTHER_ID, { shopify_handle: 'eddie-chen-2' });
+      await repo.saveState(OTHER_ID, { shopify_handle: 'eddie-chen-3f1c' });
 
       await service.sync(INSTRUCTOR_ID);
 
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
-        'eddie-chen-3',
+        'eddie-chen-3f1c2b',
       );
-      expect(shopify.entry('eddie-chen-3')?.fields.ssms_id).toBe(INSTRUCTOR_ID);
+      expect(shopify.entry('eddie-chen-3f1c2b')?.fields.ssms_id).toBe(
+        INSTRUCTOR_ID,
+      );
       expect(shopify.entry('eddie-chen')?.fields.ssms_id).toBe(OTHER_ID);
+    });
+
+    it('uses 8 hex of its own id when the 4 and 6 hex handles are taken too', async () => {
+      const { repo, shopify, service } = setup();
+      shopify.addEntry('eddie-chen', { ssms_id: OTHER_ID });
+      shopify.addEntry('eddie-chen-3f1c', { ssms_id: OTHER_ID });
+      shopify.addLegacyEntry('eddie-chen-3f1c2b', 'Someone Else');
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
+        'eddie-chen-3f1c2b7a',
+      );
     });
 
     it('treats an entry without an SSMS id as taken', async () => {
@@ -134,7 +149,7 @@ describe('InstructorSyncService', () => {
       shopify.addEntry('eddie-chen');
       await service.sync(INSTRUCTOR_ID);
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
-        'eddie-chen-2',
+        'eddie-chen-3f1c',
       );
     });
 
@@ -162,10 +177,20 @@ describe('InstructorSyncService', () => {
 
     it('gives up when every candidate handle is taken', async () => {
       const { repo, service } = setup();
-      repo.isHandleStoredByOther = () => Promise.resolve(true);
+      const checked: string[] = [];
+      repo.isHandleStoredByOther = (handle) => {
+        checked.push(handle);
+        return Promise.resolve(true);
+      };
       await expect(service.sync(INSTRUCTOR_ID)).rejects.toThrow(
         'No free handle',
       );
+      expect(checked).toEqual([
+        'eddie-chen',
+        'eddie-chen-3f1c',
+        'eddie-chen-3f1c2b',
+        'eddie-chen-3f1c2b7a',
+      ]);
     });
 
     it('uses a stored (paired) handle as-is and never renames it', async () => {
@@ -364,14 +389,68 @@ describe('InstructorSyncService', () => {
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('yuhan');
     });
 
-    it('uses the pinyin of the Chinese display name before the uuid prefix', async () => {
+    it('goes from the legal first name straight to the uuid prefix, ignoring the Chinese display name', async () => {
       const { repo, service } = setup(
         snapshotOf({
-          instructor: { display_name_en: '乐乐', display_name_zh: '乐乐' },
+          instructor: {
+            display_name_en: '乐乐',
+            display_name_zh: '乐乐',
+            first_name: '可平',
+          },
         }),
       );
       await service.sync(INSTRUCTOR_ID);
-      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('le-le');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
+        'instructor-3f1c2b7a',
+      );
+    });
+
+    it('adds hex of its own id to a taken legal first name', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({
+          instructor: { display_name_en: '囧泥', first_name: 'Yuhan' },
+        }),
+      );
+      shopify.addEntry('yuhan', { ssms_id: OTHER_ID });
+      await service.sync(INSTRUCTOR_ID);
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('yuhan-3f1c');
+    });
+
+    it('adds hex of its own id to a taken uuid-prefix handle and still heals it later', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: chineseOnly }),
+      );
+      await repo.saveState(OTHER_ID, { shopify_handle: 'instructor-3f1c2b7a' });
+      await service.sync(INSTRUCTOR_ID);
+      const entry = shopify.entry('instructor-3f1c2b7a-3f1c');
+      expect(entry?.fields.ssms_id).toBe(INSTRUCTOR_ID);
+
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { ...chineseOnly, display_name_en: 'Lele' } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('lele')?.id).toBe(entry?.id);
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('lele');
+    });
+
+    it('heals an old numbered uuid-prefix handle', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { ...chineseOnly, display_name_en: 'Lele' } }),
+      );
+      const old = shopify.addEntry('instructor-3f1c2b7a-2', {
+        ssms_id: INSTRUCTOR_ID,
+      });
+      await repo.saveState(INSTRUCTOR_ID, {
+        shopify_handle: 'instructor-3f1c2b7a-2',
+        shopify_metaobject_id: old.id,
+      });
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('lele')?.id).toBe(old.id);
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('lele');
     });
 
     it('renames a uuid-prefix handle once a better one exists, keeping the entry', async () => {
@@ -415,7 +494,7 @@ describe('InstructorSyncService', () => {
       );
       await service.sync(INSTRUCTOR_ID);
 
-      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('lele-2');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('lele-3f1c');
       expect(shopify.entry('lele')?.fields.ssms_id).toBe(OTHER_ID);
     });
 
@@ -461,6 +540,26 @@ describe('InstructorSyncService', () => {
       expect(shopify.entry('edward')).toBeUndefined();
       expect(shopify.entry('eddie-chen')?.fields.ssms_id).toBe(INSTRUCTOR_ID);
       expect(lastUpdate(shopify)).not.toHaveProperty('handle');
+    });
+
+    it('never renames an existing numbered handle', async () => {
+      const { repo, shopify, service } = setup();
+      const numbered = shopify.addEntry('eddie-chen-2', {
+        ssms_id: INSTRUCTOR_ID,
+      });
+      await repo.saveState(INSTRUCTOR_ID, {
+        shopify_handle: 'eddie-chen-2',
+        shopify_metaobject_id: numbered.id,
+      });
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('eddie-chen')).toBeUndefined();
+      expect(shopify.entry('eddie-chen-2')?.status).toBe('ACTIVE');
+      expect(lastUpdate(shopify)).not.toHaveProperty('handle');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
+        'eddie-chen-2',
+      );
     });
   });
 
@@ -583,21 +682,23 @@ describe('InstructorSyncService', () => {
 
       await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
 
-      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-2');
-      expect(shopify.entry('aaron-2')?.status).toBe('ACTIVE');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-3f1c');
+      expect(shopify.entry('aaron-3f1c')?.status).toBe('ACTIVE');
       expect(shopify.entry('aaron')).toBeUndefined();
     });
 
-    it('keeps adding suffixes past legacy handles that look like suffixes', async () => {
+    it('keeps adding id hex past legacy handles that already carry it', async () => {
       const { repo, shopify, service } = setup(
         snapshotOf({ instructor: { display_name_en: 'Aaron' } }),
       );
       shopify.addLegacyEntry('aaron', 'Aaron Wu');
-      shopify.addLegacyEntry('aaron-2', 'Aaron Li');
+      shopify.addLegacyEntry('aaron-3f1c', 'Aaron Li');
 
       await service.sync(INSTRUCTOR_ID);
 
-      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron-3');
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
+        'aaron-3f1c2b',
+      );
     });
 
     it('keeps a paired legacy handle and syncs it exactly as before', async () => {

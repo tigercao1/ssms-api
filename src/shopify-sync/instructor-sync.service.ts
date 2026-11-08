@@ -6,7 +6,7 @@ import {
 } from './instructor-fields.builder';
 import {
   baseHandle,
-  handleCandidate,
+  handleCandidates,
   type HandleSource,
   isFallbackHandle,
 } from './instructor-handle';
@@ -30,8 +30,6 @@ export interface ReconcileResult {
   instructors: number;
   orphaned: number;
 }
-
-export const MAX_HANDLE_ATTEMPTS = 50;
 
 @Injectable()
 export class InstructorSyncService {
@@ -152,8 +150,7 @@ export class InstructorSyncService {
       return { entry };
     }
     const legacyHandles = await this.legacy.handles();
-    for (let attempt = 1; attempt <= MAX_HANDLE_ATTEMPTS; attempt++) {
-      const candidate = handleCandidate(base, attempt);
+    for (const candidate of handleCandidates(base, instructor.id)) {
       if (
         legacyHandles.has(candidate) ||
         (await this.repo.isHandleStoredByOther(candidate, instructor.id))
@@ -196,8 +193,7 @@ export class InstructorSyncService {
   private async claimHandle(instructor: HandleSource): Promise<string> {
     const base = baseHandle(instructor);
     const legacyHandles = await this.legacy.handles();
-    for (let attempt = 1; attempt <= MAX_HANDLE_ATTEMPTS; attempt++) {
-      const candidate = handleCandidate(base, attempt);
+    for (const candidate of handleCandidates(base, instructor.id)) {
       if (legacyHandles.has(candidate)) {
         continue;
       }

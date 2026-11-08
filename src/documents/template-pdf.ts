@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto';
-import { PDFDict, PDFDocument, PDFName, type PDFPage } from '@cantoo/pdf-lib';
+import {
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  type PDFObject,
+  type PDFPage,
+  PDFRef,
+  PDFStream,
+} from '@cantoo/pdf-lib';
 import type { PageGeometry } from './documents.types';
 
 export const MAX_TEMPLATE_BYTES = 20 * 1024 * 1024;
@@ -92,7 +101,8 @@ function hasXfa(doc: PDFDocument): boolean {
  * password (owner-only encryption is removed, a user password is refused),
  * refuses XFA, flattens any AcroForm into page content, then copies the pages
  * into a fresh document so no encryption, form, document script or metadata
- * survives; `stripAnnotations` also drops every page annotation and page action.
+ * survives; `stripAnnotations` also keeps only the page keys printing needs and
+ * drops actions and attached files from page resources.
  */
 export async function normaliseTemplatePdf(
   input: Uint8Array,
@@ -123,10 +133,7 @@ async function normalise(
     source.getForm().flatten();
   }
   if (stripAnnotations) {
-    for (const page of source.getPages()) {
-      page.node.delete(PDFName.of('Annots'));
-      page.node.delete(PDFName.of('AA'));
-    }
+    stripActiveContent(source);
   }
   const output = await PDFDocument.create({ updateMetadata: false });
   const copied = await output.copyPages(source, source.getPageIndices());
@@ -141,6 +148,55 @@ async function normalise(
     pages: output.getPages().map(pageGeometry),
   };
 }
+const PRINTABLE_PAGE_KEYS = new Set([
+  'Type',
+  'Parent',
+  'MediaBox',
+  'CropBox',
+  'BleedBox',
+  'TrimBox',
+  'ArtBox',
+  'Rotate',
+  'Resources',
+  'Contents',
+  'Group',
+  'UserUnit',
+]);
+const ACTIVE_RESOURCE_KEYS = ['AA', 'AF', 'OPI'].map((key) => PDFName.of(key));
+const PARENT = PDFName.of('Parent');
+
+function stripActiveContent(doc: PDFDocument): void {
+  const seen = new Set<PDFObject>();
+  const visit = (object: PDFObject | undefined): void => {
+    const value =
+      object instanceof PDFRef ? doc.context.lookup(object) : object;
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    const dict = value instanceof PDFStream ? value.dict : value;
+    if (dict instanceof PDFDict) {
+      ACTIVE_RESOURCE_KEYS.forEach((key) => dict.delete(key));
+      for (const [key, child] of dict.entries()) {
+        if (key !== PARENT) {
+          visit(child);
+        }
+      }
+    } else if (value instanceof PDFArray) {
+      value.asArray().forEach(visit);
+    }
+  };
+  for (const page of doc.getPages()) {
+    for (const key of page.node.keys()) {
+      if (!PRINTABLE_PAGE_KEYS.has(key.decodeText())) {
+        page.node.delete(key);
+      }
+    }
+    visit(page.node.Resources());
+    visit(page.node);
+  }
+}
+
 const TOLERANCE = 0.01;
 
 /** Whether placed fields stay valid on `next`: same page count and the same visible box per page. */

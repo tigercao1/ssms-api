@@ -8,8 +8,12 @@ import {
   PDFObject,
   PDFStream,
   PDFString,
+  drawObject,
+  popGraphicsState,
+  pushGraphicsState,
   StandardFonts,
 } from '@cantoo/pdf-lib';
+import { signaturePng } from './png-fixtures';
 
 /** Template PDFs generated in test setup; no binary fixtures in the repo. */
 export type PdfFixture =
@@ -20,7 +24,11 @@ export type PdfFixture =
   | 'xfa'
   | 'rotated'
   | 'offsetCropBox'
-  | 'activeContent';
+  | 'activeContent'
+  | 'presStepsScript'
+  | 'pageAttachedFile'
+  | 'xObjectAttachedFile'
+  | 'image';
 
 async function base(
   pages: [number, number][] = [[612, 792]],
@@ -90,6 +98,32 @@ async function activeContent(): Promise<Uint8Array> {
   return doc.save();
 }
 
+async function withPageExtras(
+  add: (doc: PDFDocument, script: PDFObject, files: PDFObject) => void,
+): Promise<Uint8Array> {
+  const doc = await base([
+    [612, 792],
+    [612, 792],
+  ]);
+  const ctx = doc.context;
+  const script = ctx.register(
+    ctx.obj({ S: 'JavaScript', JS: PDFString.of('app.alert("active")') }),
+  );
+  const file = ctx.register(
+    ctx.flateStream('attached file', { Type: 'EmbeddedFile' }),
+  );
+  const fileSpec = ctx.register(
+    ctx.obj({
+      Type: 'Filespec',
+      F: PDFString.of('attached.txt'),
+      AFRelationship: 'Supplement',
+      EF: { F: file },
+    }),
+  );
+  add(doc, script, ctx.obj([fileSpec]));
+  return doc.save();
+}
+
 const builders: Record<PdfFixture, () => Promise<Uint8Array>> = {
   normal: async () =>
     (
@@ -142,6 +176,47 @@ const builders: Record<PdfFixture, () => Promise<Uint8Array>> = {
     return doc.save();
   },
   activeContent,
+  presStepsScript: () =>
+    withPageExtras((doc, script) =>
+      doc
+        .getPage(0)
+        .node.set(
+          PDFName.of('PresSteps'),
+          doc.context.obj({ Type: 'NavNode', NA: script, PA: script }),
+        ),
+    ),
+  pageAttachedFile: () =>
+    withPageExtras((doc, _script, files) =>
+      doc.getPage(0).node.set(PDFName.of('AF'), files),
+    ),
+  xObjectAttachedFile: () =>
+    withPageExtras((doc, script, files) => {
+      const page = doc.getPage(0);
+      const form = doc.context.register(
+        doc.context.flateStream('72 300 m 300 300 l S', {
+          Type: 'XObject',
+          Subtype: 'Form',
+          BBox: [0, 0, 612, 792],
+          AF: files,
+          AA: { O: script },
+        }),
+      );
+      page.node.setXObject(PDFName.of('Extra'), form);
+      page.pushOperators(
+        pushGraphicsState(),
+        drawObject('Extra'),
+        popGraphicsState(),
+      );
+    }),
+  image: async () => {
+    const doc = await base([
+      [612, 792],
+      [612, 792],
+    ]);
+    const image = await doc.embedPng(signaturePng());
+    doc.getPage(0).drawImage(image, { x: 72, y: 400, width: 300, height: 100 });
+    return doc.save();
+  },
 };
 
 /** Builds one template fixture PDF. */
@@ -158,6 +233,8 @@ export async function pdfOfSize(
 
 const ACTIVE_KEYS = new Set([
   'AA',
+  'AF',
+  'PresSteps',
   'A',
   'OpenAction',
   'JS',

@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { PDFDocument } from '@cantoo/pdf-lib';
+import { PDFDocument, PDFName, PDFRawStream } from '@cantoo/pdf-lib';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import {
@@ -574,9 +574,7 @@ describe('form versions with an original PDF', () => {
       ).toEqual([published.source_key, draft.source_key]);
     });
 
-    it('strips annotations, page and document actions, scripts and attached files from the stored original and the signed copy', async () => {
-      const input = await pdfFixture('activeContent');
-      expect(await activeContentIn(input)).toContain('JS');
+    const publishAndSign = async (input: Uint8Array) => {
       const id = await draftForm();
 
       await uploadPdf(id, input);
@@ -591,8 +589,6 @@ describe('form versions with an original PDF', () => {
 
       const [published] = adminRepo.forms.get(id)!.versions;
       const original = storage.objects.get(published.source_key!)!.body;
-      expect(await activeContentIn(original)).toEqual([]);
-      expect(await pdftotext(original)).toContain('Alice Example');
       forms.seedForm('active-content', [
         formVersion(id, 'en', 1, { ...published }),
       ]);
@@ -612,8 +608,56 @@ describe('form versions with an original PDF', () => {
         })
         .expect(201);
       const signed = storage.objects.get(forms.signed[0].signed_key!)!.body;
-      expect(await activeContentIn(signed)).toEqual([]);
       expect((await pdftotext(signed)).split('\f')[0]).toContain('Mia Chen');
+      return { original, signed };
+    };
+
+    it.each([
+      [
+        'annotations, page and document actions, scripts and attached files',
+        'activeContent',
+      ],
+      ['a page PresSteps script', 'presStepsScript'],
+      ['a page AF attached file', 'pageAttachedFile'],
+      ['a form XObject attached file and action', 'xObjectAttachedFile'],
+    ] as const)(
+      'strips %s from the stored original and the signed copy',
+      async (_case, fixture) => {
+        const input = await pdfFixture(fixture);
+        expect(await activeContentIn(input)).not.toEqual([]);
+
+        const { original, signed } = await publishAndSign(input);
+
+        expect(await activeContentIn(original)).toEqual([]);
+        expect(await activeContentIn(signed)).toEqual([]);
+        expect(await pdftotext(original)).toContain('Page 1');
+      },
+    );
+
+    it('keeps the text and images of an ordinary PDF in the stored original and the signed copy', async () => {
+      const imagesIn = async (bytes: Uint8Array) =>
+        (await PDFDocument.load(bytes)).context
+          .enumerateIndirectObjects()
+          .filter(
+            ([, object]) =>
+              object instanceof PDFRawStream &&
+              object.dict.get(PDFName.of('Subtype')) === PDFName.of('Image'),
+          ).length;
+      const input = await pdfFixture('image');
+
+      const { original, signed } = await publishAndSign(input);
+
+      expect(await imagesIn(original)).toBe(await imagesIn(input));
+      expect(await imagesIn(signed)).toBeGreaterThan(await imagesIn(input));
+      expect(await pdftotext(original)).toMatch(/Page 1[\s\S]*Page 2/);
+      for (const bytes of [original, signed]) {
+        expect(
+          inkIn(
+            await renderPage(bytes, 1),
+            pixelRect({ x: 72, y: 400, w: 300, h: 100 }, LETTER),
+          ),
+        ).toBeGreaterThan(0);
+      }
     });
 
     it('refuses a PDF too complex to normalise within the worker limits with a 422 and keeps working', async () => {

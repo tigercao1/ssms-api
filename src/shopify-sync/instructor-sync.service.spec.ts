@@ -283,7 +283,7 @@ describe('InstructorSyncService', () => {
       expect(lastUpdate(shopify)).not.toHaveProperty('handle');
     });
 
-    it('never sends sort_order to an existing entry', async () => {
+    it('writes the display order over the order in Shopify on every sync', async () => {
       const { repo, shopify, service } = setup(
         snapshotOf({ instructor: { display_order: 5 } }),
       );
@@ -291,25 +291,40 @@ describe('InstructorSyncService', () => {
       expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('5');
       shopify.entry('eddie-chen')!.fields.sort_order = '11';
 
-      repo.snapshots.set(
-        INSTRUCTOR_ID,
-        snapshotOf({ instructor: { display_order: null } }),
-      );
       await service.sync(INSTRUCTOR_ID);
+      expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('5');
+
       repo.snapshots.set(
         INSTRUCTOR_ID,
         snapshotOf({ instructor: { display_order: 3 } }),
       );
       await service.sync(INSTRUCTOR_ID);
+      expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('3');
+    });
 
-      expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('11');
-      expect(lastUpdate(shopify).fields.map((f) => f.key)).not.toContain(
-        'sort_order',
+    it('clears the order in Shopify when the display order is unset', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { display_order: 5 } }),
       );
+      await service.sync(INSTRUCTOR_ID);
+
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { display_order: null } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('');
+      expect(lastUpdate(shopify).fields).toContainEqual({
+        key: 'sort_order',
+        value: '',
+      });
     });
 
     it('adopts an unlinked entry that already carries its SSMS id', async () => {
-      const { repo, shopify, service } = setup();
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { display_order: 4 } }),
+      );
       const own = shopify.addEntry('eddie', {
         ssms_id: INSTRUCTOR_ID,
         sort_order: '7',
@@ -320,7 +335,7 @@ describe('InstructorSyncService', () => {
       expect(ssmsEntries(shopify)).toHaveLength(1);
       expect(shopify.entry('eddie')?.fields).toMatchObject({
         name: '陈艾迪',
-        sort_order: '7',
+        sort_order: '4',
       });
       expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
         shopify_handle: 'eddie',
@@ -511,7 +526,11 @@ describe('InstructorSyncService', () => {
       repo.snapshots.set(
         INSTRUCTOR_ID,
         snapshotOf({
-          instructor: { ...chineseOnly, display_name_en: 'Lele 乐乐' },
+          instructor: {
+            ...chineseOnly,
+            display_name_en: 'Lele 乐乐',
+            display_order: 11,
+          },
         }),
       );
       await service.sync(INSTRUCTOR_ID);

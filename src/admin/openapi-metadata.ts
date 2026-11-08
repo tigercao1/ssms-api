@@ -4,6 +4,7 @@ export default async () => {
     ['../instructors/dto/certification.dto']: require('../instructors/dto/certification.dto'),
     ['../instructors/dto/trainer-status.dto']: require('../instructors/dto/trainer-status.dto'),
     ['../documents/dto/template.dto']: require('../documents/dto/template.dto'),
+    ['../documents/dto/form.dto']: require('../documents/dto/form.dto'),
     ['../booking/dto/booking.dto']: require('../booking/dto/booking.dto'),
     ['../insurance/dto/insurance.dto']: require('../insurance/dto/insurance.dto'),
     ['../class-import/dto/class-import.dto']: require('../class-import/dto/class-import.dto'),
@@ -416,6 +417,65 @@ export default async () => {
                 minItems: 1,
               },
             },
+          },
+        ],
+        [
+          require('../documents/dto/form.dto'),
+          {
+            CreateFormDto: {
+              slug: { required: true, type: () => String, maxLength: 60 },
+              titleEn: { required: true, type: () => String },
+              titleZh: { required: false, type: () => String, nullable: true },
+            },
+            UpdateFormDto: {
+              titleEn: { required: false, type: () => String },
+              titleZh: { required: false, type: () => String, nullable: true },
+            },
+            FormFieldDto: {
+              key: { required: true, type: () => String },
+              type: {
+                required: true,
+                enum: ['email', 'date', 'text', 'signature'],
+              },
+              label: { required: true, type: () => String },
+              required: { required: true, type: () => Boolean },
+            },
+            SaveFormDraftDto: {
+              title: { required: true, type: () => String },
+              bodyMarkdown: { required: true, type: () => String },
+              fields: {
+                required: false,
+                type: () => [t['../documents/dto/form.dto'].FormFieldDto],
+                minItems: 1,
+              },
+            },
+            SignatureLookupQueryDto: {
+              q: { required: true, type: () => String, minLength: 2 },
+            },
+            StudentSignaturesQueryDto: {
+              q: { required: false, type: () => String },
+            },
+          },
+        ],
+        [
+          require('../documents/dto/complete-form.dto'),
+          {
+            CompleteFormDto: {
+              lang: { required: true, enum: ['en', 'zh'] },
+              version: { required: true, type: () => Number, minimum: 1 },
+              answers: {
+                required: true,
+                type: 'object',
+                additionalProperties: true,
+              },
+              signatures: {
+                required: false,
+                type: 'object',
+                additionalProperties: true,
+              },
+              consent: { required: true, type: () => Boolean },
+            },
+            FormQueryDto: { lang: { required: false, enum: ['en', 'zh'] } },
           },
         ],
         [

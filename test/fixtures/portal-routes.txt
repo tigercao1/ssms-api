@@ -52,6 +52,7 @@ GET /admin/insurance/records
 GET /admin/insurance/requests
 GET /admin/insurance/summary
 GET /admin/lesson-types
+GET /admin/openapi.json
 GET /admin/pages
 GET /admin/pages/:id/content
 GET /admin/pages/:id/download

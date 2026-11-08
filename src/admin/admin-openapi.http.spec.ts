@@ -69,6 +69,10 @@ describe('GET /admin/openapi.json', () => {
         'post',
       ),
     ).toBeDefined();
+    expect(
+      operation('/admin/documents/forms/{id}/versions/{lang}', 'put'),
+    ).toBeDefined();
+    expect(operation('/admin/signatures', 'get')).toBeDefined();
     expect(operation('/admin/openapi.json', 'get')).toBeDefined();
   });
 
@@ -77,6 +81,7 @@ describe('GET /admin/openapi.json', () => {
     expect(paths.every((path) => path.startsWith('/admin/'))).toBe(true);
     expect(paths).not.toContain('/me/instructor');
     expect(paths).not.toContain('/admin/google/oauth/callback');
+    expect(paths.some((path) => path.startsWith('/sign/'))).toBe(false);
   });
 
   it('includes request body schemas inferred from the DTOs', () => {
@@ -92,6 +97,10 @@ describe('GET /admin/openapi.json', () => {
         approvalStatus: { enum: ['approved', 'rejected'] },
         reason: { type: 'string', maxLength: 500 },
       },
+    });
+    expect(bodySchema('/admin/documents/forms', 'post')).toMatchObject({
+      required: ['slug', 'titleEn'],
+      properties: { slug: { maxLength: 60 }, titleEn: { type: 'string' } },
     });
   });
 

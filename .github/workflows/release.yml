@@ -140,3 +140,21 @@ jobs:
         env:
           PORTAL_DISPATCH_TOKEN: ${{ secrets.PORTAL_DISPATCH_TOKEN }}
         run: GH_TOKEN="$PORTAL_DISPATCH_TOKEN" gh workflow run api-dependency.yml --repo tigercao1/ssms-portal --ref main
+
+  deploy-sign:
+    name: Deploy signing app
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: flyctl deploy --remote-only --config fly.sign.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_SIGN_API_TOKEN }}

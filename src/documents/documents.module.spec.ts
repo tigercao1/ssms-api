@@ -7,7 +7,10 @@ import { DocumentAssignmentsRepository } from './document-assignments.repository
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentCompletedEmailHandler } from './document-completed-email.handler';
 import { DocumentCompletedHandler } from './document-completed.handler';
+import { DocumentSigningService } from './document-signing.service';
+import { FormSigningService } from './form-signing.service';
 import { MeDocumentsService } from './me-documents.service';
+import { PdfWorkQueue } from './pdf-work-queue';
 import {
   PrivateStorageClient,
   R2PrivateStorageClient,
@@ -43,6 +46,24 @@ describe('DocumentsModule in the app', () => {
     expect(moduleRef.get(CertificationExpiryService)).toBeInstanceOf(
       CertificationExpiryService,
     );
+    await moduleRef.close();
+  });
+
+  it('renders portal and public form PDFs through one queue', async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(SUPABASE_CLIENT)
+      .useValue({ from: jest.fn(), rpc: jest.fn() })
+      .compile();
+    const queueOf = (service: object) =>
+      (service as { pdfQueue: PdfWorkQueue }).pdfQueue;
+
+    const queue = moduleRef.get(PdfWorkQueue, { strict: false });
+    expect(queueOf(moduleRef.get(FormSigningService, { strict: false }))).toBe(
+      queue,
+    );
+    expect(
+      queueOf(moduleRef.get(DocumentSigningService, { strict: false })),
+    ).toBe(queue);
     await moduleRef.close();
   });
 });

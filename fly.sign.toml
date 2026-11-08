@@ -1,0 +1,31 @@
+app = 'ssms-sign-api'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[processes]
+  app = 'node dist/main-sign'
+
+[env]
+  NODE_OPTIONS = '--max-old-space-size=320'
+  SUPABASE_MAX_CONCURRENT_REQUESTS = '4'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 2
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = '30s'
+    interval = '30s'
+    method = 'GET'
+    path = '/health'
+    timeout = '5s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'

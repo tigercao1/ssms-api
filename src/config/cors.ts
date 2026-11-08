@@ -37,3 +37,13 @@ export function buildCorsOptions(origins: string[]): CorsOptions {
     maxAge: 86400, // cache preflight for 24h
   };
 }
+
+export function buildSigningCorsOptions(origins: string[]): CorsOptions {
+  return {
+    origin: origins,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type'],
+    credentials: false,
+    maxAge: 86400,
+  };
+}

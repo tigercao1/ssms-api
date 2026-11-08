@@ -36,30 +36,22 @@ import {
   SupabaseDocumentExportsRepository,
 } from './document-exports.repository';
 import { DocumentExportsService } from './document-exports.service';
-import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentOnboardingService } from './document-onboarding.service';
 import { DocumentPublishingService } from './document-publishing.service';
 import { DocumentRemindersAuthGuard } from './document-reminders-auth.guard';
 import { DocumentRemindersService } from './document-reminders.service';
 import { DocumentSigningService } from './document-signing.service';
 import {
-  DocumentSubjectsRepository,
-  SupabaseDocumentSubjectsRepository,
-} from './document-subjects.repository';
-import {
   DocumentTemplatesRepository,
   SupabaseDocumentTemplatesRepository,
 } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
+import { DocumentsCoreModule } from './documents-core.module';
 import {
   FormAdminRepository,
   SupabaseFormAdminRepository,
 } from './form-admin.repository';
-import {
-  FormSigningRepository,
-  SupabaseFormSigningRepository,
-} from './form-signing.repository';
-import { FormSigningService } from './form-signing.service';
+import { FormSigningModule } from './form-signing.module';
 import { InternalDocumentsController } from './internal-documents.controller';
 import { MeCertificationUploadsController } from './me-certification-uploads.controller';
 import { MeCertificationUploadsService } from './me-certification-uploads.service';
@@ -68,17 +60,15 @@ import { MeDocumentsService } from './me-documents.service';
 import { MeEmploymentLetterController } from './me-employment-letter.controller';
 import { MeStudentSignaturesController } from './me-student-signatures.controller';
 import { EmploymentLetterService } from './employment-letter.service';
-import { PdfWorkQueue } from './pdf-work-queue';
-import { SignFormsController } from './sign-forms.controller';
-import { SignFormsThrottlerGuard } from './sign-forms-throttler.guard';
 import { SignatureLookupsService } from './signature-lookups.service';
-import {
-  PrivateStorageClient,
-  R2PrivateStorageClient,
-} from './private-storage.client';
 
 @Module({
-  imports: [MailerModule, SeasonsModule],
+  imports: [
+    MailerModule,
+    SeasonsModule,
+    DocumentsCoreModule,
+    FormSigningModule,
+  ],
   controllers: [
     AdminDocumentTemplatesController,
     AdminDocumentAssignmentsController,
@@ -90,13 +80,11 @@ import {
     MeCertificationUploadsController,
     AdminCertificationUploadsController,
     AdminDocumentReviewsController,
-    SignFormsController,
     AdminFormsController,
     AdminSignaturesController,
     MeStudentSignaturesController,
   ],
   providers: [
-    { provide: PrivateStorageClient, useClass: R2PrivateStorageClient },
     {
       provide: DocumentTemplatesRepository,
       useClass: SupabaseDocumentTemplatesRepository,
@@ -106,14 +94,9 @@ import {
       useClass: SupabaseDocumentAssignmentsRepository,
     },
     {
-      provide: DocumentSubjectsRepository,
-      useClass: SupabaseDocumentSubjectsRepository,
-    },
-    {
       provide: DocumentExportsRepository,
       useClass: SupabaseDocumentExportsRepository,
     },
-    PdfWorkQueue,
     DocumentExportQueue,
     DocumentExportOwner,
     DocumentExportsService,
@@ -128,7 +111,6 @@ import {
       provide: DocumentCompletedHandler,
       useClass: DocumentCompletedEmailHandler,
     },
-    DocumentNotificationsService,
     DocumentOnboardingService,
     DocumentRemindersService,
     DocumentRemindersAuthGuard,
@@ -142,22 +124,16 @@ import {
     AdminCertificationUploadsService,
     AdminDocumentReviewsService,
     CertificationExpiryService,
-    { provide: FormSigningRepository, useClass: SupabaseFormSigningRepository },
-    FormSigningService,
-    SignFormsThrottlerGuard,
     { provide: FormAdminRepository, useClass: SupabaseFormAdminRepository },
     AdminFormsService,
     SignatureLookupsService,
   ],
   exports: [
-    PrivateStorageClient,
+    DocumentsCoreModule,
     DocumentTemplatesRepository,
     DocumentAssignmentsRepository,
-    DocumentSubjectsRepository,
-    PdfWorkQueue,
     DocumentAssignmentsService,
     MeDocumentsService,
-    DocumentNotificationsService,
     DocumentOnboardingService,
     CertificationExpiryService,
     DocumentRemindersService,

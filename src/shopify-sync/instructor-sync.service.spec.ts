@@ -18,6 +18,16 @@ import { ShopifyUserErrorsError } from '../shopify/shopify.errors';
 
 const OTHER_ID = '9b8a7c6d-0000-4000-8000-000000000001';
 
+function lastUpdate(shopify: FakeShopify) {
+  return shopify.calls
+    .filter((c) => c.operation === 'SsmsInstructorUpdate')
+    .at(-1)?.variables.metaobject as {
+    handle?: string;
+    redirectNewHandle?: boolean;
+    fields: { key: string }[];
+  };
+}
+
 function setupGoLive(snapshot: InstructorSnapshot = readySnapshotOf()) {
   const repo = new InMemorySyncRepository();
   repo.snapshots.set(snapshot.instructor.id, snapshot);
@@ -138,9 +148,11 @@ describe('InstructorSyncService', () => {
       });
     });
 
-    it('falls back to instructor-<uuid prefix> when the English name does not slugify', async () => {
+    it('falls back to instructor-<uuid prefix> when no name slugifies', async () => {
       const { repo, service } = setup(
-        snapshotOf({ instructor: { display_name_en: '小李' } }),
+        snapshotOf({
+          instructor: { display_name_en: '小李', display_name_zh: null },
+        }),
       );
       await service.sync(INSTRUCTOR_ID);
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
@@ -171,10 +183,12 @@ describe('InstructorSyncService', () => {
       expect(
         shopify.operations().filter((op) => op.startsWith('SsmsInstructor')),
       ).toEqual([
+        'SsmsInstructorEntries',
         'SsmsInstructorByHandle',
         'SsmsInstructorUpsert',
         'SsmsInstructorTranslations',
-        'SsmsInstructorUpsert',
+        'SsmsInstructorById',
+        'SsmsInstructorUpdate',
         'SsmsInstructorTranslations',
       ]);
     });
@@ -217,6 +231,236 @@ describe('InstructorSyncService', () => {
         ShopifyUserErrorsError,
       );
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_metaobject_id).toBeNull();
+    });
+  });
+
+  describe('existing entry', () => {
+    const ssmsEntries = (shopify: FakeShopify) =>
+      [...shopify.entries.values()].filter((e) => e.type === 'ssms_instructor');
+
+    it('follows an entry renamed in Shopify and adopts its handle without creating another', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      const created = shopify.renameEntry('eddie-chen', 'eddie');
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { bio_zh: '新简介' } }),
+      );
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(ssmsEntries(shopify)).toHaveLength(1);
+      expect(shopify.entry('eddie')?.fields.introduction).toBe('新简介');
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_handle: 'eddie',
+        shopify_metaobject_id: created.id,
+      });
+      expect(lastUpdate(shopify)).not.toHaveProperty('handle');
+    });
+
+    it('never sends sort_order to an existing entry', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: { display_order: 5 } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('5');
+      shopify.entry('eddie-chen')!.fields.sort_order = '11';
+
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { display_order: null } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { display_order: 3 } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('eddie-chen')?.fields.sort_order).toBe('11');
+      expect(lastUpdate(shopify).fields.map((f) => f.key)).not.toContain(
+        'sort_order',
+      );
+    });
+
+    it('adopts an unlinked entry that already carries its SSMS id', async () => {
+      const { repo, shopify, service } = setup();
+      const own = shopify.addEntry('eddie', {
+        ssms_id: INSTRUCTOR_ID,
+        sort_order: '7',
+      });
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(ssmsEntries(shopify)).toHaveLength(1);
+      expect(shopify.entry('eddie')?.fields).toMatchObject({
+        name: '陈艾迪',
+        sort_order: '7',
+      });
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_handle: 'eddie',
+        shopify_metaobject_id: own.id,
+      });
+    });
+
+    it('creates the entry again under the stored handle once the linked one is deleted', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      const oldId = shopify.entry('eddie-chen')?.id;
+      shopify.removeEntry('eddie-chen');
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      const recreated = shopify.entry('eddie-chen');
+      expect(recreated?.id).not.toBe(oldId);
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_metaobject_id).toBe(
+        recreated?.id,
+      );
+    });
+
+    it('refuses to write through a stored id that belongs to another instructor', async () => {
+      const { repo, shopify, service } = setup();
+      const other = shopify.addEntry('other', { ssms_id: OTHER_ID });
+      await repo.saveState(INSTRUCTOR_ID, {
+        shopify_handle: 'eddie-chen',
+        shopify_metaobject_id: other.id,
+      });
+
+      await expect(service.sync(INSTRUCTOR_ID)).rejects.toThrow(OTHER_ID);
+      expect(shopify.entry('eddie-chen')).toBeUndefined();
+    });
+
+    it('sets the renamed entry to DRAFT when the instructor is hidden', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      shopify.renameEntry('eddie-chen', 'eddie');
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { is_active: false } }),
+      );
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('draft');
+
+      expect(shopify.entry('eddie')?.status).toBe('DRAFT');
+      expect(shopify.entry('eddie-chen')).toBeUndefined();
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('eddie');
+    });
+  });
+
+  describe('handle fallback', () => {
+    const chineseOnly = { display_name_en: '乐乐', display_name_zh: null };
+
+    it('uses the legal first name when the English display name has no Latin characters', async () => {
+      const { repo, service } = setup(
+        snapshotOf({
+          instructor: {
+            display_name_en: '囧泥',
+            display_name_zh: null,
+            first_name: 'Yuhan',
+          },
+        }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('yuhan');
+    });
+
+    it('uses the pinyin of the Chinese display name before the uuid prefix', async () => {
+      const { repo, service } = setup(
+        snapshotOf({
+          instructor: { display_name_en: '乐乐', display_name_zh: '乐乐' },
+        }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('le-le');
+    });
+
+    it('renames a uuid-prefix handle once a better one exists, keeping the entry', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: chineseOnly }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      const entry = shopify.entry('instructor-3f1c2b7a');
+      expect(entry).toBeDefined();
+
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({
+          instructor: { ...chineseOnly, display_name_en: 'Lele 乐乐' },
+        }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('instructor-3f1c2b7a')).toBeUndefined();
+      expect(shopify.entry('lele')?.id).toBe(entry?.id);
+      expect(lastUpdate(shopify)).toMatchObject({
+        handle: 'lele',
+        redirectNewHandle: true,
+      });
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_handle: 'lele',
+        shopify_metaobject_id: entry?.id,
+      });
+    });
+
+    it('skips a better handle that someone else holds', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: chineseOnly }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      shopify.addEntry('lele', { ssms_id: OTHER_ID });
+
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { ...chineseOnly, display_name_en: 'Lele' } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('lele-2');
+      expect(shopify.entry('lele')?.fields.ssms_id).toBe(OTHER_ID);
+    });
+
+    it('moves to its own entry that already holds the better handle and drafts the uuid-prefix one', async () => {
+      const { repo, shopify, service } = setup(
+        snapshotOf({ instructor: chineseOnly }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      const renamed = shopify.addEntry('lele', {
+        ssms_id: INSTRUCTOR_ID,
+        sort_order: '11',
+      });
+
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({
+          instructor: { ...chineseOnly, display_name_en: 'Lele 乐乐' },
+        }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('lele')).toMatchObject({
+        status: 'ACTIVE',
+        fields: { sort_order: '11', name: 'Lele 乐乐' },
+      });
+      expect(shopify.entry('instructor-3f1c2b7a')?.status).toBe('DRAFT');
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_handle: 'lele',
+        shopify_metaobject_id: renamed.id,
+      });
+    });
+
+    it('never renames a handle that is not a uuid-prefix fallback', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { display_name_en: 'Edward' } }),
+      );
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(shopify.entry('edward')).toBeUndefined();
+      expect(shopify.entry('eddie-chen')?.fields.ssms_id).toBe(INSTRUCTOR_ID);
+      expect(lastUpdate(shopify)).not.toHaveProperty('handle');
     });
   });
 
@@ -368,6 +612,7 @@ describe('InstructorSyncService', () => {
       expect(shopify.entry('aaron')?.status).toBe('ACTIVE');
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe('aaron');
       expect(ssmsOps(shopify)).toEqual([
+        'SsmsInstructorEntries',
         'SsmsInstructorByHandle',
         'SsmsInstructorUpsert',
         'SsmsInstructorTranslations',
@@ -491,6 +736,7 @@ describe('InstructorSyncService', () => {
 
       expect(shopify.entry('eddie')?.status).toBe('ACTIVE');
       expect(ssmsOps(shopify)).toEqual([
+        'SsmsInstructorEntries',
         'SsmsInstructorByHandle',
         'SsmsInstructorUpsert',
         'SsmsInstructorTranslations',

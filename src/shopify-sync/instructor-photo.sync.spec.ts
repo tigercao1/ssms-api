@@ -116,7 +116,7 @@ describe('photo sync', () => {
     expect(shopify.files.has(oldId as string)).toBe(false);
     const ops = shopify.operations();
     expect(ops.lastIndexOf('SsmsPhotoDelete')).toBeGreaterThan(
-      ops.lastIndexOf('SsmsInstructorUpsert'),
+      ops.lastIndexOf('SsmsInstructorUpdate'),
     );
   });
 
@@ -324,7 +324,7 @@ describe('extra photo slots', () => {
     });
     const ops = shopify.operations();
     expect(ops.lastIndexOf('SsmsPhotoDelete')).toBeGreaterThan(
-      ops.lastIndexOf('SsmsInstructorUpsert'),
+      ops.lastIndexOf('SsmsInstructorUpdate'),
     );
   });
 
@@ -332,11 +332,11 @@ describe('extra photo slots', () => {
     const { shopify, service } = setup(withPhoto);
     await service.sync(INSTRUCTOR_ID);
     await service.sync(INSTRUCTOR_ID);
-    const upserts = shopify.calls.filter(
-      (c) => c.operation === 'SsmsInstructorUpsert',
+    const writes = shopify.calls.filter((c) =>
+      ['SsmsInstructorUpsert', 'SsmsInstructorUpdate'].includes(c.operation),
     );
-    expect(upserts).toHaveLength(2);
-    for (const call of upserts) {
+    expect(writes).toHaveLength(2);
+    for (const call of writes) {
       expect(JSON.stringify(call.variables)).not.toMatch(/image_[12]/);
     }
   });

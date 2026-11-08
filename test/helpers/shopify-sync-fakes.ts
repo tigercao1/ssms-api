@@ -37,6 +37,7 @@ export function instructorRow(
     id: INSTRUCTOR_ID,
     display_name_en: 'Eddie Chen',
     display_name_zh: '陈艾迪',
+    first_name: null,
     bio_en: 'Loves powder.',
     bio_zh: '热爱粉雪。',
     profile_photo_url: null,
@@ -385,6 +386,7 @@ export interface FakeEntry {
   type: string;
   fields: Record<string, string>;
   status: string | undefined;
+  createdAt: string;
 }
 
 interface RegisteredTranslation {
@@ -419,6 +421,8 @@ export interface FakeVariables {
     translatableContentDigest: string;
   }[];
   metaobject: {
+    handle?: string;
+    redirectNewHandle?: boolean;
     fields?: { key: string; value: string }[];
     capabilities?: { publishable?: { status?: string } };
   };
@@ -455,12 +459,74 @@ export class FakeShopify {
         },
       };
     },
+    SsmsInstructorById: (v) => {
+      const entry = this.entryById(v.id);
+      return {
+        metaobject: entry
+          ? {
+              id: entry.id,
+              handle: entry.handle,
+              type: entry.type,
+              ssmsId:
+                entry.fields.ssms_id === undefined
+                  ? null
+                  : { value: entry.fields.ssms_id },
+            }
+          : null,
+      };
+    },
+    SsmsInstructorEntries: (v) => ({
+      metaobjects: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [...this.entries.values()]
+          .filter((e) => e.type === v.type)
+          .map((e) => ({
+            id: e.id,
+            handle: e.handle,
+            createdAt: e.createdAt,
+            capabilities: { publishable: { status: e.status } },
+            ssmsId:
+              e.fields.ssms_id === undefined
+                ? null
+                : { value: e.fields.ssms_id },
+          })),
+      },
+    }),
+    SsmsInstructorUpdate: (v) => {
+      const errors = this.takeErrors('SsmsInstructorUpdate');
+      const entry = this.entryById(v.id);
+      if (errors || !entry) {
+        return {
+          metaobjectUpdate: {
+            metaobject: null,
+            userErrors: errors ?? [
+              { field: ['id'], message: 'Record not found', code: 'NOT_FOUND' },
+            ],
+          },
+        };
+      }
+      if (v.metaobject.handle !== undefined) {
+        this.renameEntry(entry.handle, v.metaobject.handle);
+      }
+      for (const field of v.metaobject.fields ?? []) {
+        entry.fields[field.key] = field.value;
+      }
+      entry.status =
+        v.metaobject.capabilities?.publishable?.status ?? entry.status;
+      return {
+        metaobjectUpdate: {
+          metaobject: { id: entry.id, handle: entry.handle },
+          userErrors: [],
+        },
+      };
+    },
     SsmsInstructorByHandle: (v) => {
       const entry = this.entryAt(v.handle.type, v.handle.handle);
       return {
         metaobjectByHandle: entry
           ? {
               id: entry.id,
+              handle: entry.handle,
               ssmsId:
                 entry.fields.ssms_id === undefined
                   ? null
@@ -481,6 +547,7 @@ export class FakeShopify {
         type: v.handle.type,
         fields: {},
         status: undefined,
+        createdAt: this.nextCreatedAt(),
       };
       for (const field of v.metaobject.fields ?? []) {
         entry.fields[field.key] = field.value;
@@ -664,9 +731,29 @@ export class FakeShopify {
       type: 'ssms_instructor',
       fields,
       status: 'ACTIVE',
+      createdAt: this.nextCreatedAt(),
     };
     this.entries.set(`ssms_instructor/${handle}`, entry);
     return entry;
+  }
+
+  renameEntry(handle: string, newHandle: string): FakeEntry {
+    const entry = this.entry(handle);
+    if (!entry) {
+      throw new Error(`No entry at ${handle}`);
+    }
+    this.entries.delete(`ssms_instructor/${handle}`);
+    entry.handle = newHandle;
+    this.entries.set(`ssms_instructor/${newHandle}`, entry);
+    return entry;
+  }
+
+  removeEntry(handle: string): void {
+    this.entries.delete(`ssms_instructor/${handle}`);
+  }
+
+  private nextCreatedAt(): string {
+    return new Date(Date.UTC(2026, 0, 1, 0, 0, this.nextId)).toISOString();
   }
 
   addLegacyEntry(handle: string, name: string, status = 'ACTIVE'): FakeEntry {
@@ -676,6 +763,7 @@ export class FakeShopify {
       type: 'our_team',
       fields: { name },
       status,
+      createdAt: this.nextCreatedAt(),
     };
     this.entries.set(`our_team/${handle}`, entry);
     return entry;

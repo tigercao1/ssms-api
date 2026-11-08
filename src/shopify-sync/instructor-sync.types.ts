@@ -12,6 +12,7 @@ export interface SyncInstructorRow {
   id: string;
   display_name_en: string;
   display_name_zh: string | null;
+  first_name: string | null;
   bio_en: string | null;
   bio_zh: string | null;
   profile_photo_url: string | null;

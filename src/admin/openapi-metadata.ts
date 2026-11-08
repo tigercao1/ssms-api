@@ -672,6 +672,28 @@ export default async () => {
           },
         ],
         [
+          require('../admin-api-tokens/dto/admin-api-token.dto'),
+          {
+            CreateAdminApiTokenDto: {
+              name: { required: true, type: () => String, maxLength: 100 },
+              expiresAt: { required: true, type: () => String, nullable: true },
+            },
+            RotateAdminApiTokenDto: {
+              graceMinutes: {
+                required: false,
+                type: () => Number,
+                minimum: 0,
+                maximum: 1440,
+              },
+              expiresAt: {
+                required: false,
+                type: () => String,
+                nullable: true,
+              },
+            },
+          },
+        ],
+        [
           require('../public-api/dto/list-instructors-query.dto'),
           {
             ListInstructorsQueryDto: {
@@ -761,7 +783,7 @@ export default async () => {
         [
           require('../lessons/dto/list-classes-query.dto'),
           {
-            ListClassesQueryDto: {
+            ClassFiltersQueryDto: {
               from: { required: false, type: () => String },
               to: { required: false, type: () => String },
               instructorId: {
@@ -769,6 +791,28 @@ export default async () => {
                 type: () => String,
                 format: 'uuid',
               },
+              q: { required: false, type: () => String },
+              status: {
+                required: false,
+                type: () => [Object],
+                enum: ['completed', 'scheduled', 'no_show', 'cancelled'],
+                isArray: true,
+              },
+              lessonTypeId: {
+                required: false,
+                type: () => String,
+                format: 'uuid',
+              },
+              locationId: {
+                required: false,
+                type: () => String,
+                format: 'uuid',
+              },
+              createdFrom: { required: false, type: () => String },
+              createdTo: { required: false, type: () => String },
+              sort: { required: false, enum: ['createdAt', 'startsAt'] },
+            },
+            ListClassesQueryDto: {
               page: { required: false, type: () => Number, minimum: 1 },
               limit: { required: false, type: () => Number, minimum: 1 },
             },
@@ -955,7 +999,7 @@ export default async () => {
                 maximum: 12,
               },
             },
-            CreateBookingDto: {
+            BookingRowDto: {
               instructorId: {
                 required: true,
                 type: () => String,
@@ -981,15 +1025,25 @@ export default async () => {
                 format: 'uuid',
               },
               notes: { required: false, type: () => String, nullable: true },
-              repeat: {
-                required: false,
-                type: () => t['../booking/dto/booking.dto'].RepeatDto,
-              },
               status: {
                 required: false,
                 enum: ['completed', 'scheduled', 'no_show'],
               },
               addToCalendar: { required: false, type: () => Boolean },
+            },
+            CreateBookingDto: {
+              repeat: {
+                required: false,
+                type: () => t['../booking/dto/booking.dto'].RepeatDto,
+              },
+            },
+            BatchBookingDto: {
+              batchId: { required: true, type: () => String, format: 'uuid' },
+              bookings: {
+                required: true,
+                type: () => [t['../booking/dto/booking.dto'].BookingRowDto],
+                minItems: 1,
+              },
             },
             UpdateBookingDto: {
               startsAt: { required: false, type: () => String },

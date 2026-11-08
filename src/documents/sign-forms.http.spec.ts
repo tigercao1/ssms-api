@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -14,7 +17,14 @@ import {
 } from '../../test/helpers/form-signing-fakes';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { pdftotext } from '../../test/helpers/pdf-render';
-import { blankPng, signaturePng } from '../../test/helpers/png-fixtures';
+import {
+  assemblePng,
+  blankPng,
+  pngChunk,
+  pngChunks,
+  pngHeader,
+  signaturePng,
+} from '../../test/helpers/png-fixtures';
 import { MailerService } from '../mailer/mailer.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
@@ -35,6 +45,42 @@ const SLUG = 'lesson-waiver';
 const TEMPLATE_ID = randomUUID();
 const png = (buffer = signaturePng()) =>
   `data:image/png;base64,${buffer.toString('base64')}`;
+const chromiumSignature = () =>
+  readFileSync(join(__dirname, '../../test/fixtures/chromium-signature.png'));
+const [IHDR, IDAT, IEND] = pngChunks(signaturePng());
+const textBomb = (megabytes: number) =>
+  deflateSync(Buffer.alloc(megabytes * 1024 * 1024), { level: 9 });
+const TEXT_CHUNKS: [string, () => Buffer][] = [
+  ['tEXt', () => pngChunk('tEXt', Buffer.from('Comment\0signed on an iPad'))],
+  [
+    'zTXt',
+    () =>
+      pngChunk(
+        'zTXt',
+        Buffer.concat([Buffer.from('Comment\0\0'), textBomb(64)]),
+      ),
+  ],
+  [
+    'iTXt',
+    () =>
+      pngChunk(
+        'iTXt',
+        Buffer.concat([Buffer.from('Comment\0\x01\0\0\0'), textBomb(64)]),
+      ),
+  ],
+];
+const repeatedHeader = () =>
+  assemblePng([pngHeader(1, 1), ...pngChunks(blankPng(10_000, 10_000))]);
+const withBadCrc = () => {
+  const bytes = signaturePng();
+  bytes[bytes.length - 20] ^= 0xff;
+  return bytes;
+};
+const withIdatLength = (length: number) => {
+  const idat = Buffer.from(IDAT);
+  idat.writeUInt32BE(length, 0);
+  return assemblePng([IHDR, idat, IEND]);
+};
 
 describe('public form signing (/sign/forms)', () => {
   let app: INestApplication<App>;
@@ -509,8 +555,15 @@ describe('public form signing (/sign/forms)', () => {
       expect(forms.signed).toHaveLength(1);
     });
 
-    it('rejects a 10,000 × 10,000 signature without decoding it', async () => {
-      const bomb = png(blankPng(10_000, 10_000));
+    it.each<[string, () => Buffer]>([
+      ['a 10,000 × 10,000 signature', () => blankPng(10_000, 10_000)],
+      ['a 1 × 1 header in front of a 10,000 × 10,000 image', repeatedHeader],
+      [
+        'a signature carrying a compressed text bomb',
+        () => assemblePng([IHDR, TEXT_CHUNKS[1][1](), IDAT, IEND]),
+      ],
+    ])('rejects %s without decoding it', async (label, build) => {
+      const bomb = png(build());
       global.gc?.();
       const before = process.memoryUsage().rss;
       let peak = before;
@@ -525,10 +578,87 @@ describe('public form signing (/sign/forms)', () => {
       clearInterval(sampler);
       peak = Math.max(peak, process.memoryUsage().rss);
       console.log(
-        `10,000 × 10,000 signature: RSS +${((peak - before) / 1024 / 1024).toFixed(1)} MB`,
+        `${label}: RSS +${((peak - before) / 1024 / 1024).toFixed(1)} MB`,
       );
       expect(peak - before).toBeLessThan(50 * 1024 * 1024);
       expect(storage.objects.size).toBe(0);
+    });
+
+    it.each<[string, () => Buffer]>([
+      ['a 1 × 1 header in front of a 10,000 × 10,000 image', repeatedHeader],
+      [
+        'a second header after the image data',
+        () => assemblePng([IHDR, IDAT, IHDR, IEND]),
+      ],
+      ['image data before the header', () => assemblePng([IDAT, IHDR, IEND])],
+      [
+        'trailing bytes after the end chunk',
+        () => Buffer.concat([signaturePng(), Buffer.from('trailing')]),
+      ],
+      [
+        'image data after the end chunk',
+        () => assemblePng([IHDR, IDAT, IEND, IDAT]),
+      ],
+      ['no end chunk', () => assemblePng([IHDR, IDAT])],
+      ['a truncated image data chunk', () => signaturePng().subarray(0, -20)],
+      ['a chunk longer than the file', () => withIdatLength(0x7fffffff)],
+      ['a chunk with a bad checksum', withBadCrc],
+      [
+        'a header smaller than its image data',
+        () => assemblePng([pngHeader(300, 50), IDAT, IEND]),
+      ],
+      [
+        'a header larger than its image data',
+        () => assemblePng([pngHeader(300, 200), IDAT, IEND]),
+      ],
+      [
+        'a 1 × 1 header over 10,000 × 10,000 image data',
+        () =>
+          assemblePng([
+            pngHeader(1, 1, { colorType: 0 }),
+            pngChunks(blankPng(10_000, 10_000))[1],
+            IEND,
+          ]),
+      ],
+    ])('400s for a signature with %s', async (_case, build) => {
+      const res = await complete(
+        validBody({ signatures: { participant_signature: png(build()) } }),
+      ).expect(400);
+
+      expect((res.body as { message: string }).message).toMatch(/not a PNG/);
+      expect(forms.signed).toHaveLength(0);
+      expect(storage.objects.size).toBe(0);
+    });
+
+    it.each(TEXT_CHUNKS)(
+      '400s for a signature carrying metadata in %s',
+      async (_type, chunk) => {
+        const res = await complete(
+          validBody({
+            signatures: {
+              participant_signature: png(
+                assemblePng([IHDR, chunk(), IDAT, IEND]),
+              ),
+            },
+          }),
+        ).expect(400);
+
+        expect((res.body as { message: string }).message).toMatch(
+          /single-frame PNG without metadata/,
+        );
+        expect(forms.signed).toHaveLength(0);
+      },
+    );
+
+    it('accepts a signature exported by Chromium on the signing site', async () => {
+      await complete(
+        validBody({
+          signatures: { participant_signature: png(chromiumSignature()) },
+        }),
+      ).expect(201);
+
+      expect(forms.signed).toHaveLength(1);
+      expect(storage.objects.size).toBe(1);
     });
 
     it('removes the stored PDF when the signature cannot be recorded', async () => {

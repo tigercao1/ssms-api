@@ -8,6 +8,10 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   return c >>> 0;
 });
 
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
 function crc32(bytes: Buffer): number {
   let c = 0xffffffff;
   for (const byte of bytes) {
@@ -16,7 +20,7 @@ function crc32(bytes: Buffer): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function chunk(type: string, data: Buffer): Buffer {
+export function pngChunk(type: string, data: Buffer): Buffer {
   const length = Buffer.alloc(4);
   length.writeUInt32BE(data.length);
   const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
@@ -59,15 +63,11 @@ export function signaturePng(
     }
     rows.push(row);
   }
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header.set([8, 6, 0, 0, 0], 8);
   return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.concat(rows))),
-    chunk('IEND', Buffer.alloc(0)),
+    PNG_SIGNATURE,
+    pngHeader(width, height),
+    pngChunk('IDAT', deflateSync(Buffer.concat(rows))),
+    pngChunk('IEND', Buffer.alloc(0)),
   ]);
 }
 
@@ -90,18 +90,44 @@ export function blankPng(
 ): Buffer {
   const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType] ?? 1;
   const rowBytes = 1 + Math.ceil((width * channels * bitDepth) / 8);
+  const header = pngHeader(width, height, { bitDepth, colorType, interlace });
+  const actl = Buffer.alloc(8);
+  actl.writeUInt32BE(1000, 0);
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    header,
+    ...(animated ? [pngChunk('acTL', actl)] : []),
+    ...(colorType === 3 ? [pngChunk('PLTE', Buffer.alloc(3))] : []),
+    pngChunk(
+      'IDAT',
+      deflateSync(Buffer.alloc(rowBytes * height), { level: 9 }),
+    ),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+export function pngHeader(
+  width: number,
+  height: number,
+  { bitDepth = 8, colorType = 6, interlace = 0 }: PngHeaderOptions = {},
+): Buffer {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
   header.set([bitDepth, colorType, 0, 0, interlace], 8);
-  const actl = Buffer.alloc(8);
-  actl.writeUInt32BE(1000, 0);
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    ...(animated ? [chunk('acTL', actl)] : []),
-    ...(colorType === 3 ? [chunk('PLTE', Buffer.alloc(3))] : []),
-    chunk('IDAT', deflateSync(Buffer.alloc(rowBytes * height), { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
+  return pngChunk('IHDR', header);
+}
+
+export function pngChunks(png: Buffer): Buffer[] {
+  const chunks: Buffer[] = [];
+  for (let offset = 8; offset < png.length; ) {
+    const end = offset + 12 + png.readUInt32BE(offset);
+    chunks.push(png.subarray(offset, end));
+    offset = end;
+  }
+  return chunks;
+}
+
+export function assemblePng(chunks: Buffer[]): Buffer {
+  return Buffer.concat([PNG_SIGNATURE, ...chunks]);
 }

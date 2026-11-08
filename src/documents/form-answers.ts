@@ -1,3 +1,4 @@
+import { crc32, inflateSync } from 'node:zlib';
 import { isEmail } from 'class-validator';
 import {
   type FormField,
@@ -17,6 +18,7 @@ export const MAX_FORM_SIGNATURE_PIXELS = 1000 * 600;
 
 const PNG_SIGNATURE_LENGTH = 8;
 const IHDR_LENGTH = 13;
+const MAX_PALETTE_ENTRIES = 256;
 const BIT_DEPTHS_BY_COLOUR_TYPE: Record<number, readonly number[]> = {
   0: [1, 2, 4, 8],
   2: [8],
@@ -24,6 +26,15 @@ const BIT_DEPTHS_BY_COLOUR_TYPE: Record<number, readonly number[]> = {
   4: [8],
   6: [8],
 };
+const CHANNELS_BY_COLOUR_TYPE: Record<number, number> = {
+  0: 1,
+  2: 3,
+  3: 1,
+  4: 2,
+  6: 4,
+};
+const ALLOWED_CHUNK_TYPES = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+const MAX_FILTER_TYPE = 4;
 
 export interface FormAnswers {
   signerName: string;
@@ -34,26 +45,84 @@ export interface FormAnswers {
 
 const name = (field: FormField) => `${field.label} (${field.key})`;
 
+interface PngChunk {
+  type: string;
+  data: Buffer;
+}
+
+function readPngChunks(png: Buffer): PngChunk[] | null {
+  const chunks: PngChunk[] = [];
+  let offset = PNG_SIGNATURE_LENGTH;
+  while (offset < png.length) {
+    if (png.length - offset < 12) {
+      return null;
+    }
+    const end = offset + 12 + png.readUInt32BE(offset);
+    if (end > png.length) {
+      return null;
+    }
+    const typeAndData = png.subarray(offset + 4, end - 4);
+    if (crc32(typeAndData) !== png.readUInt32BE(end - 4)) {
+      return null;
+    }
+    chunks.push({
+      type: typeAndData.toString('latin1', 0, 4),
+      data: typeAndData.subarray(4),
+    });
+    offset = end;
+  }
+  return chunks;
+}
+
+function inflateExactly(compressed: Buffer, length: number): Buffer | null {
+  try {
+    const inflated = inflateSync(compressed, { maxOutputLength: length });
+    return inflated.length === length ? inflated : null;
+  } catch {
+    return null;
+  }
+}
+
 function readSignaturePng(label: string, raw: unknown): Uint8Array {
   const png = Buffer.from(decodeSignaturePng(label, raw));
   const notPng = () => new SigningInputError(`Signature ${label} is not a PNG`);
   const unsupported = () =>
     new SigningInputError(
-      `Signature ${label} must be an 8-bit, non-interlaced, single-frame PNG`,
+      `Signature ${label} must be an 8-bit, non-interlaced, single-frame PNG without metadata`,
     );
+  const chunks = readPngChunks(png);
   if (
-    png.length < PNG_SIGNATURE_LENGTH + 8 + IHDR_LENGTH ||
-    png.readUInt32BE(PNG_SIGNATURE_LENGTH) !== IHDR_LENGTH ||
-    png.toString('ascii', 12, 16) !== 'IHDR'
+    !chunks ||
+    chunks.length < 3 ||
+    chunks[0].type !== 'IHDR' ||
+    chunks[0].data.length !== IHDR_LENGTH ||
+    chunks[chunks.length - 1].type !== 'IEND' ||
+    chunks[chunks.length - 1].data.length !== 0
   ) {
     throw notPng();
   }
-  const width = png.readUInt32BE(16);
-  const height = png.readUInt32BE(20);
-  const [bitDepth, colourType, compression, filter, interlace] = png.subarray(
-    24,
-    29,
-  );
+  if (chunks.some(({ type }) => !ALLOWED_CHUNK_TYPES.has(type))) {
+    throw unsupported();
+  }
+  const types = chunks.map(({ type }) => type);
+  const firstIdat = types.indexOf('IDAT');
+  const idats = chunks.filter(({ type }) => type === 'IDAT');
+  const palettes = chunks.filter(({ type }) => type === 'PLTE');
+  if (
+    types.lastIndexOf('IHDR') !== 0 ||
+    types.indexOf('IEND') !== types.length - 1 ||
+    firstIdat === -1 ||
+    types.lastIndexOf('IDAT') !== firstIdat + idats.length - 1 ||
+    palettes.length > 1 ||
+    types.indexOf('PLTE') > firstIdat
+  ) {
+    throw notPng();
+  }
+  const header = chunks[0].data;
+  const width = header.readUInt32BE(0);
+  const height = header.readUInt32BE(4);
+  const [bitDepth, colourType, compression, filter, interlace] =
+    header.subarray(8, 13);
   if (
     width === 0 ||
     height === 0 ||
@@ -73,18 +142,32 @@ function readSignaturePng(label: string, raw: unknown): Uint8Array {
   ) {
     throw unsupported();
   }
-  let offset = PNG_SIGNATURE_LENGTH;
-  while (offset + 8 <= png.length) {
-    const type = png.toString('ascii', offset + 4, offset + 8);
-    if (type === 'acTL') {
-      throw unsupported();
-    }
-    if (type === 'IDAT') {
-      return png;
-    }
-    offset += 12 + png.readUInt32BE(offset);
+  const palette = palettes[0]?.data;
+  if (
+    (colourType === 3 && !palette) ||
+    ((colourType === 0 || colourType === 4) && palette) ||
+    (palette &&
+      (palette.length === 0 ||
+        palette.length % 3 !== 0 ||
+        palette.length / 3 > MAX_PALETTE_ENTRIES))
+  ) {
+    throw notPng();
   }
-  throw notPng();
+  const rowLength =
+    1 + Math.ceil((width * CHANNELS_BY_COLOUR_TYPE[colourType] * bitDepth) / 8);
+  const pixels = inflateExactly(
+    Buffer.concat(idats.map(({ data }) => data)),
+    rowLength * height,
+  );
+  if (!pixels) {
+    throw notPng();
+  }
+  for (let row = 0; row < pixels.length; row += rowLength) {
+    if (pixels[row] > MAX_FILTER_TYPE) {
+      throw notPng();
+    }
+  }
+  return png;
 }
 
 function parseValue(field: FormField, raw: unknown): string {

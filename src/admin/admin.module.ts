@@ -7,6 +7,8 @@ import { MailerModule } from '../mailer/mailer.module';
 import { MediaModule } from '../media/media.module';
 import { SeasonsModule } from '../seasons/seasons.module';
 import { ShopifySyncModule } from '../shopify-sync/shopify-sync.module';
+import { AdminInstructorBulkController } from './admin-instructor-bulk.controller';
+import { AdminInstructorBulkService } from './admin-instructor-bulk.service';
 import { AdminInstructorEmailController } from './admin-instructor-email.controller';
 import { AdminInstructorEmailService } from './admin-instructor-email.service';
 import { AdminMediaController } from './admin-media.controller';
@@ -46,11 +48,13 @@ import { AdminService } from './admin.service';
     AdminController,
     AdminMediaController,
     AdminInstructorEmailController,
+    AdminInstructorBulkController,
     AdminOpenApiController,
   ],
   providers: [
     AdminService,
     AdminInstructorEmailService,
+    AdminInstructorBulkService,
     AdminOpenApiService,
     { provide: AdminRepository, useClass: SupabaseAdminRepository },
   ],

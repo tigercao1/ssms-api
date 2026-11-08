@@ -91,6 +91,21 @@ function blankToNull(value: string | null | undefined): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+export function approvalTransitionError(
+  from: string,
+  to: 'approved' | 'rejected',
+): string | null {
+  const allowedFrom = to === 'approved' ? ['pending', 'rejected'] : ['pending'];
+  if (allowedFrom.includes(from)) {
+    return null;
+  }
+  return (
+    `Cannot ${to === 'approved' ? 'approve' : 'reject'} an instructor ` +
+    `in '${from}' state; only ` +
+    `${allowedFrom.map((state) => `'${state}'`).join(' or ')} is allowed`
+  );
+}
+
 interface PostgresError {
   code?: string;
   message?: string;
@@ -297,14 +312,12 @@ export class AdminService {
     if (!current) {
       throw new NotFoundException('Instructor not found');
     }
-    const allowedFrom =
-      status === 'approved' ? ['pending', 'rejected'] : ['pending'];
-    if (!allowedFrom.includes(current.approval_status)) {
-      throw new BadRequestException(
-        `Cannot ${status === 'approved' ? 'approve' : 'reject'} an instructor ` +
-          `in '${current.approval_status}' state; only ` +
-          `${allowedFrom.map((from) => `'${from}'`).join(' or ')} is allowed`,
-      );
+    const transitionError = approvalTransitionError(
+      current.approval_status,
+      status,
+    );
+    if (transitionError) {
+      throw new BadRequestException(transitionError);
     }
 
     const updated = await this.repo.updateInstructor(id, {

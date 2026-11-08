@@ -59,6 +59,7 @@ describe('GET /admin/openapi.json', () => {
     expect(spec.openapi).toMatch(/^3\./);
     expect(Object.keys(spec.paths['/admin/instructors'] ?? {})).toEqual([
       'get',
+      'patch',
     ]);
     expect(
       operation('/admin/instructors/{id}/approval', 'patch'),
@@ -121,6 +122,22 @@ describe('GET /admin/openapi.json', () => {
       properties: {
         approvalStatus: { enum: ['approved', 'rejected'] },
         reason: { type: 'string', maxLength: 500 },
+      },
+    });
+    expect(bodySchema('/admin/instructors', 'patch')).toMatchObject({
+      required: ['updates'],
+      properties: {
+        updates: { type: 'array', minItems: 1, maxItems: 100 },
+        dryRun: { type: 'boolean' },
+        atomic: { type: 'boolean' },
+      },
+    });
+    expect(spec.components?.schemas?.BulkInstructorUpdateRowDto).toMatchObject({
+      required: ['id'],
+      properties: {
+        id: { format: 'uuid' },
+        displayOrder: { minimum: 0 },
+        displayNameEn: { maxLength: 100 },
       },
     });
     expect(bodySchema('/admin/documents/forms', 'post')).toMatchObject({

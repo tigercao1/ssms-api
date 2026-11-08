@@ -18,6 +18,8 @@ import { AdminApiTokensModule } from '../../src/admin-api-tokens/admin-api-token
 import { AdminApiTokensRepository } from '../../src/admin-api-tokens/admin-api-tokens.repository';
 import { ADMIN_API_TOKEN_CLOCK } from '../../src/admin-api-tokens/admin-api-tokens.types';
 import { AdminController } from '../../src/admin/admin.controller';
+import { AdminInstructorBulkController } from '../../src/admin/admin-instructor-bulk.controller';
+import { AdminInstructorBulkService } from '../../src/admin/admin-instructor-bulk.service';
 import { AdminInstructorEmailController } from '../../src/admin/admin-instructor-email.controller';
 import { AdminInstructorEmailService } from '../../src/admin/admin-instructor-email.service';
 import { AdminRepository } from '../../src/admin/admin.repository';
@@ -138,16 +140,19 @@ export async function startAdminApiTokenApp() {
     controllers: [
       AdminController,
       AdminInstructorEmailController,
+      AdminInstructorBulkController,
       GoogleAdminController,
       MeProbeController,
     ],
     providers: [
       AdminService,
+      AdminInstructorBulkService,
       { provide: SeasonsService, useValue: {} },
       {
         provide: AdminRepository,
         useValue: {
           listAllInstructors: () => Promise.resolve([]),
+          findInstructorById: () => Promise.resolve(null),
           listInstructorIdsAtLocation: () => Promise.resolve(new Set()),
           getUserRole: () =>
             Promise.resolve({ found: true, role: 'instructor' }),

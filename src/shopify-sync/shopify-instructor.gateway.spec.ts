@@ -19,10 +19,9 @@ describe('ShopifyInstructorGateway', () => {
     const gateway = new ShopifyInstructorGateway(shopify.client);
     await gateway.findEntryByHandle('eddie');
     await gateway.upsertEntry('eddie', [{ key: 'name', value: 'E' }], 'ACTIVE');
-    await gateway.setEntryStatus('eddie', 'DRAFT');
     expect(
       shopify.calls.map((c) => (c.variables.handle as { type: string }).type),
-    ).toEqual(['ssms_instructor', 'ssms_instructor', 'ssms_instructor']);
+    ).toEqual(['ssms_instructor', 'ssms_instructor']);
   });
 
   it('lists every legacy our_team entry across pages by handle and name', async () => {
@@ -165,9 +164,9 @@ describe('ShopifyInstructorGateway', () => {
       metaobjectUpsert: { metaobject: null, userErrors: [] },
     }));
     const gateway = new ShopifyInstructorGateway(shopify.client);
-    await expect(gateway.setEntryStatus('eddie', 'DRAFT')).rejects.toThrow(
-      'returned no metaobject',
-    );
+    await expect(
+      gateway.upsertEntry('eddie', [{ key: 'name', value: 'E' }], 'ACTIVE'),
+    ).rejects.toThrow('returned no metaobject');
   });
 
   describe('files', () => {

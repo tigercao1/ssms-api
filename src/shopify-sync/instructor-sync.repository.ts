@@ -271,7 +271,7 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
     const { data, error } = await this.supabase
       .from(STATE_TABLE)
       .select('instructor_id')
-      .eq('shopify_handle', handle)
+      .or(`shopify_handle.eq.${handle},paired_legacy_handle.eq.${handle}`)
       .neq('instructor_id', instructorId)
       .limit(1);
     check(error, 'check stored handles');

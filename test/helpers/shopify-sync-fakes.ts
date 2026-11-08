@@ -232,7 +232,9 @@ export class InMemorySyncRepository extends InstructorSyncRepository {
   ): Promise<boolean> {
     return Promise.resolve(
       [...this.states.values()].some(
-        (s) => s.shopify_handle === handle && s.instructor_id !== instructorId,
+        (s) =>
+          (s.shopify_handle === handle || s.paired_legacy_handle === handle) &&
+          s.instructor_id !== instructorId,
       ),
     );
   }

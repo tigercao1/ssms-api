@@ -103,6 +103,33 @@ describe('LegacyRoster', () => {
     });
   });
 
+  it('treats a kept paired legacy handle as paired after a rename', async () => {
+    const { shopify, repo, roster } = setup();
+    shopify.addLegacyEntry('eddie', 'Eddie Chen');
+    await repo.saveState(INSTRUCTOR_ID, {
+      shopify_handle: 'eddie-renamed',
+      paired_legacy_handle: 'eddie',
+    });
+
+    await expect(
+      roster.holdFor(
+        instructorRow(),
+        (await repo.getState(INSTRUCTOR_ID)) ?? null,
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it('skips a legacy handle another instructor keeps as its paired legacy handle', async () => {
+    const { shopify, repo, roster } = setup();
+    shopify.addLegacyEntry('eddie', 'Eddie Chen');
+    await repo.saveState('9b8a7c6d-0000-4000-8000-000000000001', {
+      shopify_handle: 'eddie-renamed',
+      paired_legacy_handle: 'eddie',
+    });
+
+    await expect(roster.holdFor(instructorRow(), null)).resolves.toBeNull();
+  });
+
   it('treats a state row without the dismissal column as nothing dismissed', async () => {
     const { shopify, roster } = setup();
     shopify.addLegacyEntry('eddie', 'Eddie Chen');

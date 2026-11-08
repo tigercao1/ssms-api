@@ -592,6 +592,48 @@ describe('InstructorSyncService', () => {
       expect(shopify.operations()).not.toContain('SsmsInstructorDelete');
     });
 
+    it('drafts the entry that carries its SSMS id when the stored id is gone, creating nothing', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      shopify.removeEntry('eddie-chen');
+      const replacement = shopify.addEntry('eddie-renamed', {
+        ssms_id: INSTRUCTOR_ID,
+      });
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { is_active: false } }),
+      );
+      shopify.calls.length = 0;
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('draft');
+
+      expect(shopify.entry('eddie-renamed')?.status).toBe('DRAFT');
+      expect(shopify.entry('eddie-chen')).toBeUndefined();
+      expect(shopify.operations()).not.toContain('SsmsInstructorUpsert');
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_metaobject_id: replacement.id,
+        shopify_handle: 'eddie-renamed',
+        last_status: 'draft',
+      });
+    });
+
+    it('skips hiding when its entry is gone and none carries its SSMS id', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      shopify.removeEntry('eddie-chen');
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { is_active: false } }),
+      );
+      shopify.calls.length = 0;
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('skipped');
+
+      expect(shopify.entry('eddie-chen')).toBeUndefined();
+      expect(shopify.operations()).not.toContain('SsmsInstructorUpsert');
+      expect(repo.states.get(INSTRUCTOR_ID)?.last_status).toBe('active');
+    });
+
     it('does nothing when no entry was ever created', async () => {
       const { repo, shopify, service } = setup(
         snapshotOf({ instructor: { approval_status: 'pending' } }),
@@ -699,6 +741,62 @@ describe('InstructorSyncService', () => {
       expect(repo.states.get(INSTRUCTOR_ID)?.shopify_handle).toBe(
         'aaron-3f1c2b',
       );
+    });
+
+    it('keeps a legacy pairing after the entry is renamed in Shopify', async () => {
+      const { repo, shopify, service } = setup();
+      shopify.addLegacyEntry('eddie', 'Eddie Chen');
+      await repo.saveState(INSTRUCTOR_ID, { shopify_handle: 'eddie' });
+      await service.sync(INSTRUCTOR_ID);
+      const entry = shopify.renameEntry('eddie', 'eddie-renamed');
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(shopify.entry('eddie-renamed')).toMatchObject({
+        id: entry.id,
+        status: 'ACTIVE',
+      });
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_handle: 'eddie-renamed',
+        paired_legacy_handle: 'eddie',
+        last_status: 'active',
+      });
+    });
+
+    it('keeps a legacy pairing when a hidden entry was renamed in Shopify', async () => {
+      const { repo, shopify, service } = setup();
+      shopify.addLegacyEntry('eddie', 'Eddie Chen');
+      await repo.saveState(INSTRUCTOR_ID, { shopify_handle: 'eddie' });
+      await service.sync(INSTRUCTOR_ID);
+      shopify.renameEntry('eddie', 'eddie-renamed');
+      repo.snapshots.set(
+        INSTRUCTOR_ID,
+        snapshotOf({ instructor: { is_active: false } }),
+      );
+      await service.sync(INSTRUCTOR_ID);
+      repo.snapshots.set(INSTRUCTOR_ID, snapshotOf());
+
+      await expect(service.sync(INSTRUCTOR_ID)).resolves.toBe('active');
+
+      expect(repo.states.get(INSTRUCTOR_ID)?.paired_legacy_handle).toBe(
+        'eddie',
+      );
+    });
+
+    it('records no legacy pairing when a non-legacy handle is renamed in Shopify', async () => {
+      const { repo, shopify, service } = setup();
+      await service.sync(INSTRUCTOR_ID);
+      shopify.renameEntry('eddie-chen', 'eddie');
+
+      await service.sync(INSTRUCTOR_ID);
+
+      expect(repo.states.get(INSTRUCTOR_ID)).toMatchObject({
+        shopify_handle: 'eddie',
+      });
+      expect(
+        repo.states.get(INSTRUCTOR_ID)?.paired_legacy_handle,
+      ).toBeUndefined();
     });
 
     it('keeps a paired legacy handle and syncs it exactly as before', async () => {

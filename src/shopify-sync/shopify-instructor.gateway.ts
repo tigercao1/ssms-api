@@ -355,13 +355,6 @@ export class ShopifyInstructorGateway {
     });
   }
 
-  async setEntryStatus(
-    handle: string,
-    status: PublishableStatus,
-  ): Promise<UpsertedEntry> {
-    return this.upsert(handle, { capabilities: { publishable: { status } } });
-  }
-
   private async upsert(
     handle: string,
     metaobject: Record<string, unknown>,

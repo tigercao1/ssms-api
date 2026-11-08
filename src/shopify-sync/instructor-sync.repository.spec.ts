@@ -35,6 +35,7 @@ function fakeSupabase(
         'select',
         'eq',
         'neq',
+        'or',
         'in',
         'order',
         'range',
@@ -400,7 +401,7 @@ describe('SupabaseInstructorSyncRepository', () => {
       ).rejects.toThrow('boom');
     });
 
-    it('reports whether another instructor holds a handle', async () => {
+    it('reports whether another instructor holds a handle, live or as its paired legacy handle', async () => {
       const taken = fakeSupabase({
         instructor_shopify_state: {
           data: [{ instructor_id: 'i-2' }],
@@ -412,7 +413,7 @@ describe('SupabaseInstructorSyncRepository', () => {
       ).resolves.toBe(true);
       expect(taken.opsFor('instructor_shopify_state')[0]).toEqual(
         expect.arrayContaining([
-          ['eq', 'shopify_handle', 'eddie'],
+          ['or', 'shopify_handle.eq.eddie,paired_legacy_handle.eq.eddie'],
           ['neq', 'instructor_id', 'i-1'],
         ]),
       );

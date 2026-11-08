@@ -69,8 +69,8 @@ export class LegacyRoster {
     state: InstructorShopifyState | null,
   ): Promise<GoLiveHold | null> {
     const entries = await this.entries();
-    const stored = state?.shopify_handle;
-    if (stored && entries.some((entry) => entry.handle === stored)) {
+    const paired = [state?.shopify_handle, state?.paired_legacy_handle];
+    if (entries.some((entry) => paired.includes(entry.handle))) {
       return null;
     }
     const dismissed = new Set(state?.dismissed_legacy_handles ?? []);

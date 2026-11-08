@@ -16,6 +16,7 @@ import { InstructorTranslationsSync } from './instructor-translations.sync';
 import { LegacyRoster } from './legacy-roster';
 import type {
   InstructorShopifyState,
+  InstructorShopifyStatePatch,
   InstructorSnapshot,
 } from './instructor-sync.types';
 import {
@@ -66,16 +67,16 @@ export class InstructorSyncService {
     instructorId: string,
     state: InstructorShopifyState | null,
   ): Promise<SyncOutcome> {
-    if (!state?.shopify_metaobject_id || !state.shopify_handle) {
+    if (!state?.shopify_metaobject_id && !state?.shopify_handle) {
       return 'skipped';
     }
-    const stored = await this.gateway.findEntryById(
-      state.shopify_metaobject_id,
-    );
-    const entry = stored
-      ? await this.gateway.updateEntry(stored.id, { status: 'DRAFT' })
-      : await this.gateway.setEntryStatus(state.shopify_handle, 'DRAFT');
+    const found = await this.ownEntry(instructorId, state);
+    if (!found) {
+      return 'skipped';
+    }
+    const entry = await this.gateway.updateEntry(found.id, { status: 'DRAFT' });
     await this.repo.saveState(instructorId, {
+      ...(await this.legacyPairPatch(state, entry.handle)),
       shopify_metaobject_id: entry.id,
       shopify_handle: entry.handle,
       last_synced_at: new Date().toISOString(),
@@ -111,6 +112,7 @@ export class InstructorSyncService {
     }
     await this.repo.saveState(instructor.id, {
       ...photo.statePatch,
+      ...(await this.legacyPairPatch(state, entry.handle)),
       shopify_metaobject_id: entry.id,
       shopify_handle: entry.handle,
       last_synced_at: new Date().toISOString(),
@@ -121,6 +123,22 @@ export class InstructorSyncService {
     }
     await this.translations.apply(entry.id, englishTranslations(snapshot));
     return 'active';
+  }
+
+  private async legacyPairPatch(
+    state: InstructorShopifyState | null,
+    handle: string,
+  ): Promise<InstructorShopifyStatePatch> {
+    const stored = state?.shopify_handle;
+    if (
+      !stored ||
+      stored === handle ||
+      state.paired_legacy_handle ||
+      !(await this.legacy.handles()).has(stored)
+    ) {
+      return {};
+    }
+    return { paired_legacy_handle: stored };
   }
 
   private async ownEntry(

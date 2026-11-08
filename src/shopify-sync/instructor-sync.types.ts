@@ -67,6 +67,7 @@ export interface InstructorShopifyState {
   last_synced_at: string | null;
   last_status: string | null;
   dismissed_legacy_handles?: string[];
+  paired_legacy_handle?: string | null;
 }
 
 export type InstructorShopifyStatePatch = Partial<

@@ -10,6 +10,16 @@ export const storageKeys = {
     `templates/${templateId}/translations/${language}/source.pdf`,
   templateTranslationUpload: (templateId: string, language: DocumentLanguage) =>
     `templates/${templateId}/translations/${language}/upload.pdf`,
+  formSource: (
+    templateId: string,
+    language: DocumentLanguage,
+    version: number,
+  ) => `templates/${templateId}/forms/${language}/v${version}/source.pdf`,
+  formUpload: (
+    templateId: string,
+    language: DocumentLanguage,
+    version: number,
+  ) => `templates/${templateId}/forms/${language}/v${version}/upload.pdf`,
   templateObjects: (templateId: string) => [
     storageKeys.templateSource(templateId),
     storageKeys.templateUpload(templateId),

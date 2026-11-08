@@ -1,11 +1,18 @@
 import * as fontkit from '@cantoo/fontkit';
 import { PDFDocument, type PDFFont, type PDFPage, rgb } from '@cantoo/pdf-lib';
-import type { FormField } from './form-templates.types';
+import type { FieldType, TemplateFieldRow } from './documents.types';
+import type {
+  FormField,
+  FormFieldType,
+  FormPlacement,
+} from './form-templates.types';
 import {
   drawAuditPage,
   loadStampFonts,
   type StampAudit,
   type StampedPdf,
+  stampDocument,
+  type StampSignature,
   wrap,
 } from './pdf-stamper';
 import { sha256Hex } from './template-pdf';
@@ -20,6 +27,22 @@ const HEADING_SIZES = [15, 13, 11.5];
 const HEADING = /^(#{1,6})\s+(.*)$/;
 const BULLET = /^\s*[-*+]\s+(.*)$/;
 const EMPHASIS = /\*\*|__/g;
+
+const STAMP_FIELD_TYPES: Record<FormFieldType, FieldType> = {
+  text: 'text',
+  email: 'text',
+  date: 'date',
+  signature: 'signature',
+};
+
+export interface FormStampInput {
+  source: Uint8Array;
+  fields: readonly FormField[];
+  placements: readonly FormPlacement[];
+  values: Readonly<Record<string, string>>;
+  signatures: Readonly<Record<string, Uint8Array>>;
+  audit: StampAudit;
+}
 
 export interface FormPdfInput {
   title: string;
@@ -132,4 +155,40 @@ export async function renderFormPdf(input: FormPdfInput): Promise<StampedPdf> {
   drawAuditPage(doc, font, input.audit);
   const bytes = await doc.save({ useObjectStreams: true });
   return { bytes, sha256: sha256Hex(bytes) };
+}
+
+export function stampFormPdf(input: FormStampInput): Promise<StampedPdf> {
+  const fields = new Map(input.fields.map((field) => [field.key, field]));
+  const placed: TemplateFieldRow[] = [];
+  const values: Record<string, string> = {};
+  const signatures: Record<string, StampSignature> = {};
+  input.placements.forEach(({ key, ...rect }, i) => {
+    const field = fields.get(key);
+    if (!field) {
+      return;
+    }
+    const id = `${key}.${i}`;
+    placed.push({
+      ...rect,
+      id,
+      type: STAMP_FIELD_TYPES[field.type],
+      required: field.required,
+      label_en: field.label,
+      label_zh: null,
+      prefill: null,
+    });
+    const png = input.signatures[key];
+    if (png) {
+      signatures[id] = { mode: 'drawn', png };
+    } else if (input.values[key] !== undefined) {
+      values[id] = input.values[key];
+    }
+  });
+  return stampDocument({
+    source: input.source,
+    fields: placed,
+    values,
+    signatures,
+    audit: input.audit,
+  });
 }

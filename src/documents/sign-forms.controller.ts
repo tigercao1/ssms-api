@@ -2,10 +2,12 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Headers,
   Param,
   Post,
   Query,
+  Redirect,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -32,6 +34,17 @@ export class SignFormsController {
     @Query() query: FormQueryDto,
   ): Promise<PublicForm> {
     return this.forms.get(slug, query.lang ?? 'en');
+  }
+
+  @Get(':slug/original')
+  @Redirect()
+  @Header('Cache-Control', 'no-store')
+  async original(
+    @Param('slug') slug: string,
+    @Query() query: FormQueryDto,
+  ): Promise<{ url: string }> {
+    const { url } = await this.forms.originalUrl(slug, query.lang ?? 'en');
+    return { url };
   }
 
   @Post(':slug/complete')

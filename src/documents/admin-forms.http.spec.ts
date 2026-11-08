@@ -11,6 +11,7 @@ import {
   InMemoryDocumentAssignmentsRepository,
   InMemoryDocumentSubjectsRepository,
   InMemoryDocumentTemplatesRepository,
+  InMemoryPrivateStorage,
   startDocumentsApp,
 } from '../../test/helpers/documents-fakes';
 import { InMemoryFormAdminRepository } from '../../test/helpers/form-signing-fakes';
@@ -28,6 +29,7 @@ import { AdminFormsService } from './admin-forms.service';
 import { DocumentAssignmentsRepository } from './document-assignments.repository';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
 import { DocumentTemplatesRepository } from './document-templates.repository';
+import { DocumentTemplatesService } from './document-templates.service';
 import { FormAdminRepository } from './form-admin.repository';
 import type {
   FormTemplate,
@@ -36,6 +38,9 @@ import type {
 } from './form-templates.types';
 import { MeDocumentsService } from './me-documents.service';
 import { MeStudentSignaturesController } from './me-student-signatures.controller';
+import { PdfWorkQueue } from './pdf-work-queue';
+import { PrivateStorageClient } from './private-storage.client';
+import { SignFormsThrottlerGuard } from './sign-forms-throttler.guard';
 import { SignatureLookupsService } from './signature-lookups.service';
 
 describe('form templates and signature lookups', () => {
@@ -58,8 +63,12 @@ describe('form templates and signature lookups', () => {
         providers: [
           ...seasonsProviders(seasonsRepo('2026/27')),
           AdminFormsService,
+          DocumentTemplatesService,
+          PdfWorkQueue,
+          SignFormsThrottlerGuard,
           SignatureLookupsService,
           MeDocumentsService,
+          { provide: PrivateStorageClient, useClass: InMemoryPrivateStorage },
           { provide: FormAdminRepository, useValue: repo },
           { provide: DocumentSubjectsRepository, useValue: subjects },
           {

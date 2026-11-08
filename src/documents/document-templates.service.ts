@@ -50,7 +50,11 @@ export const TEMPLATE_NOT_FOUND = 'Document template not found';
 export const NOTHING_TO_UPDATE = 'Nothing to update';
 export const SOURCE_UPLOAD_MISSING =
   'No uploaded PDF found; request an upload URL and upload the file first';
-export const SOURCE_TOO_LARGE = `The PDF is larger than ${MAX_TEMPLATE_BYTES / 1024 / 1024} MB`;
+export const sourceTooLarge = (maxBytes: number) =>
+  `The PDF is larger than ${maxBytes / 1024 / 1024} MB`;
+export const SOURCE_TOO_LARGE = sourceTooLarge(MAX_TEMPLATE_BYTES);
+export const sourceTooManyPages = (maxPages: number) =>
+  `The PDF has more than ${maxPages} pages`;
 export const SOURCE_NOT_PDF =
   'The uploaded file must be sent as application/pdf';
 export const TEMPLATE_HAS_NO_SOURCE =
@@ -67,6 +71,11 @@ export const TEMPLATE_HAS_COMPLETIONS =
   'Someone has completed this document, so it cannot be deleted. Retire it instead.';
 export const SOURCE_LANGUAGE_CONFLICT =
   'Remove the other language version before changing the language of the main PDF to it or clearing it';
+
+export interface UploadLimits {
+  maxBytes: number;
+  maxPages?: number;
+}
 
 const PG_NO_DATA_FOUND = 'P0002';
 const PG_OBJECT_NOT_IN_STATE = '55000';
@@ -526,23 +535,24 @@ export class DocumentTemplatesService {
     return row;
   }
 
-  private async normaliseUpload(
+  async normaliseUpload(
     uploadKey: string,
+    { maxBytes, maxPages }: UploadLimits = { maxBytes: MAX_TEMPLATE_BYTES },
   ): Promise<NormalisedTemplatePdf> {
     const head = await this.storage.head(uploadKey);
     if (!head) {
       throw new BadRequestException(SOURCE_UPLOAD_MISSING);
     }
-    if (head.contentLength > MAX_TEMPLATE_BYTES) {
+    if (head.contentLength > maxBytes) {
       await this.discardUpload(uploadKey);
-      throw new BadRequestException(SOURCE_TOO_LARGE);
+      throw new BadRequestException(sourceTooLarge(maxBytes));
     }
     if (!isPdfContentType(head.contentType)) {
       await this.discardUpload(uploadKey);
       throw new BadRequestException(SOURCE_NOT_PDF);
     }
-    return this.pdfQueue.run(async () => {
-      const bytes = await this.readUpload(uploadKey);
+    const normalised = await this.pdfQueue.run(async () => {
+      const bytes = await this.readUpload(uploadKey, maxBytes);
       try {
         return await normaliseTemplatePdf(bytes);
       } catch (err) {
@@ -553,11 +563,16 @@ export class DocumentTemplatesService {
         throw err;
       }
     });
+    if (maxPages !== undefined && normalised.pageCount > maxPages) {
+      await this.discardUpload(uploadKey);
+      throw new BadRequestException(sourceTooManyPages(maxPages));
+    }
+    return normalised;
   }
 
-  private async readUpload(key: string): Promise<Uint8Array> {
+  private async readUpload(key: string, maxBytes: number): Promise<Uint8Array> {
     try {
-      const bytes = await this.storage.getBuffer(key, MAX_TEMPLATE_BYTES);
+      const bytes = await this.storage.getBuffer(key, maxBytes);
       if (!bytes) {
         throw new BadRequestException(SOURCE_UPLOAD_MISSING);
       }
@@ -565,13 +580,13 @@ export class DocumentTemplatesService {
     } catch (err) {
       if (err instanceof ObjectTooLargeError) {
         await this.discardUpload(key);
-        throw new BadRequestException(SOURCE_TOO_LARGE);
+        throw new BadRequestException(sourceTooLarge(maxBytes));
       }
       throw err;
     }
   }
 
-  private async discardUpload(key: string): Promise<void> {
+  async discardUpload(key: string): Promise<void> {
     try {
       await this.storage.delete(key);
     } catch (err) {

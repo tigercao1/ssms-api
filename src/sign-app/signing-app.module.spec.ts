@@ -100,6 +100,7 @@ describe('SigningAppModule', () => {
     expect(listRoutes(app)).toEqual([
       'GET /health',
       'GET /sign/forms/:slug',
+      'GET /sign/forms/:slug/original',
       'POST /sign/forms/:slug/complete',
     ]);
     await request(app.getHttpServer()).get('/admin/signatures').expect(404);

@@ -38,6 +38,11 @@ export type FormSourceWrite = Pick<
 
 export type FormDraftPatch = Partial<FormDraftWrite & FormSourceWrite>;
 
+export type FormDraftSource = Pick<
+  FormVersionRow,
+  'source_key' | 'source_sha256'
+>;
+
 export interface FormTemplateWrite {
   slug?: string;
   title_en?: string;
@@ -59,6 +64,7 @@ export abstract class FormAdminRepository {
   abstract updateDraft(
     templateId: string,
     language: DocumentLanguage,
+    expected: FormDraftSource,
     draft: FormDraftPatch,
   ): Promise<FormVersionRow | null>;
   abstract insertDraft(
@@ -70,6 +76,7 @@ export abstract class FormAdminRepository {
   abstract publishDraft(
     templateId: string,
     language: DocumentLanguage,
+    expectedUpdatedAt: string,
     publishedBy: string | null,
     publishedAt: string,
   ): Promise<FormVersionRow | null>;
@@ -154,14 +161,20 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
   async updateDraft(
     templateId: string,
     language: DocumentLanguage,
+    expected: FormDraftSource,
     draft: FormDraftPatch,
   ): Promise<FormVersionRow | null> {
-    const { data, error } = (await this.supabase
+    let query = this.supabase
       .from(DOCUMENT_FORM_VERSIONS_TABLE)
       .update(draft)
       .eq('template_id', templateId)
       .eq('language', language)
-      .is('published_at', null)
+      .is('published_at', null);
+    for (const column of ['source_key', 'source_sha256'] as const) {
+      const value = expected[column];
+      query = value === null ? query.is(column, null) : query.eq(column, value);
+    }
+    const { data, error } = (await query
       .select(FORM_VERSION_COLUMNS)
       .maybeSingle()) as DbResult<FormVersionRow>;
     check(error, 'save form draft');
@@ -189,6 +202,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
   async publishDraft(
     templateId: string,
     language: DocumentLanguage,
+    expectedUpdatedAt: string,
     publishedBy: string | null,
     publishedAt: string,
   ): Promise<FormVersionRow | null> {
@@ -198,6 +212,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
       .eq('template_id', templateId)
       .eq('language', language)
       .is('published_at', null)
+      .eq('updated_at', expectedUpdatedAt)
       .select(FORM_VERSION_COLUMNS)
       .maybeSingle()) as DbResult<FormVersionRow>;
     check(error, 'publish form draft');

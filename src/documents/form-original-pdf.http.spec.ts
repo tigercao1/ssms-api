@@ -20,7 +20,12 @@ import {
   InMemoryFormSigningRepository,
 } from '../../test/helpers/form-signing-fakes';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
-import { pdfFixture, pdfOfSize } from '../../test/helpers/pdf-fixtures';
+import {
+  activeContentIn,
+  annotationHeavyPdf,
+  pdfFixture,
+  pdfOfSize,
+} from '../../test/helpers/pdf-fixtures';
 import {
   inkIn,
   pdftotext,
@@ -170,6 +175,9 @@ describe('form versions with an original PDF', () => {
   const admin = as(ADMIN_AUTH);
   const nextIp = () => `203.0.113.${++ipCounter % 250}`;
 
+  const draftOf = (id: string) =>
+    adminRepo.forms.get(id)!.versions.find((v) => !v.published_at)!;
+
   const draftForm = async () => {
     const { id } = (
       await admin
@@ -194,7 +202,7 @@ describe('form versions with an original PDF', () => {
   ): Promise<
     FormTemplate & { placementsCleared: boolean; message: string }
   > => {
-    const version = 1;
+    const version = draftOf(id).version;
     const res = await admin
       .post(`/admin/documents/forms/${id}/versions/en/source/upload-url`, {
         contentLength: bytes.byteLength,
@@ -242,7 +250,12 @@ describe('form versions with an original PDF', () => {
 
       const confirmed = await uploadPdf(id, await pdfFixture('normal'));
 
-      const sourceKey = storageKeys.formSource(id, 'en', 1);
+      const sourceKey = draftOf(id).source_key!;
+      expect(sourceKey).toMatch(
+        new RegExp(
+          `^${storageKeys.formVersion(id, 'en', 1)}source-[0-9a-f-]{36}\\.pdf$`,
+        ),
+      );
       const stored = storage.objects.get(sourceKey)!;
       expect(confirmed.placementsCleared).toBe(false);
       expect(confirmed.languages.en.draft).toMatchObject({
@@ -344,9 +357,14 @@ describe('form versions with an original PDF', () => {
         placements: [],
       });
       expect(removed.languages.en.published!.originalPdf).not.toBeNull();
-      expect(storage.objects.has(storageKeys.formSource(id, 'en', 1))).toBe(
-        true,
-      );
+      expect(
+        storage.objects.has(
+          removed.languages.en.published!.originalPdf!.url.replace(
+            'memory://GET/',
+            '',
+          ),
+        ),
+      ).toBe(true);
       await admin
         .delete(`/admin/documents/forms/${id}/versions/en/source`)
         .expect(404);
@@ -407,9 +425,176 @@ describe('form versions with an original PDF', () => {
       expect(
         storage.objects.has(storageKeys.formUpload(draftId, 'en', 1)),
       ).toBe(false);
+      expect(storage.objects.size).toBe(0);
+    });
+
+    it('keeps the published original and its hash when a replacement confirmation finishes after publishing', async () => {
+      const id = await draftForm();
+      await uploadPdf(id, await pdfFixture('normal'));
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en/placements`, {
+          placements: PLACEMENTS,
+        })
+        .expect(200);
+      const before = structuredClone(draftOf(id));
+      jest
+        .spyOn(storage, 'put')
+        .mockImplementationOnce(async (key, body, contentType) => {
+          await admin
+            .post(`/admin/documents/forms/${id}/versions/en/publish`)
+            .expect(200);
+          storage.seed(key, body, contentType);
+        });
+
+      const stale = await uploadPdf(id, await pagesPdf(2), 409);
+
+      expect(stale.message).toBe(
+        'This form was changed by someone else; reload it and try again',
+      );
+      const [published] = adminRepo.forms.get(id)!.versions;
+      expect(published).toMatchObject({
+        published_at: expect.any(String) as unknown,
+        source_key: before.source_key,
+        source_sha256: before.source_sha256,
+        placements: PLACEMENTS,
+      });
+      expect(sha256Hex(storage.objects.get(published.source_key!)!.body)).toBe(
+        published.source_sha256,
+      );
       expect(
-        storage.objects.has(storageKeys.formSource(draftId, 'en', 1)),
-      ).toBe(false);
+        [...storage.objects.keys()].filter((key) => key.includes('/source-')),
+      ).toEqual([published.source_key]);
+    });
+
+    it('refuses to publish a draft whose PDF changed after its placements were checked', async () => {
+      const id = await draftForm();
+      await uploadPdf(id, await pdfFixture('normal'));
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en/placements`, {
+          placements: PLACEMENTS,
+        })
+        .expect(200);
+      const publishDraft = adminRepo.publishDraft.bind(
+        adminRepo,
+      ) as typeof adminRepo.publishDraft;
+      jest
+        .spyOn(adminRepo, 'publishDraft')
+        .mockImplementationOnce(async (...args) => {
+          const replaced = await uploadPdf(id, await pagesPdf(3));
+          expect(replaced.placementsCleared).toBe(true);
+          return publishDraft(...args);
+        });
+
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(409);
+
+      const draft = draftOf(id);
+      expect(draft).toMatchObject({ page_count: 3, placements: [] });
+      expect(sha256Hex(storage.objects.get(draft.source_key!)!.body)).toBe(
+        draft.source_sha256,
+      );
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(400);
+    });
+
+    it('stores a replacement after publishing as a new object of the next draft, leaving the published original as recorded', async () => {
+      const id = await draftForm();
+      await uploadPdf(id, await pdfFixture('normal'));
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en/placements`, {
+          placements: PLACEMENTS,
+        })
+        .expect(200);
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(200);
+      const published = structuredClone(adminRepo.forms.get(id)!.versions[0]);
+      const publishedBytes = storage.objects.get(published.source_key!)!.body;
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en`, {
+          title: 'Boat rental agreement',
+          bodyMarkdown: 'Read the attached agreement, v2.',
+        })
+        .expect(200);
+
+      const replaced = await uploadPdf(id, await pagesPdf(2));
+      const replacedAgain = await uploadPdf(id, await pagesPdf(2));
+
+      const draft = draftOf(id);
+      expect(draft.version).toBe(2);
+      expect(
+        draft.source_key!.startsWith(storageKeys.formVersion(id, 'en', 2)),
+      ).toBe(true);
+      expect(replaced.languages.en.draft!.placements).toEqual(PLACEMENTS);
+      expect(replacedAgain.languages.en.published).toMatchObject({
+        version: 1,
+        originalPdf: { sha256: published.source_sha256 },
+      });
+      expect(adminRepo.forms.get(id)!.versions[0]).toEqual(published);
+      expect(
+        storage.objects.get(published.source_key!)!.body.equals(publishedBytes),
+      ).toBe(true);
+      expect(sha256Hex(publishedBytes)).toBe(published.source_sha256);
+      expect(
+        [...storage.objects.keys()].filter((key) => key.includes('/source-')),
+      ).toEqual([published.source_key, draft.source_key]);
+    });
+
+    it('strips annotations, page and document actions, scripts and attached files from the stored original and the signed copy', async () => {
+      const input = await pdfFixture('activeContent');
+      expect(await activeContentIn(input)).toContain('JS');
+      const id = await draftForm();
+
+      await uploadPdf(id, input);
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en/placements`, {
+          placements: PLACEMENTS,
+        })
+        .expect(200);
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(200);
+
+      const [published] = adminRepo.forms.get(id)!.versions;
+      const original = storage.objects.get(published.source_key!)!.body;
+      expect(await activeContentIn(original)).toEqual([]);
+      expect(await pdftotext(original)).toContain('Alice Example');
+      forms.seedForm('active-content', [
+        formVersion(id, 'en', 1, { ...published }),
+      ]);
+      await request(app.getHttpServer())
+        .post('/sign/forms/active-content/complete')
+        .set('fly-client-ip', nextIp())
+        .send({
+          lang: 'en',
+          version: 1,
+          consent: true,
+          answers: {
+            participant_name: 'Mia Chen',
+            email: 'mia@example.com',
+            date: '2026-12-20',
+          },
+          signatures: { participant_signature: png() },
+        })
+        .expect(201);
+      const signed = storage.objects.get(forms.signed[0].signed_key!)!.body;
+      expect(await activeContentIn(signed)).toEqual([]);
+      expect((await pdftotext(signed)).split('\f')[0]).toContain('Mia Chen');
+    });
+
+    it('refuses a PDF too complex to normalise within the worker limits with a 422 and keeps working', async () => {
+      const id = await draftForm();
+
+      const refused = await uploadPdf(id, annotationHeavyPdf(60_000), 422);
+
+      expect(refused.message).toBe(
+        'This PDF is too complex to process; print it to a new PDF and upload that',
+      );
+      expect(storage.objects.size).toBe(0);
+      const accepted = await uploadPdf(id, await pdfFixture('normal'));
+      expect(accepted.languages.en.draft!.originalPdf!.pageCount).toBe(2);
     });
 
     it('turns the emailed copy off and on per form, on by default', async () => {
@@ -496,7 +681,12 @@ describe('form versions with an original PDF', () => {
       overrides: Partial<FormVersionRow> = {},
     ) =>
       formVersion(TEMPLATE_ID, language, version, {
-        source_key: storageKeys.formSource(TEMPLATE_ID, language, version),
+        source_key: storageKeys.formSource(
+          TEMPLATE_ID,
+          language,
+          version,
+          'seed',
+        ),
         source_sha256: sourceSha256,
         source_size_bytes: source.byteLength,
         page_count: 2,
@@ -509,7 +699,10 @@ describe('form versions with an original PDF', () => {
       ({ bytes: source, sha256: sourceSha256 } = await normaliseTemplatePdf(
         await pdfFixture('normal'),
       ));
-      storage.seed(storageKeys.formSource(TEMPLATE_ID, 'en', 1), source);
+      storage.seed(
+        storageKeys.formSource(TEMPLATE_ID, 'en', 1, 'seed'),
+        source,
+      );
       forms.seedForm('boat-rental', [pdfVersion('en', 1)]);
       forms.seedForm('waiver', [formVersion(randomUUID(), 'en', 1)]);
     });
@@ -555,7 +748,7 @@ describe('form versions with an original PDF', () => {
         .expect(302);
 
       expect(res.headers.location).toBe(
-        `memory://GET/${storageKeys.formSource(TEMPLATE_ID, 'en', 1)}`,
+        `memory://GET/${storageKeys.formSource(TEMPLATE_ID, 'en', 1, 'seed')}`,
       );
       expect(res.headers['cache-control']).toBe('no-store');
       expect(storage.presigned.at(-1)).toMatchObject({
@@ -634,6 +827,39 @@ describe('form versions with an original PDF', () => {
       expect(forms.signed[0].template_sha256).toBe(
         forms.forms[1].versions[0].body_sha256,
       );
+    });
+
+    it('fails without storing a signature when the stored original differs from its recorded hash', async () => {
+      storage.seed(
+        storageKeys.formSource(TEMPLATE_ID, 'en', 1, 'seed'),
+        await pagesPdf(2),
+      );
+
+      await complete('boat-rental').expect(500);
+
+      expect(forms.signed).toHaveLength(0);
+      expect(storage.objects.size).toBe(1);
+    });
+
+    it('fails without storing a signature when stamping the original outgrows the worker limits, and signs the next form', async () => {
+      const heavy = annotationHeavyPdf(60_000);
+      const key = storageKeys.formSource(TEMPLATE_ID, 'zh', 1, 'heavy');
+      storage.seed(key, heavy);
+      forms.seedForm('heavy', [
+        pdfVersion('zh', 1, {
+          source_key: key,
+          source_sha256: sha256Hex(heavy),
+          page_count: 1,
+          pages: [LETTER],
+          placements: [],
+        }),
+      ]);
+
+      await complete('heavy', { lang: 'zh' }).expect(500);
+
+      expect(forms.signed).toHaveLength(0);
+      await complete('boat-rental').expect(201);
+      expect(forms.signed).toHaveLength(1);
     });
 
     it('fails without storing a signature when the original PDF is missing from storage', async () => {

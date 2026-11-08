@@ -27,6 +27,10 @@ export class TemplatePdfError extends Error {
   }
 }
 
+export interface NormaliseOptions {
+  stripAnnotations?: boolean;
+}
+
 /** A validated, re-saved template source. */
 export interface NormalisedTemplatePdf {
   bytes: Uint8Array;
@@ -87,13 +91,15 @@ function hasXfa(doc: PDFDocument): boolean {
  * Validates and normalises an uploaded template PDF: opens it with an empty
  * password (owner-only encryption is removed, a user password is refused),
  * refuses XFA, flattens any AcroForm into page content, then copies the pages
- * into a fresh document so no encryption, form, script or metadata survives.
+ * into a fresh document so no encryption, form, document script or metadata
+ * survives; `stripAnnotations` also drops every page annotation and page action.
  */
 export async function normaliseTemplatePdf(
   input: Uint8Array,
+  { stripAnnotations = false }: NormaliseOptions = {},
 ): Promise<NormalisedTemplatePdf> {
   try {
-    return await normalise(input);
+    return await normalise(input, stripAnnotations);
   } catch (err) {
     if (err instanceof TemplatePdfError) {
       throw err;
@@ -102,7 +108,10 @@ export async function normaliseTemplatePdf(
   }
 }
 
-async function normalise(input: Uint8Array): Promise<NormalisedTemplatePdf> {
+async function normalise(
+  input: Uint8Array,
+  stripAnnotations: boolean,
+): Promise<NormalisedTemplatePdf> {
   const source = await open(input);
   if (hasXfa(source)) {
     throw new TemplatePdfError('xfa');
@@ -112,6 +121,12 @@ async function normalise(input: Uint8Array): Promise<NormalisedTemplatePdf> {
   }
   if (source.catalog.has(PDFName.of('AcroForm'))) {
     source.getForm().flatten();
+  }
+  if (stripAnnotations) {
+    for (const page of source.getPages()) {
+      page.node.delete(PDFName.of('Annots'));
+      page.node.delete(PDFName.of('AA'));
+    }
   }
   const output = await PDFDocument.create({ updateMetadata: false });
   const copied = await output.copyPages(source, source.getPageIndices());

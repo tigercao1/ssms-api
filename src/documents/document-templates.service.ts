@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
@@ -29,6 +30,7 @@ import {
   toTemplateSummary,
 } from './documents.presenters';
 import type { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
+import { PdfTooComplexError } from './pdf-isolation';
 import { PdfWorkQueue } from './pdf-work-queue';
 import {
   ObjectTooLargeError,
@@ -55,6 +57,8 @@ export const sourceTooLarge = (maxBytes: number) =>
 export const SOURCE_TOO_LARGE = sourceTooLarge(MAX_TEMPLATE_BYTES);
 export const sourceTooManyPages = (maxPages: number) =>
   `The PDF has more than ${maxPages} pages`;
+export const SOURCE_TOO_COMPLEX =
+  'This PDF is too complex to process; print it to a new PDF and upload that';
 export const SOURCE_NOT_PDF =
   'The uploaded file must be sent as application/pdf';
 export const TEMPLATE_HAS_NO_SOURCE =
@@ -75,6 +79,7 @@ export const SOURCE_LANGUAGE_CONFLICT =
 export interface UploadLimits {
   maxBytes: number;
   maxPages?: number;
+  normalise?: (bytes: Uint8Array) => Promise<NormalisedTemplatePdf>;
 }
 
 const PG_NO_DATA_FOUND = 'P0002';
@@ -537,7 +542,11 @@ export class DocumentTemplatesService {
 
   async normaliseUpload(
     uploadKey: string,
-    { maxBytes, maxPages }: UploadLimits = { maxBytes: MAX_TEMPLATE_BYTES },
+    {
+      maxBytes,
+      maxPages,
+      normalise = (bytes) => normaliseTemplatePdf(bytes),
+    }: UploadLimits = { maxBytes: MAX_TEMPLATE_BYTES },
   ): Promise<NormalisedTemplatePdf> {
     const head = await this.storage.head(uploadKey);
     if (!head) {
@@ -554,11 +563,15 @@ export class DocumentTemplatesService {
     const normalised = await this.pdfQueue.run(async () => {
       const bytes = await this.readUpload(uploadKey, maxBytes);
       try {
-        return await normaliseTemplatePdf(bytes);
+        return await normalise(bytes);
       } catch (err) {
         if (err instanceof TemplatePdfError) {
           await this.discardUpload(uploadKey);
           throw new BadRequestException(err.message);
+        }
+        if (err instanceof PdfTooComplexError) {
+          await this.discardUpload(uploadKey);
+          throw new UnprocessableEntityException(SOURCE_TOO_COMPLEX);
         }
         throw err;
       }

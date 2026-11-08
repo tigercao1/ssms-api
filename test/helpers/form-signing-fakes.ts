@@ -6,6 +6,7 @@ import {
 import {
   FormAdminRepository,
   type FormDraftPatch,
+  type FormDraftSource,
   type FormTemplateWrite,
 } from '../../src/documents/form-admin.repository';
 import {
@@ -232,12 +233,25 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
     limit: number;
   }[] = [];
 
+  private writes = 0;
+
   list(): Promise<FormTemplateRow[]> {
-    return Promise.resolve([...this.forms.values()]);
+    return Promise.resolve(structuredClone([...this.forms.values()]));
   }
 
   findById(id: string): Promise<FormTemplateRow | null> {
-    return Promise.resolve(this.forms.get(id) ?? null);
+    const form = this.forms.get(id);
+    return Promise.resolve(form ? structuredClone(form) : null);
+  }
+
+  private touch(row: FormVersionRow, patch: Partial<FormVersionRow>) {
+    this.writes += 1;
+    Object.assign(row, patch, {
+      updated_at: new Date(
+        Date.UTC(2026, 10, 1, 0, 0, this.writes),
+      ).toISOString(),
+    });
+    return structuredClone(row);
   }
 
   insert(
@@ -284,13 +298,17 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
   updateDraft(
     templateId: string,
     language: DocumentLanguage,
+    expected: FormDraftSource,
     draft: FormDraftPatch,
   ): Promise<FormVersionRow | null> {
     const row = this.draftOf(templateId, language);
-    if (row) {
-      Object.assign(row, draft);
-    }
-    return Promise.resolve(row ?? null);
+    return Promise.resolve(
+      row &&
+        row.source_key === expected.source_key &&
+        row.source_sha256 === expected.source_sha256
+        ? this.touch(row, draft)
+        : null,
+    );
   }
 
   insertDraft(
@@ -313,23 +331,25 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
       published_at: null,
     });
     form.versions.push(row);
-    return Promise.resolve(row);
+    return Promise.resolve(structuredClone(row));
   }
 
   publishDraft(
     templateId: string,
     language: DocumentLanguage,
+    expectedUpdatedAt: string,
     publishedBy: string | null,
     publishedAt: string,
   ): Promise<FormVersionRow | null> {
     const row = this.draftOf(templateId, language);
-    if (row) {
-      Object.assign(row, {
-        published_at: publishedAt,
-        published_by: publishedBy,
-      });
-    }
-    return Promise.resolve(row ?? null);
+    return Promise.resolve(
+      row && row.updated_at === expectedUpdatedAt
+        ? this.touch(row, {
+            published_at: publishedAt,
+            published_by: publishedBy,
+          })
+        : null,
+    );
   }
 
   lookupSignatures(

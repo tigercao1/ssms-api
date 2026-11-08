@@ -18,13 +18,15 @@ import type {
 import type { CompleteFormDto } from './dto/complete-form.dto';
 import { MAX_FORM_PDF_BYTES } from './dto/form.dto';
 import { type FormAnswers, parseFormAnswers } from './form-answers';
-import { renderFormPdf, stampFormPdf } from './form-pdf';
+import { renderFormPdf } from './form-pdf';
 import { FormSigningRepository } from './form-signing.repository';
 import type {
   CompletedForm,
+  FormVersionRow,
   PublicForm,
   PublishedForm,
 } from './form-templates.types';
+import { runPdfTask } from './pdf-isolation';
 import type { StampAudit, StampedPdf } from './pdf-stamper';
 import { PdfWorkQueue } from './pdf-work-queue';
 import {
@@ -186,7 +188,7 @@ export class FormSigningService {
     const userAgent =
       evidence.userAgent?.slice(0, USER_AGENT_MAX_LENGTH) ?? null;
     const source = version.source_key
-      ? await this.originalBytes(version.source_key)
+      ? await this.originalBytes(version)
       : null;
     const templateSha256 = source ? sha256Hex(source) : bodySha256;
     const audit: StampAudit = {
@@ -206,7 +208,7 @@ export class FormSigningService {
       language: version.language,
     };
     const stamped: StampedPdf = source
-      ? await stampFormPdf({
+      ? await runPdfTask('stampForm', {
           source,
           fields: version.fields,
           placements: version.placements,
@@ -259,10 +261,17 @@ export class FormSigningService {
     };
   }
 
-  private async originalBytes(key: string): Promise<Buffer> {
+  private async originalBytes(version: FormVersionRow): Promise<Buffer> {
+    const key = version.source_key!;
     const bytes = await this.storage.getBuffer(key, MAX_FORM_PDF_BYTES);
     if (!bytes) {
       throw new Error(`Original PDF ${key} is missing from storage`);
+    }
+    const sha256 = sha256Hex(bytes);
+    if (sha256 !== version.source_sha256) {
+      throw new Error(
+        `Original PDF ${key} hash ${sha256} differs from the recorded ${version.source_sha256}`,
+      );
     }
     return bytes;
   }

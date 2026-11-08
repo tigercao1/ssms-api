@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -26,6 +27,7 @@ import {
 } from './dto/form.dto';
 import {
   type FormDraftPatch,
+  type FormDraftSource,
   type FormTemplateWrite,
   FormAdminRepository,
 } from './form-admin.repository';
@@ -42,6 +44,7 @@ import {
   SIGNER_EMAIL_KEY,
   SIGNER_NAME_KEY,
 } from './form-templates.types';
+import { runPdfTask } from './pdf-isolation';
 import { PrivateStorageClient } from './private-storage.client';
 import { storageKeys } from './storage-keys';
 import { insidePageBox } from './template-fields';
@@ -321,7 +324,7 @@ export class AdminFormsService {
     let saved: FormVersionRow | null;
     try {
       saved =
-        (draft && (await this.repo.updateDraft(id, language, write))) ||
+        (draft && (await this.repo.updateDraft(id, language, draft, write))) ||
         (await this.repo.insertDraft(
           id,
           language,
@@ -349,18 +352,22 @@ export class AdminFormsService {
     now = new Date(),
   ): Promise<FormTemplate> {
     const { draft } = versionsOf(await this.load(id), language);
-    const missing = draft?.source_key ? unplacedRequired(draft) : [];
+    if (!draft) {
+      throw new BadRequestException(FORM_NO_DRAFT);
+    }
+    const missing = draft.source_key ? unplacedRequired(draft) : [];
     if (missing.length > 0) {
       throw new BadRequestException(FORM_PLACEMENTS_MISSING(missing));
     }
     const published = await this.repo.publishDraft(
       id,
       language,
+      draft.updated_at,
       actor.userId ?? null,
       now.toISOString(),
     );
     if (!published) {
-      throw new BadRequestException(FORM_NO_DRAFT);
+      throw new ConflictException(FORM_DRAFT_CHANGED);
     }
     await this.record(AUDIT_ACTIONS.documentTemplatePublish, id, actor, {
       kind: 'form',
@@ -395,22 +402,34 @@ export class AdminFormsService {
     const normalised = await this.templates.normaliseUpload(uploadKey, {
       maxBytes: MAX_FORM_PDF_BYTES,
       maxPages: MAX_FORM_PDF_PAGES,
+      normalise: (bytes) => runPdfTask('normaliseForm', bytes),
     });
-    const sourceKey = storageKeys.formSource(id, language, draft.version);
+    const sourceKey = storageKeys.formSource(
+      id,
+      language,
+      draft.version,
+      randomUUID(),
+    );
     await this.storage.put(sourceKey, normalised.bytes, PDF_CONTENT_TYPE);
     const placementsCleared =
       draft.placements.length > 0 &&
       !samePageLayout(draft.pages, normalised.pages);
-    await this.updateDraft(id, language, {
-      source_key: sourceKey,
-      source_sha256: normalised.sha256,
-      source_size_bytes: normalised.bytes.byteLength,
-      page_count: normalised.pageCount,
-      pages: normalised.pages,
-      placements: placementsCleared ? [] : draft.placements,
-      updated_by: actor.userId ?? null,
-    });
+    try {
+      await this.updateDraft(id, language, draft, {
+        source_key: sourceKey,
+        source_sha256: normalised.sha256,
+        source_size_bytes: normalised.bytes.byteLength,
+        page_count: normalised.pageCount,
+        pages: normalised.pages,
+        placements: placementsCleared ? [] : draft.placements,
+        updated_by: actor.userId ?? null,
+      });
+    } catch (err) {
+      await this.templates.discardUpload(sourceKey);
+      throw err;
+    }
     await this.templates.discardUpload(uploadKey);
+    await this.discardOwnSource(id, language, draft);
     await this.record(AUDIT_ACTIONS.documentTemplateSourceReplace, id, actor, {
       kind: 'form',
       language,
@@ -433,14 +452,11 @@ export class AdminFormsService {
     if (!draft.source_key) {
       throw new NotFoundException(FORM_NO_SOURCE);
     }
-    await this.updateDraft(id, language, {
+    await this.updateDraft(id, language, draft, {
       ...NO_SOURCE,
       updated_by: actor.userId ?? null,
     });
-    const ownKey = storageKeys.formSource(id, language, draft.version);
-    if (draft.source_key === ownKey) {
-      await this.templates.discardUpload(ownKey);
-    }
+    await this.discardOwnSource(id, language, draft);
     await this.record(AUDIT_ACTIONS.documentFormSourceRemove, id, actor, {
       language,
       version: draft.version,
@@ -460,7 +476,7 @@ export class AdminFormsService {
       throw new BadRequestException(FORM_NO_SOURCE);
     }
     validatePlacements(placements, draft);
-    await this.updateDraft(id, language, {
+    await this.updateDraft(id, language, draft, {
       placements,
       updated_by: actor.userId ?? null,
     });
@@ -506,10 +522,22 @@ export class AdminFormsService {
   private async updateDraft(
     id: string,
     language: DocumentLanguage,
+    expected: FormDraftSource,
     patch: FormDraftPatch,
   ): Promise<void> {
-    if (!(await this.repo.updateDraft(id, language, patch))) {
+    if (!(await this.repo.updateDraft(id, language, expected, patch))) {
       throw new ConflictException(FORM_DRAFT_CHANGED);
+    }
+  }
+
+  private async discardOwnSource(
+    id: string,
+    language: DocumentLanguage,
+    draft: FormVersionRow,
+  ): Promise<void> {
+    const own = storageKeys.formVersion(id, language, draft.version);
+    if (draft.source_key?.startsWith(own)) {
+      await this.templates.discardUpload(draft.source_key);
     }
   }
 

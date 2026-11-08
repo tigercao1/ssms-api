@@ -28,6 +28,7 @@ import {
 import { MailerService } from '../mailer/mailer.service';
 import { DocumentNotificationsService } from './document-notifications.service';
 import { DocumentSubjectsRepository } from './document-subjects.repository';
+import * as formPdf from './form-pdf';
 import { FormSigningRepository } from './form-signing.repository';
 import { FormSigningService } from './form-signing.service';
 import type { PublicForm } from './form-templates.types';
@@ -125,7 +126,10 @@ describe('public form signing (/sign/forms)', () => {
     );
   });
 
-  afterEach(() => app.close());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    return app.close();
+  });
 
   const nextIp = () => `203.0.113.${++ipCounter % 250}`;
   const get = (path: string, ip = nextIp()) =>
@@ -301,6 +305,10 @@ describe('public form signing (/sign/forms)', () => {
     });
 
     it('stops emailing copies once 30 have gone out across all addresses in a minute', async () => {
+      const pdf = Buffer.from('%PDF-1.7\n%%EOF\n');
+      jest
+        .spyOn(formPdf, 'renderFormPdf')
+        .mockResolvedValue({ bytes: pdf, sha256: sha256Hex(pdf) });
       const send = (i: number) =>
         complete(
           validBody({

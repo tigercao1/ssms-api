@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import {
+  DatabaseError,
+  PG_UNIQUE_VIOLATION,
+} from '../../src/database/db-result';
+import {
+  FormAdminRepository,
+  type FormDraftWrite,
+  type FormTemplateWrite,
+} from '../../src/documents/form-admin.repository';
+import {
   FORM_COPY_EMAIL_LIMITS,
   FormSigningRepository,
   type NewSignedFormAssignment,
@@ -10,8 +19,10 @@ import type {
 } from '../../src/documents/documents.types';
 import {
   defaultWaiverFields,
+  type FormTemplateRow,
   type FormVersionRow,
   type PublishedForm,
+  type SignatureLookupRow,
 } from '../../src/documents/form-templates.types';
 import { sha256Hex } from '../../src/documents/template-pdf';
 
@@ -189,5 +200,135 @@ export class InMemoryFormSigningRepository extends FormSigningRepository {
       template: null,
       ...stored,
     });
+  }
+}
+
+const uniqueViolation = () =>
+  new DatabaseError('insert', PG_UNIQUE_VIOLATION, 'duplicate key');
+
+export class InMemoryFormAdminRepository extends FormAdminRepository {
+  readonly forms = new Map<string, FormTemplateRow>();
+  lookupRows: SignatureLookupRow[] = [];
+  studentRows: { name: string | null; signed_at: string | null }[] = [];
+  readonly lookupCalls: { query: string; limit: number }[] = [];
+  readonly studentCalls: {
+    instructorId: string;
+    query: string;
+    limit: number;
+  }[] = [];
+
+  list(): Promise<FormTemplateRow[]> {
+    return Promise.resolve([...this.forms.values()]);
+  }
+
+  findById(id: string): Promise<FormTemplateRow | null> {
+    return Promise.resolve(this.forms.get(id) ?? null);
+  }
+
+  insert(
+    row: FormTemplateWrite & { slug: string; title_en: string },
+  ): Promise<FormTemplateRow> {
+    if ([...this.forms.values()].some((f) => f.slug === row.slug)) {
+      return Promise.reject(uniqueViolation());
+    }
+    const form: FormTemplateRow = {
+      id: randomUUID(),
+      slug: row.slug,
+      title_en: row.title_en,
+      title_zh: row.title_zh ?? null,
+      inserted_at: '2026-11-01T00:00:00.000Z',
+      updated_at: '2026-11-01T00:00:00.000Z',
+      versions: [],
+    };
+    this.forms.set(form.id, form);
+    return Promise.resolve(form);
+  }
+
+  update(
+    id: string,
+    patch: FormTemplateWrite,
+  ): Promise<FormTemplateRow | null> {
+    const form = this.forms.get(id);
+    if (form) {
+      Object.assign(form, {
+        ...(patch.title_en !== undefined && { title_en: patch.title_en }),
+        ...(patch.title_zh !== undefined && { title_zh: patch.title_zh }),
+      });
+    }
+    return Promise.resolve(form ?? null);
+  }
+
+  private draftOf(templateId: string, language: DocumentLanguage) {
+    return this.forms
+      .get(templateId)
+      ?.versions.find((v) => v.language === language && !v.published_at);
+  }
+
+  updateDraft(
+    templateId: string,
+    language: DocumentLanguage,
+    draft: FormDraftWrite,
+  ): Promise<FormVersionRow | null> {
+    const row = this.draftOf(templateId, language);
+    if (row) {
+      Object.assign(row, draft);
+    }
+    return Promise.resolve(row ?? null);
+  }
+
+  insertDraft(
+    templateId: string,
+    language: DocumentLanguage,
+    version: number,
+    draft: FormDraftWrite,
+  ): Promise<FormVersionRow> {
+    const form = this.forms.get(templateId)!;
+    if (
+      this.draftOf(templateId, language) ||
+      form.versions.some(
+        (v) => v.language === language && v.version === version,
+      )
+    ) {
+      return Promise.reject(uniqueViolation());
+    }
+    const row = formVersion(templateId, language, version, {
+      ...draft,
+      published_at: null,
+    });
+    form.versions.push(row);
+    return Promise.resolve(row);
+  }
+
+  publishDraft(
+    templateId: string,
+    language: DocumentLanguage,
+    publishedBy: string | null,
+    publishedAt: string,
+  ): Promise<FormVersionRow | null> {
+    const row = this.draftOf(templateId, language);
+    if (row) {
+      Object.assign(row, {
+        published_at: publishedAt,
+        published_by: publishedBy,
+      });
+    }
+    return Promise.resolve(row ?? null);
+  }
+
+  lookupSignatures(
+    query: string,
+    limit: number,
+  ): Promise<SignatureLookupRow[]> {
+    this.lookupCalls.push({ query, limit });
+    return Promise.resolve(this.lookupRows);
+  }
+
+  studentSignatures(
+    instructorId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ name: string | null; signed_at: string | null }[]> {
+    this.studentCalls.push({ instructorId, query, limit });
+    return Promise.resolve(this.studentRows);
   }
 }

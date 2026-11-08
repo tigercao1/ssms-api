@@ -77,6 +77,7 @@ export const AUDIT_ACTIONS = {
   documentTemplateRetire: 'document_template.retire',
   documentTemplateAudienceChange: 'document_template.audience_change',
   documentTemplateDelete: 'document_template.delete',
+  documentFormDraftSave: 'document_template.form_draft_save',
   documentAssignmentCreate: 'document_assignment.create',
   documentAssignmentArchive: 'document_assignment.archive',
   documentAssignmentRemind: 'document_assignment.remind',

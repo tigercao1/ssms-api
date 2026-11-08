@@ -2,12 +2,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import type {
-  DocumentLanguage,
-  DocumentTemplateRow,
-  DocumentTemplateTranslationWrite,
-  DocumentTemplateWrite,
-  TemplateStatus,
+import {
+  DOCUMENT_KINDS,
+  type DocumentLanguage,
+  type DocumentTemplateRow,
+  type DocumentTemplateTranslationWrite,
+  type DocumentTemplateWrite,
+  type TemplateStatus,
 } from './documents.types';
 
 export const DOCUMENT_TEMPLATES_TABLE = 'document_templates';
@@ -28,7 +29,7 @@ export type NewDocumentTemplate = DocumentTemplateWrite &
 
 /** Data access for `document_templates`. */
 export abstract class DocumentTemplatesRepository {
-  /** Every template, by `sort_order` then English title. */
+  /** Every PDF template (not `form` templates), by `sort_order` then English title. */
   abstract list(): Promise<DocumentTemplateRow[]>;
   abstract findById(id: string): Promise<DocumentTemplateRow | null>;
   /** `live` templates published to `all` of an audience, by `sort_order`; optionally one season only. */
@@ -71,6 +72,7 @@ export class SupabaseDocumentTemplatesRepository extends DocumentTemplatesReposi
     const { data, error } = (await this.supabase
       .from(DOCUMENT_TEMPLATES_TABLE)
       .select(DOCUMENT_TEMPLATE_COLUMNS)
+      .in('kind', DOCUMENT_KINDS)
       .order('sort_order', { ascending: true })
       .order('title_en', { ascending: true })) as DbResult<
       DocumentTemplateRow[]

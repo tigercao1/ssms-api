@@ -97,3 +97,96 @@ export interface CompletedForm {
   status: 'signed';
   emailed: boolean;
 }
+
+export interface FormTemplateRow {
+  id: string;
+  slug: string;
+  title_en: string;
+  title_zh: string | null;
+  inserted_at: string;
+  updated_at: string;
+  versions: FormVersionRow[];
+}
+
+/** One language of a form: the version signers see and the unpublished draft, if any. */
+export interface FormLanguageVersions {
+  published: FormVersion | null;
+  draft: FormVersion | null;
+}
+
+export interface FormVersion {
+  version: number;
+  title: string;
+  bodyMarkdown: string;
+  bodySha256: string;
+  fields: FormField[];
+  publishedAt: string | null;
+  updatedAt: string;
+}
+
+/** `GET /admin/documents/forms/:id`. */
+export interface FormTemplate {
+  id: string;
+  slug: string;
+  titleEn: string;
+  titleZh: string | null;
+  languages: Record<DocumentLanguage, FormLanguageVersions>;
+  defaultFields: Record<DocumentLanguage, FormField[]>;
+  insertedAt: string;
+  updatedAt: string;
+}
+
+/** `GET /admin/documents/forms`. */
+export interface FormTemplateSummary {
+  id: string;
+  slug: string;
+  titleEn: string;
+  titleZh: string | null;
+  publishedVersions: Record<DocumentLanguage, number | null>;
+  hasDraft: Record<DocumentLanguage, boolean>;
+  updatedAt: string;
+}
+
+export interface SignatureLookupRow {
+  subject_type: 'instructor' | 'customer';
+  subject_id: string;
+  name: string | null;
+  email: string | null;
+  assignment_id: string | null;
+  template_id: string | null;
+  title_en: string | null;
+  title_zh: string | null;
+  kind: string | null;
+  language: DocumentLanguage | null;
+  form_version: number | null;
+  signed_at: string | null;
+  has_signed_copy: boolean | null;
+}
+
+export interface SignedDocumentEntry {
+  assignmentId: string;
+  templateId: string;
+  titleEn: string;
+  titleZh: string | null;
+  kind: string;
+  language: DocumentLanguage | null;
+  formVersion: number | null;
+  signedAt: string;
+  hasSignedCopy: boolean;
+}
+
+/** `GET /admin/signatures`: one instructor or customer and what they completed. */
+export interface Signer {
+  subjectType: 'instructor' | 'customer';
+  subjectId: string;
+  name: string | null;
+  email: string | null;
+  signatures: SignedDocumentEntry[];
+}
+
+/** `GET /me/students/signatures`: name and waiver status only. */
+export interface StudentSignature {
+  name: string | null;
+  signed: boolean;
+  signedAt: string | null;
+}

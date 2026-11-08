@@ -64,6 +64,7 @@ describe('SupabaseDocumentTemplatesRepository', () => {
     expect(DOCUMENT_TEMPLATE_COLUMNS).not.toContain('is_active');
     expect(queries[0].ops).toEqual([
       ['select', DOCUMENT_TEMPLATE_COLUMNS],
+      ['in', 'kind', ['sign', 'read']],
       ['order', 'sort_order', { ascending: true }],
       ['order', 'title_en', { ascending: true }],
     ]);

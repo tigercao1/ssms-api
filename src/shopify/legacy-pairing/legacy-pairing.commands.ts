@@ -170,7 +170,14 @@ function isMissingColumn(error: { code?: string; message: string }): boolean {
 interface StateRow {
   instructor_id: string;
   shopify_handle: string | null;
+  paired_legacy_handle: string | null;
   dismissed_legacy_handles?: string[] | null;
+}
+
+function pairedHandles(row: StateRow | undefined): string[] {
+  return [row?.shopify_handle, row?.paired_legacy_handle].filter(
+    (handle): handle is string => !!handle,
+  );
 }
 
 function dismissedColumnError(
@@ -247,32 +254,34 @@ export async function runApply(
   }
 
   if (pairs.length > 0) {
-    const taken = await supabase
-      .from('instructor_shopify_state')
-      .select('instructor_id, shopify_handle')
-      .in('shopify_handle', handles);
-    if (taken.error) {
+    const taken = await Promise.all(
+      (['shopify_handle', 'paired_legacy_handle'] as const).map((column) =>
+        supabase
+          .from('instructor_shopify_state')
+          .select('instructor_id, shopify_handle, paired_legacy_handle')
+          .in(column, handles),
+      ),
+    );
+    const takenError = taken.find((r) => r.error)?.error;
+    if (takenError) {
       throw new PairingCommandError(
-        `Failed to read instructor_shopify_state: ${taken.error.message}`,
+        `Failed to read instructor_shopify_state: ${takenError.message}`,
       );
     }
-    const owners = new Map(
-      (
-        (taken.data ?? []) as {
-          instructor_id: string;
-          shopify_handle: string;
-        }[]
-      ).map((r) => [r.shopify_handle, r.instructor_id]),
+    const takenRows = taken.flatMap(
+      (r) => (r.data ?? []) as unknown as StateRow[],
     );
-    const conflicts = pairs.filter((p) => {
-      const owner = owners.get(p.legacyHandle);
-      return owner !== undefined && owner !== p.instructorId;
+    const conflicts = pairs.flatMap((p) => {
+      const other = takenRows.find(
+        (r) =>
+          r.instructor_id !== p.instructorId &&
+          pairedHandles(r).includes(p.legacyHandle),
+      );
+      return other ? [`${p.legacyHandle} -> ${other.instructor_id}`] : [];
     });
     if (conflicts.length > 0) {
       throw new PairingCommandError(
-        `Handle(s) already paired with another instructor: ${conflicts
-          .map((p) => `${p.legacyHandle} -> ${owners.get(p.legacyHandle)}`)
-          .join(', ')}`,
+        `Handle(s) already paired with another instructor: ${conflicts.join(', ')}`,
       );
     }
   }
@@ -281,8 +290,8 @@ export async function runApply(
     .from('instructor_shopify_state')
     .select(
       dismissed.length > 0
-        ? 'instructor_id, shopify_handle, dismissed_legacy_handles'
-        : 'instructor_id, shopify_handle',
+        ? 'instructor_id, shopify_handle, paired_legacy_handle, dismissed_legacy_handles'
+        : 'instructor_id, shopify_handle, paired_legacy_handle',
     )
     .in('instructor_id', ids);
   if (current.error) {
@@ -305,7 +314,7 @@ export async function runApply(
 
   const dismissingPairing = dismissed.filter(
     (d) =>
-      existing.get(d.instructorId)?.shopify_handle === d.legacyHandle &&
+      pairedHandles(existing.get(d.instructorId)).includes(d.legacyHandle) &&
       !pairs.some((p) => p.instructorId === d.instructorId),
   );
   if (dismissingPairing.length > 0) {
@@ -316,13 +325,38 @@ export async function runApply(
     );
   }
 
+  const repairing = pairs.filter((p) => {
+    const held = existing.get(p.instructorId)?.paired_legacy_handle;
+    return held && held !== p.legacyHandle;
+  });
+  if (repairing.length > 0) {
+    throw new PairingCommandError(
+      `Instructor(s) already paired with a different legacy handle: ${repairing
+        .map(
+          (p) =>
+            `${p.instructorId} -> ${existing.get(p.instructorId)?.paired_legacy_handle} (line ${p.line})`,
+        )
+        .join(', ')}`,
+    );
+  }
+  const alreadyPaired = pairs.filter(
+    (p) =>
+      existing.get(p.instructorId)?.paired_legacy_handle === p.legacyHandle,
+  );
+  const toPair = pairs.filter((p) => !alreadyPaired.includes(p));
+
   const nameOf = (id: string) => {
     const instructor = instructors.get(id)!;
     return [instructor.display_name_en, instructor.display_name_zh]
       .filter(Boolean)
       .join(' / ');
   };
-  for (const pair of pairs) {
+  for (const pair of alreadyPaired) {
+    deps.log(
+      `KEEP ${pair.instructorId} [${nameOf(pair.instructorId)}] paired_legacy_handle=${pair.legacyHandle} (shopify_handle ${existing.get(pair.instructorId)?.shopify_handle ?? '(none)'})`,
+    );
+  }
+  for (const pair of toPair) {
     const previous =
       existing.get(pair.instructorId)?.shopify_handle ?? '(none)';
     deps.log(
@@ -335,15 +369,15 @@ export async function runApply(
     );
   }
 
-  const total = pairs.length + dismissed.length;
+  const total = toPair.length + dismissed.length;
   if (!write) {
     deps.log(`Dry run: ${total} row(s). Re-run with --write to apply.`);
     return 0;
   }
 
-  if (pairs.length > 0) {
+  if (toPair.length > 0) {
     const { error } = await supabase.from('instructor_shopify_state').upsert(
-      pairs.map((p) => ({
+      toPair.map((p) => ({
         instructor_id: p.instructorId,
         shopify_handle: p.legacyHandle,
       })),
@@ -400,7 +434,7 @@ export async function runApply(
 }
 
 const BACKFILL_INSTRUCTOR_COLUMNS =
-  'id, display_name_en, display_name_zh, bio_en, bio_zh, display_order, ' +
+  'id, display_name_en, display_name_zh, bio_en, bio_zh, ' +
   'profile_photo_url, photo_2_url, photo_3_url';
 
 export async function runBackfill(
@@ -431,18 +465,20 @@ export async function runBackfill(
 
   const pairs = await supabase
     .from('instructor_shopify_state')
-    .select('instructor_id, shopify_handle')
-    .not('shopify_handle', 'is', null);
+    .select('instructor_id, shopify_handle, paired_legacy_handle');
   if (pairs.error) {
     throw new PairingCommandError(
       `Failed to read instructor_shopify_state: ${pairs.error.message}`,
     );
   }
-  const paired = (
-    (pairs.data ?? []) as { instructor_id: string; shopify_handle: string }[]
-  ).filter((p) => entries.has(p.shopify_handle));
+  const paired = ((pairs.data ?? []) as unknown as StateRow[]).flatMap(
+    (row) => {
+      const handle = pairedHandles(row).find((h) => entries.has(h));
+      return handle ? [{ instructor_id: row.instructor_id, handle }] : [];
+    },
+  );
   const unknownForce = options.force.filter(
-    (h) => !paired.some((p) => p.shopify_handle === h),
+    (h) => !paired.some((p) => p.handle === h),
   );
   if (unknownForce.length > 0) {
     throw new PairingCommandError(
@@ -518,13 +554,13 @@ export async function runBackfill(
     }
     if (
       alreadyBackfilled.has(pair.instructor_id) &&
-      !options.force.includes(pair.shopify_handle)
+      !options.force.includes(pair.handle)
     ) {
-      deps.log(`SKIP ${pair.shopify_handle}: already backfilled`);
+      deps.log(`SKIP ${pair.handle}: already backfilled`);
       continue;
     }
     const plan = planInstructorBackfill(
-      entries.get(pair.shopify_handle)!,
+      entries.get(pair.handle)!,
       instructor,
       trainerRows.filter((t) => t.instructor_id === pair.instructor_id),
     );

@@ -59,7 +59,6 @@ export interface BackfillInstructor {
   display_name_zh: string | null;
   bio_en: string | null;
   bio_zh: string | null;
-  display_order: number | null;
   profile_photo_url: string | null;
   photo_2_url: string | null;
   photo_3_url: string | null;
@@ -211,14 +210,6 @@ export function planInstructorBackfill(
   if (HAN.test(legacyName) && legacyName.length <= DISPLAY_NAME_MAX_LENGTH) {
     if (legacyName !== (instructor.display_name_zh ?? '')) {
       update.display_name_zh = legacyName;
-    }
-  }
-
-  const sortOrder = fieldValue(entry, 'sort_order');
-  if (/^\d+$/.test(sortOrder)) {
-    const order = Number(sortOrder);
-    if (order !== instructor.display_order) {
-      update.display_order = order;
     }
   }
 

@@ -8,11 +8,13 @@ import {
   type PairingDeps,
   parseArgs,
   runApply,
+  runBackfill,
   runPairingCli,
   runPropose,
   runSnapshot,
   snapshotFileName,
 } from './legacy-pairing.commands';
+import { BACKFILL_AUDIT_ACTION } from './legacy-backfill';
 import { PAIRING_CSV_COLUMNS } from './pairing-csv';
 
 const ID1 = '11111111-1111-4111-8111-111111111111';
@@ -27,6 +29,7 @@ interface FakeDb {
   tables: Record<string, Row[]>;
   failOn?: { table: string; op: 'select' | 'upsert'; error: DbError };
   writes: { table: string; rows: Row[]; onConflict?: string }[];
+  selects: { table: string; columns: string[] }[];
 }
 
 function fakeSupabase(db: FakeDb): SupabaseClient {
@@ -62,6 +65,11 @@ function fakeSupabase(db: FakeDb): SupabaseClient {
       select(cols: string) {
         columns = cols.split(',').map((c) => c.trim());
         filters = [];
+        db.selects.push({ table, columns });
+        return builder;
+      },
+      eq(column: string, value: unknown) {
+        filters.push((r) => r[column] === value);
         return builder;
       },
       in(column: string, values: unknown[]) {
@@ -124,6 +132,7 @@ function seedDb(stateRows: Row[] = []): FakeDb {
       instructor_sync_queue: [],
     },
     writes: [],
+    selects: [],
   };
 }
 
@@ -404,10 +413,15 @@ describe('runPropose', () => {
 });
 
 describe('runApply', () => {
-  const stateRow = (id: string, handle: string | null) => ({
+  const stateRow = (
+    id: string,
+    handle: string | null,
+    pairedLegacyHandle: string | null = null,
+  ) => ({
     instructor_id: id,
     shopify_metaobject_id: null,
     shopify_handle: handle,
+    paired_legacy_handle: pairedLegacyHandle,
   });
 
   it('prints the plan but writes nothing without --write', async () => {
@@ -475,6 +489,44 @@ describe('runApply', () => {
     });
     await expect(runApply(deps, '/r.csv', true)).rejects.toThrow(
       `Handle(s) already paired with another instructor: xiao-li -> ${ID2}`,
+    );
+    expect(db.writes).toEqual([]);
+  });
+
+  it('refuses a handle another instructor holds as paired_legacy_handle', async () => {
+    const db = seedDb([stateRow(ID2, 'li-renamed', 'xiao-li')]);
+    const { deps } = makeDeps(db, {
+      '/r.csv': reviewed(`${ID1},,,xiao-li,,,y`),
+    });
+    await expect(runApply(deps, '/r.csv', true)).rejects.toThrow(
+      `Handle(s) already paired with another instructor: xiao-li -> ${ID2}`,
+    );
+    expect(db.writes).toEqual([]);
+  });
+
+  it('keeps a pairing held as paired_legacy_handle instead of overwriting the renamed shopify_handle', async () => {
+    const db = seedDb([stateRow(ID1, 'vincent-li', 'xiao-li')]);
+    const { deps, logs } = makeDeps(db, {
+      '/r.csv': reviewed(`${ID1},,,xiao-li,,,y`),
+    });
+    await expect(runApply(deps, '/r.csv', true)).resolves.toBe(0);
+    expect(db.writes).toEqual([]);
+    expect(db.tables.instructor_shopify_state).toEqual([
+      stateRow(ID1, 'vincent-li', 'xiao-li'),
+    ]);
+    expect(logs).toEqual([
+      `KEEP ${ID1} [Vincent Li / 李文森] paired_legacy_handle=xiao-li (shopify_handle vincent-li)`,
+      'Updated 0 row(s).',
+    ]);
+  });
+
+  it('refuses to pair an instructor whose paired_legacy_handle is a different handle', async () => {
+    const db = seedDb([stateRow(ID1, 'vincent-li', 'old-li')]);
+    const { deps } = makeDeps(db, {
+      '/r.csv': reviewed(`${ID1},,,xiao-li,,,y`),
+    });
+    await expect(runApply(deps, '/r.csv', true)).rejects.toThrow(
+      `Instructor(s) already paired with a different legacy handle: ${ID1} -> old-li (line 2)`,
     );
     expect(db.writes).toEqual([]);
   });
@@ -615,6 +667,22 @@ describe('runApply', () => {
       expect(db.writes).toEqual([]);
     });
 
+    it('refuses to dismiss the handle an instructor holds as paired_legacy_handle', async () => {
+      const db = seedDb([
+        {
+          ...stateRow(ID1, 'vincent-li', 'xiao-li'),
+          dismissed_legacy_handles: [],
+        },
+      ]);
+      const { deps } = makeDeps(db, {
+        '/r.csv': reviewed(`${ID1},,,xiao-li,,,n`),
+      });
+      await expect(runApply(deps, '/r.csv', true)).rejects.toThrow(
+        `Cannot dismiss the legacy handle an instructor is paired with: xiao-li -> ${ID1} (line 2)`,
+      );
+      expect(db.writes).toEqual([]);
+    });
+
     it('fails clearly when the dismissed_legacy_handles column is missing', async () => {
       const db = seedDb([stateRow(ID2, null)]);
       const { deps } = makeDeps(db, {
@@ -691,6 +759,123 @@ describe('runApply', () => {
     await expect(
       runApply(makeDeps(upsertMissing, files).deps, '/r.csv', true),
     ).rejects.toThrow(/shopify_handle does not exist/);
+  });
+});
+
+describe('runBackfill', () => {
+  const legacyEntry = (handle: string, name: string, sortOrder: string) => ({
+    handle,
+    fields: [
+      { key: 'name', value: name },
+      { key: 'introduction', value: `${name} 的简介` },
+      { key: 'sort_order', value: sortOrder },
+    ],
+    translations: [],
+  });
+  const files = {
+    '/backups/s.json': JSON.stringify({
+      entries: [
+        legacyEntry('xiao-li', '小李 Vincent', '1'),
+        legacyEntry('sarah', 'Sarah 陈', '2'),
+        legacyEntry('cindy', 'Cindy', '3'),
+      ],
+    }),
+  };
+  const instructorRow = (id: string, name: string) => ({
+    id,
+    display_name_en: name,
+    display_name_zh: null,
+    bio_en: null,
+    bio_zh: null,
+    display_order: 9,
+    profile_photo_url: null,
+    photo_2_url: null,
+    photo_3_url: null,
+  });
+
+  function backfillDb(auditRows: Row[] = []): FakeDb {
+    return {
+      tables: {
+        instructor_shopify_state: [
+          {
+            instructor_id: ID1,
+            shopify_handle: 'xiao-li',
+            paired_legacy_handle: null,
+          },
+          {
+            instructor_id: ID2,
+            shopify_handle: 'sarah-chen',
+            paired_legacy_handle: 'sarah',
+          },
+          {
+            instructor_id: ID3,
+            shopify_handle: 'someone-new',
+            paired_legacy_handle: null,
+          },
+        ],
+        instructors: [
+          instructorRow(ID1, 'Vincent Li'),
+          instructorRow(ID2, 'Sarah Chen'),
+          instructorRow(ID3, 'Someone New'),
+        ],
+        audit_log: auditRows,
+        instructor_trainer_status: [],
+      },
+      writes: [],
+      selects: [],
+    };
+  }
+
+  const backfill = (db: FakeDb, force: string[] = []) => {
+    const made = makeDeps(db, files);
+    return {
+      ...made,
+      run: () =>
+        runBackfill(made.deps, '/backups/b.csv', {
+          write: false,
+          snapshot: '/backups/s.json',
+          force,
+        }),
+    };
+  };
+
+  it('treats shopify_handle or paired_legacy_handle as the legacy handle', async () => {
+    const db = backfillDb();
+    const { run, logs } = backfill(db);
+    await expect(run()).resolves.toBe(0);
+    expect(logs.filter((l) => l.startsWith('WOULD BACKFILL'))).toEqual([
+      'WOULD BACKFILL xiao-li [Vincent Li]: 0 photo(s); fields: bio_zh, bio_en, display_name_zh; bio_en translation queued',
+      'WOULD BACKFILL sarah [Sarah Chen]: 0 photo(s); fields: bio_zh, bio_en, display_name_zh; bio_en translation queued',
+    ]);
+    expect(db.writes).toEqual([]);
+  });
+
+  it('never reads or reports display_order', async () => {
+    const db = backfillDb();
+    const { run, written } = backfill(db);
+    await run();
+    expect(
+      db.selects.filter((s) => s.columns.includes('display_order')),
+    ).toEqual([]);
+    expect(written['/backups/b.csv']).not.toContain('display_order');
+    expect(written['/backups/b.csv']).toContain('sarah');
+  });
+
+  it('skips and forces by the paired_legacy_handle', async () => {
+    const audit = [{ target_id: ID2, action: BACKFILL_AUDIT_ACTION }];
+    const skipped = backfill(backfillDb(audit));
+    await skipped.run();
+    expect(skipped.logs).toContain('SKIP sarah: already backfilled');
+
+    const forced = backfill(backfillDb(audit), ['sarah']);
+    await forced.run();
+    expect(forced.logs.some((l) => l.startsWith('WOULD BACKFILL sarah'))).toBe(
+      true,
+    );
+
+    await expect(backfill(backfillDb(), ['sarah-chen']).run()).rejects.toThrow(
+      '--force handle(s) not paired with an instructor: sarah-chen',
+    );
   });
 });
 

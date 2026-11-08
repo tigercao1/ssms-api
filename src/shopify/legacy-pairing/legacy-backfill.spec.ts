@@ -74,7 +74,6 @@ function instructor(
     display_name_zh: null,
     bio_en: 'I wrote this myself',
     bio_zh: null,
-    display_order: null,
     profile_photo_url: `${PUBLIC}/${ID}/avatar.png`,
     photo_2_url: null,
     photo_3_url: null,
@@ -149,7 +148,7 @@ describe('planInstructorBackfill', () => {
         sort_order: '1',
         certification: 'CSIA Level 3',
       }),
-      instructor({ bio_zh: '旧的', display_order: 5 }),
+      instructor({ bio_zh: '旧的' }),
       [],
     );
     expect(
@@ -162,9 +161,9 @@ describe('planInstructorBackfill', () => {
       bio_zh: '爱滑雪的程序员',
       bio_en: null,
       bio_en_machine_translated: false,
-      display_order: 1,
     });
     expect(plan.update).not.toHaveProperty('display_name_zh');
+    expect(plan.update).not.toHaveProperty('display_order');
     expect(plan.translateBioToEn).toBe('爱滑雪的程序员');
     expect(plan.trainer).toBeNull();
   });

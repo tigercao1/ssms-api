@@ -5,6 +5,19 @@ import type { AuditEntry } from './audit.types';
 
 const AUDIT_TABLE = 'audit_log';
 
+export function auditMetadata(
+  entry: AuditEntry,
+): Record<string, unknown> | null {
+  if (entry.actor?.via !== 'api_token') {
+    return entry.metadata ?? null;
+  }
+  return {
+    ...entry.metadata,
+    actor_via: 'api_token',
+    actor_token_id: entry.actor.tokenId ?? null,
+  };
+}
+
 /**
  * T6.8 — the single append-only writer for `audit_log`.
  *
@@ -34,7 +47,7 @@ export class AuditService {
         action: entry.action,
         target_type: entry.targetType ?? null,
         target_id: entry.targetId ?? null,
-        metadata: entry.metadata ?? null,
+        metadata: auditMetadata(entry),
         ip: entry.actor?.ip ?? null,
         user_agent: entry.actor?.userAgent ?? null,
       });

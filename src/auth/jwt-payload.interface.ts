@@ -16,6 +16,8 @@ export interface SupabaseJwtPayload {
   exp?: number;
   /** auth.sessions.id; checked against the DB on every request. */
   session_id?: string;
+  auth_via?: 'api_token';
+  token_id?: string;
 }
 
 /** What request.user is after the guard runs. */

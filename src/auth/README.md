@@ -20,6 +20,15 @@ Supabase Auth; the client then sends `Authorization: Bearer <supabase-jwt>`.
   rotation. Requires **Node ≥ 22.12** (jwks-rsa `require()`s ESM `jose@6`);
   pinned via `package.json` engines + `.nvmrc` (24).
 - `SupabaseAuthGuard` — `@UseGuards(SupabaseAuthGuard)`; bad/missing token → 401.
+- Admin API tokens — `SupabaseAuthGuard` also accepts `Authorization: Bearer
+  ssms_pat_<43 chars>`, a personal admin API token (`src/admin-api-tokens`).
+  Only its SHA-256 hash is stored. The guard rejects revoked, expired and
+  past-grace tokens, checks the owner is still an admin (cached 30s), limits
+  each token to 120 requests a minute (429) and sets `request.user` to the
+  owner with `app_metadata.role = 'admin'`, `auth_via: 'api_token'` and
+  `token_id`. A token only works on routes marked `@Roles('admin')`, and never
+  on a route marked `@SessionOnly()` (403). Every other bearer value takes the
+  JWT path above.
 - `EmailVerifiedGuard` — use after `SupabaseAuthGuard`; unverified → 403 (T1.2).
 - `@CurrentUser()` — injects the verified payload (T1.4).
 

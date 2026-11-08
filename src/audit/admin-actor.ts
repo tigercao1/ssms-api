@@ -5,5 +5,14 @@ export function toActor(
   user: SupabaseJwtPayload,
   userAgent?: string,
 ): AuditActor {
-  return { userId: user.sub, role: 'admin', userAgent: userAgent ?? null };
+  const actor: AuditActor = {
+    userId: user.sub,
+    role: 'admin',
+    userAgent: userAgent ?? null,
+  };
+  if (user.auth_via === 'api_token') {
+    actor.via = 'api_token';
+    actor.tokenId = user.token_id ?? null;
+  }
+  return actor;
 }

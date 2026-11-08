@@ -17,8 +17,9 @@ import {
 import type { Response } from 'express';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { SessionOnly } from '../auth/session-only.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
-import type { AuditActor } from '../audit/audit.types';
+import { toActor } from '../audit/admin-actor';
 import { NON_ASCII_NAMES_HEADER, TOTAL_COUNT_HEADER } from '../config/cors';
 import { UpdateInstructorProfileDto } from '../instructors/dto/update-instructor-profile.dto';
 import type { InstructorProfile } from '../instructors/instructors.types';
@@ -49,11 +50,6 @@ import { UpdateApprovalStatusDto } from './dto/update-approval-status.dto';
 import { UpdateDisplayOrderDto } from './dto/update-display-order.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { Roles, RolesGuard } from './roles.guard';
-
-/** Builds the audit actor from the verified admin JWT + request user-agent. */
-function toActor(user: SupabaseJwtPayload, userAgent?: string): AuditActor {
-  return { userId: user.sub, role: 'admin', userAgent: userAgent ?? null };
-}
 
 function instructorFilter(
   query: InstructorFiltersQueryDto,
@@ -199,6 +195,7 @@ export class AdminController {
 
   /** v1.x — promote / demote a user (sets server-only `app_metadata.role`). */
   @Patch('users/:id/role')
+  @SessionOnly()
   setUserRole(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateRoleDto,

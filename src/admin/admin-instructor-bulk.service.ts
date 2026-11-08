@@ -19,6 +19,7 @@ import {
 export const ATOMIC_NOT_APPLIED =
   'Not applied: another row failed and the request is atomic';
 export const UPDATE_FAILED = 'The update could not be saved';
+export const MAX_STATUS_ROWS = 25;
 
 const PROFILE_FIELDS = [
   'displayNameEn',
@@ -88,10 +89,11 @@ export class AdminInstructorBulkService {
     dto: BulkUpdateInstructorsDto,
     actor: AuditActor,
   ): Promise<BulkUpdateInstructorsResult> {
-    assertUniqueIds(dto.updates);
+    const ids = uniqueIds(dto.updates);
+    assertStatusRowCap(dto.updates);
     const plans: RowPlan[] = [];
-    for (const row of dto.updates) {
-      plans.push(await this.plan(row));
+    for (const [index, row] of dto.updates.entries()) {
+      plans.push(await this.plan(row, ids[index]));
     }
     const atomic = dto.atomic ?? false;
     const dryRun = dto.dryRun ?? false;
@@ -132,8 +134,10 @@ export class AdminInstructorBulkService {
     return { results, summary };
   }
 
-  private async plan(raw: BulkInstructorUpdateRowDto): Promise<RowPlan> {
-    const id = raw.id;
+  private async plan(
+    raw: BulkInstructorUpdateRowDto,
+    id: string,
+  ): Promise<RowPlan> {
     const refused = Object.keys(REFUSED_FIELDS)
       .filter((field) => field in raw)
       .map((field) => REFUSED_FIELDS[field]);
@@ -156,7 +160,7 @@ export class AdminInstructorBulkService {
       };
     }
     try {
-      return { id, ...(await this.diff(row)) };
+      return { id, ...(await this.diff(row, id)) };
     } catch (err) {
       return { id, fields: [], error: this.errorMessage(err) };
     }
@@ -164,11 +168,12 @@ export class AdminInstructorBulkService {
 
   private async diff(
     row: BulkInstructorUpdateRowDto,
+    id: string,
   ): Promise<Omit<RowPlan, 'id'>> {
-    const current = await this.admin.getInstructor(row.id);
+    const current = await this.admin.getInstructor(id);
     const sent = PROFILE_FIELDS.filter((field) => row[field] !== undefined);
     const profile = sent.length
-      ? await this.admin.getInstructorProfile(row.id)
+      ? await this.admin.getInstructorProfile(id)
       : undefined;
     const profileFields = profile
       ? sent.filter((field) => profileFieldChanged(field, row, profile))
@@ -288,19 +293,32 @@ export class AdminInstructorBulkService {
   }
 }
 
-function assertUniqueIds(rows: BulkInstructorUpdateRowDto[]): void {
+function uniqueIds(rows: BulkInstructorUpdateRowDto[]): string[] {
   const seen = new Set<string>();
-  rows.forEach((row, index) => {
+  return rows.map((row, index) => {
     if (typeof row.id !== 'string' || !isUUID(row.id, '4')) {
       throw new BadRequestException(`updates.${index}.id must be a UUID`);
     }
-    if (seen.has(row.id)) {
+    const id = row.id.toLowerCase();
+    if (seen.has(id)) {
       throw new BadRequestException(
-        `updates.${index}.id ${row.id} appears more than once; send each instructor once`,
+        `updates.${index}.id ${id} appears more than once; send each instructor once`,
       );
     }
-    seen.add(row.id);
+    seen.add(id);
+    return id;
   });
+}
+
+function assertStatusRowCap(rows: BulkInstructorUpdateRowDto[]): void {
+  const statusRows = rows.filter(
+    (row) => row.approvalStatus !== undefined || row.isActive !== undefined,
+  ).length;
+  if (statusRows > MAX_STATUS_ROWS) {
+    throw new BadRequestException(
+      `At most ${MAX_STATUS_ROWS} rows per request may set approvalStatus or isActive (got ${statusRows}); split the request`,
+    );
+  }
 }
 
 function preview(plan: RowPlan): BulkInstructorRowResult {

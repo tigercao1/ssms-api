@@ -46,7 +46,11 @@ DTO, run `npm run openapi:metadata`; a test fails while the file is stale.
 `PATCH /admin/instructors` edits up to 100 instructors in one call. Each row is `{ id, ...fields }`; the allowed
 fields are the profile fields of `PATCH /admin/instructors/{id}`, `displayOrder`, `isActive`, and `approvalStatus`
 (`approved` or `rejected`) with an optional `reason`. A row carrying `email`, `role` or any other field fails with a
-message and nothing in it is applied. Duplicate or malformed ids reject the whole request with 400.
+message and nothing in it is applied. Duplicate or malformed ids reject the whole request with 400; ids are
+compared without regard to letter case and echoed back in lowercase. At most 25 rows per request may set
+`approvalStatus` or `isActive`, because each one sends email and approvals assign documents; a request over that
+is rejected with 400 before anything is written, so split it. Rows that only change profile fields or
+`displayOrder` can fill the rest of the 100.
 
 Each changed field goes through the same code as its single-row route, so approving still assigns onboarding
 documents and sends the approval email, deactivating still sends its email, every change still queues the Shopify

@@ -39,6 +39,7 @@ const ADMIN_ID = '7d0f8a1e-5b2c-4e3d-9a8b-1c2d3e4f5a6b';
 const ANNA = '11111111-1111-4111-8111-111111111111';
 const BEN = '22222222-2222-4222-8222-222222222222';
 const CHLOE = '33333333-3333-4333-8333-333333333333';
+const DANA = 'dddddddd-dddd-4ddd-addd-dddddddddddd';
 const UNKNOWN = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
 const WHISTLER = '44444444-4444-4444-8444-444444444444';
 const MISSING_LOCATION = '55555555-5555-4555-8555-555555555555';
@@ -374,6 +375,82 @@ describe('PATCH /admin/instructors (bulk edit)', () => {
     );
     expect([order(ANNA), order(BEN)]).toEqual([null, null]);
     expect(ctx.audit.entries).toEqual([]);
+  });
+
+  it('rejects the same id sent in two letter cases before writing anything', async () => {
+    ctx = await build([makeRow(DANA, { approval_status: 'pending' })]);
+
+    const res = await patch({
+      updates: [
+        { id: DANA, approvalStatus: 'rejected', reason: 'No certificate' },
+        { id: DANA.toUpperCase(), approvalStatus: 'approved' },
+      ],
+    }).expect(400);
+    await flushBackground();
+
+    expect((res.body as { message: string }).message).toBe(
+      `updates.1.id ${DANA} appears more than once; send each instructor once`,
+    );
+    expect(ctx.rows.get(DANA)?.approval_status).toBe('pending');
+    expect(ctx.audit.entries).toEqual([]);
+    expect(ctx.mailer.sent).toEqual([]);
+  });
+
+  it('writes an uppercase id to the instructor with the lowercase id', async () => {
+    ctx = await build([makeRow(DANA)]);
+
+    const res = await patch({
+      updates: [{ id: DANA.toUpperCase(), displayOrder: 4 }],
+    }).expect(200);
+
+    expect((res.body as { results: unknown[] }).results).toEqual([
+      { id: DANA, status: 'updated', changes: ['displayOrder'] },
+    ]);
+    expect(order(DANA)).toBe(4);
+  });
+
+  it('rejects more than 25 rows that set approvalStatus or isActive before writing anything', async () => {
+    const ids = Array.from(
+      { length: 26 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+    );
+    ctx = await build(ids.map((id) => makeRow(id)));
+
+    const res = await patch({
+      updates: [
+        ...ids.slice(0, 13).map((id) => ({ id, isActive: false })),
+        ...ids.slice(13).map((id) => ({ id, approvalStatus: 'approved' })),
+      ],
+    }).expect(400);
+    await flushBackground();
+
+    expect((res.body as { message: string }).message).toBe(
+      'At most 25 rows per request may set approvalStatus or isActive (got 26); split the request',
+    );
+    expect(ids.every((id) => ctx.rows.get(id)?.is_active)).toBe(true);
+    expect(ctx.audit.entries).toEqual([]);
+    expect(ctx.mailer.sent).toEqual([]);
+  });
+
+  it('accepts 25 status rows alongside 75 other rows', async () => {
+    const ids = Array.from(
+      { length: 100 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+    );
+    ctx = await build(ids.map((id) => makeRow(id)));
+
+    const res = await patch({
+      updates: ids.map((id, i) =>
+        i < 25 ? { id, isActive: false } : { id, displayOrder: i },
+      ),
+    }).expect(200);
+    await flushBackground();
+
+    expect((res.body as { summary: Record<string, number> }).summary).toEqual({
+      updated: 100,
+      unchanged: 0,
+      failed: 0,
+    });
   });
 
   it.each([

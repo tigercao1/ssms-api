@@ -100,7 +100,11 @@ export class FormFieldDto {
 }
 
 /** `PUT /admin/documents/forms/:id/versions/:lang`; `fields` defaults to the current ones, else the default waiver fields. */
-export class SaveFormDraftDto extends ExpectedRevisionDto {
+export class SaveFormDraftDto {
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt?: string | null;
+
   @Transform(trim)
   @IsString()
   @IsNotEmpty()

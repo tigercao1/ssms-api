@@ -336,6 +336,9 @@ export class AdminFormsService {
         : NO_SOURCE),
       updated_by: actor.userId ?? null,
     };
+    if (draft && dto.expectedUpdatedAt === null) {
+      throw new ConflictException(FORM_DRAFT_CHANGED);
+    }
     let saved: FormVersionRow | null | undefined;
     try {
       saved =
@@ -345,9 +348,9 @@ export class AdminFormsService {
           language,
           draft,
           write,
-          dto.expectedUpdatedAt,
+          dto.expectedUpdatedAt ?? undefined,
         ));
-      if (!saved && dto.expectedUpdatedAt !== undefined) {
+      if (!saved && typeof dto.expectedUpdatedAt === 'string') {
         throw new ConflictException(FORM_DRAFT_CHANGED);
       }
       saved ??= await this.repo.insertDraft(

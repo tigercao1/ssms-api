@@ -446,6 +446,11 @@ export default async () => {
               required: { required: true, type: () => Boolean },
             },
             SaveFormDraftDto: {
+              expectedUpdatedAt: {
+                required: false,
+                type: () => String,
+                nullable: true,
+              },
               title: { required: true, type: () => String },
               bodyMarkdown: { required: true, type: () => String },
               fields: {

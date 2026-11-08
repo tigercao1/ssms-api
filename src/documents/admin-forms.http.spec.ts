@@ -385,6 +385,83 @@ describe('form templates and signature lookups', () => {
       });
     });
 
+    describe('expectedUpdatedAt: null (expects no draft yet)', () => {
+      const publishedOnly = async () => {
+        const { id } = await createForm();
+        await saveDraft(id, '# published');
+        await admin.post(`${draftPath(id)}/publish`).expect(200);
+        return id;
+      };
+      const firstDraft = (bodyMarkdown: string) => ({
+        ...text(bodyMarkdown),
+        expectedUpdatedAt: null,
+      });
+
+      it('creates the first draft and returns its updatedAt', async () => {
+        const id = await publishedOnly();
+
+        const form = (
+          await admin.put(draftPath(id), firstDraft('# v2')).expect(200)
+        ).body as FormTemplate;
+
+        expect(form.languages.en.draft).toMatchObject({
+          version: 2,
+          bodyMarkdown: '# v2',
+          updatedAt: storedDraft(id)!.updated_at,
+        });
+      });
+
+      it('409s when a draft already exists and leaves it untouched', async () => {
+        const id = await publishedOnly();
+        await saveDraft(id, '# v2 by someone else');
+        const before = structuredClone(storedDraft(id));
+        const auditCount = audit.entries.length;
+        const updateDraft = jest.spyOn(repo, 'updateDraft');
+
+        const res = await admin
+          .put(draftPath(id), firstDraft('# v2 from a stale tab'))
+          .expect(409);
+
+        expect((res.body as { message: string }).message).toBe(CHANGED);
+        expect(updateDraft).not.toHaveBeenCalled();
+        expect(storedDraft(id)).toEqual(before);
+        expect(audit.entries).toHaveLength(auditCount);
+      });
+
+      it('409s when another draft is created between loading and inserting', async () => {
+        const id = await publishedOnly();
+        const loadedBeforeTheOtherSave = await repo.findById(id);
+        await saveDraft(id, '# v2 by someone else');
+        jest
+          .spyOn(repo, 'findById')
+          .mockResolvedValueOnce(loadedBeforeTheOtherSave);
+
+        const res = await admin
+          .put(draftPath(id), firstDraft('# v2 from a stale tab'))
+          .expect(409);
+
+        expect((res.body as { message: string }).message).toBe(CHANGED);
+        expect(storedDraft(id)).toMatchObject({
+          body_markdown: '# v2 by someone else',
+        });
+      });
+
+      it('lets only one of two concurrent first saves through', async () => {
+        const id = await publishedOnly();
+
+        const results = await Promise.all([
+          admin.put(draftPath(id), firstDraft('# from A')),
+          admin.put(draftPath(id), firstDraft('# from B')),
+        ]);
+
+        expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+        const winner = results.find((r) => r.status === 200)!;
+        expect(storedDraft(id)!.body_markdown).toBe(
+          (winner.body as FormTemplate).languages.en.draft!.bodyMarkdown,
+        );
+      });
+    });
+
     it('409s a draft save expecting a draft that was published meanwhile, without starting a new draft', async () => {
       const { id } = await createForm();
       const opened = await saveDraft(id, '# v1');

@@ -41,9 +41,15 @@ async function main(): Promise<void> {
   const source = await renderOpenApiMetadata();
   if (!process.argv.includes('--check')) {
     writeFileSync(OPENAPI_METADATA_PATH, source);
-  } else if (readFileSync(OPENAPI_METADATA_PATH, 'utf8') !== source) {
+    return;
+  }
+  const committed = readFileSync(OPENAPI_METADATA_PATH, 'utf8').split('\n');
+  const generated = source.split('\n');
+  const line = generated.findIndex((text, i) => text !== committed[i]);
+  if (line !== -1 || committed.length !== generated.length) {
     console.error(
-      `${relative(ROOT, OPENAPI_METADATA_PATH)} is stale: run npm run openapi:metadata`,
+      `${relative(ROOT, OPENAPI_METADATA_PATH)} is stale at line ${line + 1}: run npm run openapi:metadata`,
+      `\n- ${committed[line]}\n+ ${generated[line]}`,
     );
     process.exit(1);
   }

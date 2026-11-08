@@ -14,6 +14,8 @@ import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { AdminOpenApiService } from './admin-openapi.service';
 
 type Operation = {
+  description?: string;
+  'x-session-only'?: boolean;
   requestBody?: {
     content: { 'application/json': { schema: { $ref: string } } };
   };
@@ -82,6 +84,29 @@ describe('GET /admin/openapi.json', () => {
     expect(paths).not.toContain('/me/instructor');
     expect(paths).not.toContain('/admin/google/oauth/callback');
     expect(paths.some((path) => path.startsWith('/sign/'))).toBe(false);
+  });
+
+  it('flags the session-only routes that refuse API tokens', () => {
+    const sessionOnly = Object.entries(spec.paths).flatMap(([path, item]) =>
+      Object.entries(item as Record<string, Operation>)
+        .filter(([, op]) => op['x-session-only'] === true)
+        .map(([method]) => `${method.toUpperCase()} ${path}`),
+    );
+    expect(sessionOnly.sort()).toEqual([
+      'DELETE /admin/api-tokens/{id}',
+      'GET /admin/api-tokens',
+      'GET /admin/google/connect',
+      'PATCH /admin/instructors/{id}/email',
+      'PATCH /admin/users/{id}/role',
+      'POST /admin/api-tokens',
+      'POST /admin/api-tokens/{id}/rotate',
+    ]);
+    expect(operation('/admin/users/{id}/role', 'patch')?.description).toMatch(
+      /API tokens get 403/,
+    );
+    const approval = operation('/admin/instructors/{id}/approval', 'patch');
+    expect(approval?.['x-session-only']).toBeUndefined();
+    expect(approval?.description ?? '').not.toMatch(/Session only/);
   });
 
   it('includes request body schemas inferred from the DTOs', () => {

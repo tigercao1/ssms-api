@@ -11,10 +11,19 @@ import {
   type OpenAPIObject,
   SwaggerModule,
 } from '@nestjs/swagger';
+import { SESSION_ONLY_KEY } from '../auth/session-only.decorator';
 import loadOpenApiMetadata from './openapi-metadata';
 import { RolesGuard } from './roles.guard';
 
 const BEARER_SCHEME = 'bearer';
+const SESSION_ONLY_NOTE =
+  'Session only: needs a signed-in admin session; API tokens get 403.';
+
+type OperationObject = {
+  operationId?: string;
+  description?: string;
+  'x-session-only'?: boolean;
+};
 
 type AdminModuleView = 'controllers' | 'metatype' | 'imports';
 
@@ -22,9 +31,14 @@ function guardsOf(target: object): unknown[] {
   return (Reflect.getMetadata(GUARDS_METADATA, target) as unknown[]) ?? [];
 }
 
-function adminOperationIds(controller: Type): Set<string> {
+function isSessionOnly(target: object): boolean {
+  return Reflect.getMetadata(SESSION_ONLY_KEY, target) === true;
+}
+
+function adminOperations(controller: Type): Map<string, boolean> {
   const prototype = controller.prototype as Record<string, unknown>;
   const adminController = guardsOf(controller).includes(RolesGuard);
+  const sessionOnlyController = isSessionOnly(controller);
   const methods = Object.getOwnPropertyNames(prototype).filter((name) => {
     const handler = prototype[name];
     return (
@@ -33,7 +47,12 @@ function adminOperationIds(controller: Type): Set<string> {
       (adminController || guardsOf(handler).includes(RolesGuard))
     );
   });
-  return new Set(methods.map((method) => `${controller.name}_${method}`));
+  return new Map(
+    methods.map((method) => [
+      `${controller.name}_${method}`,
+      sessionOnlyController || isSessionOnly(prototype[method] as object),
+    ]),
+  );
 }
 
 @Injectable()
@@ -55,14 +74,14 @@ export class AdminOpenApiService {
 
   private async build(): Promise<OpenAPIObject> {
     await SwaggerModule.loadPluginMetadata(loadOpenApiMetadata);
-    const operationIds = new Set<string>();
+    const operations = new Map<string, boolean>();
     const adminModules = new Map<string, Pick<Module, AdminModuleView>>();
     for (const [key, module] of this.modules) {
       const controllers: Module['controllers'] = new Map();
       for (const [token, wrapper] of module.controllers) {
-        const ids = adminOperationIds(wrapper.metatype as Type);
-        ids.forEach((id) => operationIds.add(id));
-        if (ids.size > 0) {
+        const found = adminOperations(wrapper.metatype as Type);
+        found.forEach((sessionOnly, id) => operations.set(id, sessionOnly));
+        if (found.size > 0) {
           controllers.set(token, wrapper);
         }
       }
@@ -100,12 +119,18 @@ export class AdminOpenApiService {
     const document = SwaggerModule.createDocument(scanTarget, config);
     for (const [path, item] of Object.entries(document.paths)) {
       for (const method of Object.keys(item) as (keyof typeof item)[]) {
-        const operation = item[method] as { operationId?: string } | undefined;
-        if (
-          operation?.operationId &&
-          !operationIds.has(operation.operationId)
-        ) {
+        const operation = item[method] as OperationObject | undefined;
+        if (!operation?.operationId) {
+          continue;
+        }
+        const sessionOnly = operations.get(operation.operationId);
+        if (sessionOnly === undefined) {
           delete item[method];
+        } else if (sessionOnly) {
+          operation['x-session-only'] = true;
+          operation.description = [operation.description, SESSION_ONLY_NOTE]
+            .filter(Boolean)
+            .join('\n\n');
         }
       }
       if (Object.keys(item).length === 0) {

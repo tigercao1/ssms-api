@@ -98,6 +98,48 @@ exception when unique_violation then null;
 end
 $$;
 
+do $$
+declare
+  v_mia text := repeat('a', 64);
+  v_leo text := repeat('b', 64);
+  i int;
+begin
+  for i in 1..3 loop
+    if not claim_form_copy_email(v_mia, 3, 3600, 5, 60) then
+      raise exception 'copy email % to one address was refused under the limit', i;
+    end if;
+  end loop;
+  if claim_form_copy_email(v_mia, 3, 3600, 5, 60) then
+    raise exception 'a 4th copy email to one address in an hour was allowed';
+  end if;
+  if not claim_form_copy_email(v_leo, 3, 3600, 5, 60) then
+    raise exception 'one address''s limit blocked another address';
+  end if;
+  if not claim_form_copy_email(repeat('c', 64), 3, 3600, 5, 60) then
+    raise exception 'the 5th copy email in a minute was refused';
+  end if;
+  if claim_form_copy_email(repeat('d', 64), 3, 3600, 5, 60) then
+    raise exception 'a 6th copy email in a minute was allowed past the global limit';
+  end if;
+
+  update form_copy_email_claims set claimed_at = now() - interval '61 seconds';
+  if not claim_form_copy_email(repeat('d', 64), 3, 3600, 5, 60) then
+    raise exception 'the global limit did not reopen after its window';
+  end if;
+  if claim_form_copy_email(v_mia, 3, 3600, 5, 60) then
+    raise exception 'the per-address limit reopened before its hour';
+  end if;
+
+  update form_copy_email_claims set claimed_at = now() - interval '3601 seconds';
+  if not claim_form_copy_email(v_mia, 3, 3600, 5, 60) then
+    raise exception 'the per-address limit did not reopen after an hour';
+  end if;
+  if (select count(*) from form_copy_email_claims) <> 1 then
+    raise exception 'claims older than the windows were not cleaned up';
+  end if;
+end
+$$;
+
 set local role anon;
 do $$
 begin
@@ -110,6 +152,13 @@ do $$
 begin
   perform waiver_customer_for_email('x@example.com', null, null);
   raise exception 'anon could call waiver_customer_for_email';
+exception when insufficient_privilege then null;
+end
+$$;
+do $$
+begin
+  perform claim_form_copy_email(repeat('a', 64), 3, 3600, 5, 60);
+  raise exception 'anon could call claim_form_copy_email';
 exception when insufficient_privilege then null;
 end
 $$;

@@ -115,7 +115,10 @@ export class FormSigningService {
     const signed = await this.pdfQueue.run(() =>
       this.signAndStore(form, customerId, answers, evidence, now),
     );
-    return { status: 'signed', emailed: await this.email(form, signed) };
+    return {
+      status: 'signed',
+      emailed: await this.email(form, signed, answers.signerEmail),
+    };
   }
 
   private published(
@@ -223,8 +226,18 @@ export class FormSigningService {
   private async email(
     form: PublishedForm,
     { assignment, pdf, sha256 }: SignedForm,
+    signerEmail: string,
   ): Promise<boolean> {
     try {
+      const emailHash = sha256Hex(
+        Buffer.from(signerEmail.toLowerCase(), 'utf8'),
+      );
+      if (!(await this.forms.claimCopyEmail(emailHash))) {
+        this.logger.warn(
+          `Signed-copy email limit reached; not emailing form assignment ${assignment.id}`,
+        );
+        return false;
+      }
       const outcome = await this.notifications.sendCompleted(
         assignment,
         {

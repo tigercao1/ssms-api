@@ -19,6 +19,13 @@ export const FORM_VERSION_COLUMNS =
   'template_id, language, version, title, body_markdown, body_sha256, fields, ' +
   'published_at, published_by, updated_by, inserted_at, updated_at';
 
+export const FORM_COPY_EMAIL_LIMITS = {
+  perRecipient: 5,
+  recipientWindowSeconds: 60 * 60,
+  global: 30,
+  globalWindowSeconds: 60,
+} as const;
+
 /** A signed form assignment, written once the signed copy is stored. */
 export type NewSignedFormAssignment = DocumentAssignmentWrite & {
   id: string;
@@ -50,6 +57,8 @@ export abstract class FormSigningRepository {
   abstract insertSigned(
     row: NewSignedFormAssignment,
   ): Promise<DocumentAssignmentRow>;
+  /** Records a signed-copy email to this address hash; false when {@link FORM_COPY_EMAIL_LIMITS} is reached. */
+  abstract claimCopyEmail(emailHash: string): Promise<boolean>;
 }
 
 @Injectable()
@@ -124,5 +133,17 @@ export class SupabaseFormSigningRepository extends FormSigningRepository {
       throw new Error('Failed to record signed form: no row returned');
     }
     return data;
+  }
+
+  async claimCopyEmail(emailHash: string): Promise<boolean> {
+    const { data, error } = (await this.supabase.rpc('claim_form_copy_email', {
+      p_email_hash: emailHash,
+      p_per_recipient: FORM_COPY_EMAIL_LIMITS.perRecipient,
+      p_recipient_window_seconds: FORM_COPY_EMAIL_LIMITS.recipientWindowSeconds,
+      p_global: FORM_COPY_EMAIL_LIMITS.global,
+      p_global_window_seconds: FORM_COPY_EMAIL_LIMITS.globalWindowSeconds,
+    })) as DbResult<boolean>;
+    check(error, 'claim form copy email');
+    return data === true;
   }
 }

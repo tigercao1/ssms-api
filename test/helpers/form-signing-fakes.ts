@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  FORM_COPY_EMAIL_LIMITS,
   FormSigningRepository,
   type NewSignedFormAssignment,
 } from '../../src/documents/form-signing.repository';
@@ -70,6 +71,8 @@ export class InMemoryFormSigningRepository extends FormSigningRepository {
     status: 'completed';
   })[] = [];
   failInsert = false;
+  failCopyEmailClaim = false;
+  readonly copyEmailClaims: { emailHash: string; at: number }[] = [];
 
   seedForm(slug: string, versions: FormVersionRow[] = []): string {
     const templateId = versions[0]?.template_id ?? randomUUID();
@@ -138,6 +141,25 @@ export class InMemoryFormSigningRepository extends FormSigningRepository {
           last_name: lastName,
         }).id,
     );
+  }
+
+  claimCopyEmail(emailHash: string): Promise<boolean> {
+    if (this.failCopyEmailClaim) {
+      return Promise.reject(new Error('claim failed'));
+    }
+    const now = Date.now();
+    const since = (seconds: number) =>
+      this.copyEmailClaims.filter((c) => c.at > now - seconds * 1000);
+    const accepted =
+      since(FORM_COPY_EMAIL_LIMITS.recipientWindowSeconds).filter(
+        (c) => c.emailHash === emailHash,
+      ).length < FORM_COPY_EMAIL_LIMITS.perRecipient &&
+      since(FORM_COPY_EMAIL_LIMITS.globalWindowSeconds).length <
+        FORM_COPY_EMAIL_LIMITS.global;
+    if (accepted) {
+      this.copyEmailClaims.push({ emailHash, at: now });
+    }
+    return Promise.resolve(accepted);
   }
 
   insertSigned(row: NewSignedFormAssignment): Promise<DocumentAssignmentRow> {

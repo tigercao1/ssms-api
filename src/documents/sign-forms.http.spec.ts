@@ -228,6 +228,64 @@ describe('public form signing (/sign/forms)', () => {
       expect(forms.signed).toHaveLength(1);
     });
 
+    it('stops emailing copies to one address after 5 an hour, from any IP, and still keeps every signature', async () => {
+      const results: boolean[] = [];
+      for (let i = 0; i < 7; i += 1) {
+        const res = await complete(
+          validBody(),
+          `198.51.100.${20 + (i % 2)}`,
+        ).expect(201);
+        results.push((res.body as { emailed: boolean }).emailed);
+      }
+
+      expect(results).toEqual([true, true, true, true, true, false, false]);
+      expect(forms.signed).toHaveLength(7);
+      expect(mailer.sentOf('documents.completed')).toHaveLength(5);
+
+      const other = await complete(
+        validBody({
+          answers: {
+            participant_name: 'Leo Chen',
+            email: 'leo@example.com',
+            date: '2026-12-20',
+          },
+        }),
+      ).expect(201);
+      expect(other.body).toEqual({ status: 'signed', emailed: true });
+    });
+
+    it('stops emailing copies once 30 have gone out across all addresses in a minute', async () => {
+      const send = (i: number) =>
+        complete(
+          validBody({
+            answers: {
+              participant_name: 'Mia Chen',
+              email: `mia${i}@example.com`,
+              date: '2026-12-20',
+            },
+          }),
+        ).expect(201);
+      for (let i = 0; i < 30; i += 1) {
+        await send(i);
+      }
+
+      const res = await send(30);
+
+      expect(res.body).toEqual({ status: 'signed', emailed: false });
+      expect(forms.signed).toHaveLength(31);
+      expect(mailer.sentOf('documents.completed')).toHaveLength(30);
+    });
+
+    it('does not email the copy when the send limit cannot be checked, and keeps the signature', async () => {
+      forms.failCopyEmailClaim = true;
+
+      const res = await complete(validBody()).expect(201);
+
+      expect(res.body).toEqual({ status: 'signed', emailed: false });
+      expect(forms.signed).toHaveLength(1);
+      expect(mailer.sent).toHaveLength(0);
+    });
+
     it('renders Chinese text on the Chinese version', async () => {
       await complete(validBody({ lang: 'zh', version: 1 })).expect(201);
 

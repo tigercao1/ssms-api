@@ -153,3 +153,58 @@ revoke all on function public.waiver_customer_for_email(text, text, text)
   from public, anon, authenticated;
 grant execute on function public.waiver_customer_for_email(text, text, text)
   to service_role;
+
+create table form_copy_email_claims (
+  id          bigint generated always as identity primary key,
+  email_hash  text not null
+                constraint form_copy_email_claims_email_hash_check
+                check (email_hash ~ '^[0-9a-f]{64}$'),
+  claimed_at  timestamptz not null default now()
+);
+
+create index form_copy_email_claims_email_hash_claimed_at_idx
+  on form_copy_email_claims (email_hash, claimed_at);
+create index form_copy_email_claims_claimed_at_idx
+  on form_copy_email_claims (claimed_at);
+
+alter table form_copy_email_claims enable row level security;
+alter table form_copy_email_claims force row level security;
+revoke all on form_copy_email_claims from public, anon, authenticated;
+
+create function public.claim_form_copy_email(
+  p_email_hash text,
+  p_per_recipient int,
+  p_recipient_window_seconds int,
+  p_global int,
+  p_global_window_seconds int
+) returns boolean
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtextextended('form_copy_email_claims', 0));
+
+  delete from form_copy_email_claims
+   where claimed_at < now() - make_interval(
+     secs => greatest(p_recipient_window_seconds, p_global_window_seconds));
+
+  if (select count(*) from form_copy_email_claims
+       where email_hash = p_email_hash
+         and claimed_at > now() - make_interval(secs => p_recipient_window_seconds))
+       >= p_per_recipient
+     or (select count(*) from form_copy_email_claims
+          where claimed_at > now() - make_interval(secs => p_global_window_seconds))
+       >= p_global then
+    return false;
+  end if;
+
+  insert into form_copy_email_claims (email_hash) values (p_email_hash);
+  return true;
+end;
+$$;
+
+revoke all on function public.claim_form_copy_email(text, int, int, int, int)
+  from public, anon, authenticated;
+grant execute on function public.claim_form_copy_email(text, int, int, int, int)
+  to service_role;

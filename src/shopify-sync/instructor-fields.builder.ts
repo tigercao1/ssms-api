@@ -68,9 +68,7 @@ export function buildInstructorFields(
     ],
     [
       'sort_order',
-      options.existingEntry || instructor.display_order == null
-        ? undefined
-        : String(instructor.display_order),
+      instructor.display_order == null ? '' : String(instructor.display_order),
     ],
     ['ssms_id', instructor.id],
     ['picture', fileReference(options.picture)],

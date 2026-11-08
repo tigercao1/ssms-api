@@ -105,9 +105,10 @@ describe('buildInstructorFields', () => {
   });
 
   describe('sort_order', () => {
-    it('writes the display order on a new entry', () => {
+    it('writes the display order on a new and an existing entry', () => {
       const snapshot = snapshotOf({ instructor: { display_order: 12 } });
       expect(fieldsOf(snapshot).sort_order).toBe('12');
+      expect(fieldsOf(snapshot, { existingEntry: true }).sort_order).toBe('12');
     });
 
     it('writes 0 as a real order', () => {
@@ -120,17 +121,11 @@ describe('buildInstructorFields', () => {
       expect(fieldsOf(snapshotOf())).not.toHaveProperty('sort_order');
     });
 
-    it.each([null, 12])(
-      'never sends the order for an existing entry (display order %p)',
-      (displayOrder) => {
-        const snapshot = snapshotOf({
-          instructor: { display_order: displayOrder },
-        });
-        expect(fieldsOf(snapshot, { existingEntry: true })).not.toHaveProperty(
-          'sort_order',
-        );
-      },
-    );
+    it('clears an unset order on an existing entry', () => {
+      expect(fieldsOf(snapshotOf(), { existingEntry: true }).sort_order).toBe(
+        '',
+      );
+    });
   });
 
   it('writes the picture only when told, and clears it with an empty value', () => {

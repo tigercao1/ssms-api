@@ -250,11 +250,12 @@ describe('/admin/api-tokens', () => {
       await listInstructors(old.token).expect(401);
     });
 
-    it('refuses a second rotation, another admin’s token, and a grace over a day', async () => {
+    it('refuses a second rotation, another admin’s token, and a grace over a day or null', async () => {
       const mine = await issue();
       const theirs = await issue(undefined, OTHER_ADMIN);
 
       await rotate(mine.id, { graceMinutes: 1441 }).expect(400);
+      await rotate(mine.id, { graceMinutes: null }).expect(400);
       await rotate(theirs.id).expect(404);
       await rotate(mine.id).expect(201);
       await rotate(mine.id).expect(404);

@@ -3,7 +3,6 @@ import {
   IsInt,
   IsISO8601,
   IsNotEmpty,
-  IsOptional,
   IsString,
   Max,
   MaxLength,
@@ -27,7 +26,7 @@ export class CreateAdminApiTokenDto {
 }
 
 export class RotateAdminApiTokenDto {
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsInt()
   @Min(0)
   @Max(1440)

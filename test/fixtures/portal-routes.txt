@@ -16,6 +16,7 @@ GET /admin/class-imports
 GET /admin/class-imports/:id
 GET /admin/class-imports/event-map
 GET /admin/classes
+GET /admin/classes/export
 GET /admin/customers
 GET /admin/customers/sync-status
 GET /admin/document-reviews

@@ -1,19 +1,31 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { localParts } from '../booking/booking-time';
 import { pageOffset } from '../database/pagination';
+import { classesCsv } from './classes-csv';
 import {
   type ClassFilter,
   ClassesRepository,
   type ClassRow,
+  MAX_CLASSES_PER_LIST,
 } from './classes.repository';
 import { CLASS_LIST_DEFAULT_LIMIT } from './dto/list-classes-query.dto';
 import type {
   Attendance,
+  ClassSort,
   ClassSource,
   ClassStatus,
   GoogleSyncStatus,
 } from './lessons.types';
 
 export const CLASS_RANGE_INVALID = '`to` must be after `from`';
+export const CLASS_CREATED_RANGE_INVALID =
+  '`createdTo` must be after `createdFrom`';
+export const CLASS_EXPORT_MAX_ROWS = 10_000;
+export const CLASS_EXPORT_TOO_LARGE = `Export is limited to ${CLASS_EXPORT_MAX_ROWS} classes; narrow the filters`;
 
 export interface AdminClassParticipant {
   customerId: string;
@@ -58,6 +70,24 @@ export interface AdminClassPage {
   total: number;
 }
 
+export interface ClassesExportFile {
+  filename: string;
+  body: string;
+}
+
+function isAfter(later: string | undefined, earlier: string | undefined) {
+  return !later || !earlier || Date.parse(later) > Date.parse(earlier);
+}
+
+function assertRanges(filter: ClassFilter): void {
+  if (!isAfter(filter.to, filter.from)) {
+    throw new BadRequestException(CLASS_RANGE_INVALID);
+  }
+  if (!isAfter(filter.createdTo, filter.createdFrom)) {
+    throw new BadRequestException(CLASS_CREATED_RANGE_INVALID);
+  }
+}
+
 @Injectable()
 export class ClassesService {
   constructor(private readonly repo: ClassesRepository) {}
@@ -66,22 +96,50 @@ export class ClassesService {
     filter: ClassFilter,
     page?: number,
     limit?: number,
+    sort?: ClassSort,
   ): Promise<AdminClassPage> {
-    if (
-      filter.from &&
-      filter.to &&
-      Date.parse(filter.to) <= Date.parse(filter.from)
-    ) {
-      throw new BadRequestException(CLASS_RANGE_INVALID);
-    }
+    assertRanges(filter);
     const size = limit ?? CLASS_LIST_DEFAULT_LIMIT;
     const { rows, total } = await this.repo.list(
       filter,
       page === undefined && limit === undefined
         ? undefined
         : { limit: size, offset: pageOffset(page ?? 1, size) },
+      sort,
     );
     return { classes: rows.map(toAdminClass), total };
+  }
+
+  async export(
+    filter: ClassFilter,
+    sort?: ClassSort,
+    now = new Date(),
+  ): Promise<ClassesExportFile> {
+    assertRanges(filter);
+    const first = await this.repo.list(
+      filter,
+      { limit: MAX_CLASSES_PER_LIST, offset: 0 },
+      sort,
+    );
+    if (first.total > CLASS_EXPORT_MAX_ROWS) {
+      throw new UnprocessableEntityException(CLASS_EXPORT_TOO_LARGE);
+    }
+    const rows = [...first.rows];
+    while (rows.length < first.total) {
+      const next = await this.repo.list(
+        filter,
+        { limit: MAX_CLASSES_PER_LIST, offset: rows.length },
+        sort,
+      );
+      if (next.rows.length === 0) {
+        break;
+      }
+      rows.push(...next.rows);
+    }
+    return {
+      filename: `classes-${localParts(now).date}.csv`,
+      body: classesCsv(rows.map(toAdminClass)),
+    };
   }
 }
 

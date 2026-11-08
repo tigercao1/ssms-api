@@ -1,3 +1,4 @@
+import childProcess, { execFileSync } from 'node:child_process';
 import {
   activeContentIn,
   annotationHeavyPdf,
@@ -53,6 +54,31 @@ describe('runPdfTask', () => {
     expect((error as PdfTooComplexError).reason).toBe('memory');
     const next = await runPdfTask('normaliseForm', await pdfFixture('normal'));
     expect(next.pageCount).toBe(2);
+  });
+
+  it('caps the worker heap, young generation included, below the deployed parent heap', async () => {
+    const fork = jest.spyOn(childProcess, 'fork');
+    await runPdfTask('normaliseForm', await pdfFixture('normal'));
+    const execArgv = fork.mock.calls[0][2]!.execArgv!.filter((arg) =>
+      arg.startsWith('--max-'),
+    );
+    fork.mockRestore();
+
+    const limitMb = Number(
+      execFileSync(
+        process.execPath,
+        [
+          ...execArgv,
+          '-p',
+          'require("v8").getHeapStatistics().heap_size_limit / 1048576',
+        ],
+        {
+          env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=320' },
+        },
+      ).toString(),
+    );
+
+    expect(limitMb).toBeLessThanOrEqual(PDF_TASK_LIMITS.maxOldSpaceSizeMb + 64);
   });
 
   it('stops a job that runs past its deadline', async () => {

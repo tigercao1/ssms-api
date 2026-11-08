@@ -21,11 +21,13 @@ export type PdfTaskReply<K extends PdfTaskKind = PdfTaskKind> =
 
 export interface PdfTaskLimits {
   maxOldSpaceSizeMb: number;
+  maxSemiSpaceSizeMb: number;
   timeoutMs: number;
 }
 
 export const PDF_TASK_LIMITS: PdfTaskLimits = {
   maxOldSpaceSizeMb: 128,
+  maxSemiSpaceSizeMb: 16,
   timeoutMs: 30_000,
 };
 
@@ -54,6 +56,7 @@ export function runPdfTask<K extends PdfTaskKind>(
       execArgv: [
         ...WORKER_EXEC_ARGV,
         `--max-old-space-size=${limits.maxOldSpaceSizeMb}`,
+        `--max-semi-space-size=${limits.maxSemiSpaceSizeMb}`,
       ],
       serialization: 'advanced',
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],

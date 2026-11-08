@@ -14,6 +14,7 @@ import { BioTranslationModule } from './bio-translation/bio-translation.module';
 import { InstructorsModule } from './instructors/instructors.module';
 import { MediaModule } from './media/media.module';
 import { AdminModule } from './admin/admin.module';
+import { AdminApiTokensModule } from './admin-api-tokens/admin-api-tokens.module';
 import { PublicApiModule } from './public-api/public-api.module';
 import { MailerModule } from './mailer/mailer.module';
 import { ShopifySyncModule } from './shopify-sync/shopify-sync.module';
@@ -46,6 +47,7 @@ import { RemindersModule } from './reminders/reminders.module';
     InstructorsModule,
     MediaModule,
     AdminModule,
+    AdminApiTokensModule,
     PublicApiModule,
     MailerModule,
     ShopifySyncModule,

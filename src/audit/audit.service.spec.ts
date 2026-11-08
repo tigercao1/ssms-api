@@ -52,6 +52,31 @@ describe('AuditService', () => {
     });
   });
 
+  it('records a token actor in the metadata with the token id', async () => {
+    const { service, fake } = await build({ error: null });
+    await service.record({
+      action: AUDIT_ACTIONS.instructorExport,
+      actor: {
+        userId: 'admin-1',
+        role: 'admin',
+        via: 'api_token',
+        tokenId: 'token-1',
+      },
+      metadata: { rowCount: 2 },
+    });
+
+    expect(fake.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor_user_id: 'admin-1',
+        metadata: {
+          rowCount: 2,
+          actor_via: 'api_token',
+          actor_token_id: 'token-1',
+        },
+      }),
+    );
+  });
+
   it('defaults every optional field to null when omitted', async () => {
     const { service, fake } = await build({ error: null });
 

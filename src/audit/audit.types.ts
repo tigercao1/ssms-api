@@ -23,6 +23,11 @@ export const AUDIT_ACTIONS = {
   apiKeyCreate: 'api_key.create',
   apiKeyRevoke: 'api_key.revoke',
   apiKeyRotate: 'api_key.rotate',
+  adminApiTokenCreate: 'admin_api_token.create',
+  adminApiTokenRotate: 'admin_api_token.rotate',
+  adminApiTokenRevoke: 'admin_api_token.revoke',
+  adminApiTokenFirstUse: 'admin_api_token.first_use',
+  adminApiTokenAuthFailure: 'admin_api_token.auth_failure',
   authAdminGuardFailure: 'auth.admin_guard_failure',
   systemBootstrapAdmin: 'system.bootstrap_admin',
   notificationFailure: 'notification.failure',
@@ -111,6 +116,8 @@ export interface AuditActor {
   userAgent?: string | null;
   /** Client IP, if the caller resolved it. */
   ip?: string | null;
+  via?: 'api_token';
+  tokenId?: string | null;
 }
 
 /** A single row to append to `audit_log`. */
@@ -121,6 +128,7 @@ export interface AuditEntry {
     | 'instructor'
     | 'user'
     | 'api_key'
+    | 'admin_api_token'
     | 'reference'
     | 'public_page'
     | 'google_connection'

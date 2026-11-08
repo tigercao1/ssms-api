@@ -19,7 +19,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles, RolesGuard } from '../admin/roles.guard';
-import type { AuditActor } from '../audit/audit.types';
+import { toActor } from '../audit/admin-actor';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
@@ -29,10 +29,6 @@ import { UpdatePublicPageDto } from './dto/update-public-page.dto';
 import { PublicPagesService } from './public-pages.service';
 import type { PublicPage } from './public-pages.types';
 import { RawHtmlBodyInterceptor } from './raw-html-body.interceptor';
-
-function toActor(user: SupabaseJwtPayload, userAgent?: string): AuditActor {
-  return { userId: user.sub, role: 'admin', userAgent: userAgent ?? null };
-}
 
 const PageId = () => Param('id', new ParseUUIDPipe({ version: '4' }));
 

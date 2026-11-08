@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Roles, RolesGuard } from '../admin/roles.guard';
-import type { AuditActor } from '../audit/audit.types';
+import { toActor } from '../audit/admin-actor';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
@@ -24,10 +24,6 @@ import {
   type ShopifySyncRunResult,
   type ShopifySyncStatus,
 } from './shopify-sync-admin.service';
-
-function toActor(user: SupabaseJwtPayload, userAgent?: string): AuditActor {
-  return { userId: user.sub, role: 'admin', userAgent: userAgent ?? null };
-}
 
 @Controller('admin/shopify-sync')
 @UseGuards(SupabaseAuthGuard, RolesGuard)

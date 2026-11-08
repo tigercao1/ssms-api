@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { auditMetadata } from '../audit/audit.service';
 import type { AuditEntry } from '../audit/audit.types';
 import { DbResult, ilikeAny, searchTokens } from '../database/db-result';
 import {
@@ -313,7 +314,7 @@ export class SupabaseAdminRepository extends AdminRepository {
       action: entry.action,
       target_type: entry.targetType ?? null,
       target_id: entry.targetId ?? null,
-      metadata: entry.metadata ?? null,
+      metadata: auditMetadata(entry),
       ip: entry.actor?.ip ?? null,
       user_agent: entry.actor?.userAgent ?? null,
     });

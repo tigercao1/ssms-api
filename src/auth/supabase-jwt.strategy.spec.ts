@@ -171,6 +171,14 @@ describe('SupabaseAuthGuard with a real ES256 token', () => {
       .expect(401);
   });
 
+  it('rejects an ssms_pat_ token with 401 when no token authenticator is installed', async () => {
+    await request(app.getHttpServer())
+      .get('/probe')
+      .set('Authorization', `Bearer ssms_pat_${'A'.repeat(43)}`)
+      .expect(401);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it('answers 503, not 401, when the session check fails', async () => {
     rpc.mockResolvedValue({ data: null, error: { message: 'down' } });
 

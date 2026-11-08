@@ -1,6 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
+import {
+  concurrencyLimitedFetch,
+  MAX_CONCURRENT_REQUESTS_ENV,
+  parseMaxConcurrentRequests,
+} from './concurrency-limited-fetch';
 import { SUPABASE_CLIENT } from './supabase-client.token';
 
 /**
@@ -20,8 +25,14 @@ import { SUPABASE_CLIENT } from './supabase-client.token';
       useFactory: (config: ConfigService) => {
         const url = config.getOrThrow<string>('SUPABASE_URL');
         const secretKey = config.getOrThrow<string>('SUPABASE_SECRET_KEY');
+        const maxConcurrent = parseMaxConcurrentRequests(
+          config.get<string>(MAX_CONCURRENT_REQUESTS_ENV),
+        );
         return createClient(url, secretKey, {
           auth: { persistSession: false, autoRefreshToken: false },
+          ...(maxConcurrent === null
+            ? {}
+            : { global: { fetch: concurrencyLimitedFetch(maxConcurrent) } }),
         });
       },
     },

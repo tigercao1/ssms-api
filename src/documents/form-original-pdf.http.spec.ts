@@ -597,6 +597,40 @@ describe('form versions with an original PDF', () => {
       expect(accepted.languages.en.draft!.originalPdf!.pageCount).toBe(2);
     });
 
+    it('lists per language whether the published version has an original PDF, and when the form last changed', async () => {
+      const id = await draftForm();
+      await uploadPdf(id, await pdfFixture('normal'));
+      const draftOnly = await admin.get('/admin/documents/forms').expect(200);
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en/placements`, {
+          placements: PLACEMENTS,
+        })
+        .expect(200);
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(200);
+
+      const list = await admin.get('/admin/documents/forms').expect(200);
+
+      const form = adminRepo.forms.get(id)!;
+      expect(draftOnly.body).toEqual([
+        expect.objectContaining({ hasOriginalPdf: { en: false, zh: false } }),
+      ]);
+      expect(list.body).toEqual([
+        expect.objectContaining({
+          id,
+          publishedVersions: { en: 1, zh: null },
+          hasDraft: { en: false, zh: false },
+          hasOriginalPdf: { en: true, zh: false },
+          updatedAt: form.updated_at,
+          lastChangedAt: form.versions[0].updated_at,
+        }),
+      ]);
+      expect(Date.parse(form.versions[0].updated_at)).toBeGreaterThan(
+        Date.parse(form.updated_at),
+      );
+    });
+
     it('turns the emailed copy off and on per form, on by default', async () => {
       const id = await draftForm();
       expect(

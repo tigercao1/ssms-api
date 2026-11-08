@@ -177,7 +177,9 @@ export interface FormTemplateSummary {
   emailCopy: boolean;
   publishedVersions: Record<DocumentLanguage, number | null>;
   hasDraft: Record<DocumentLanguage, boolean>;
+  hasOriginalPdf: Record<DocumentLanguage, boolean>;
   updatedAt: string;
+  lastChangedAt: string;
 }
 
 export interface SignatureLookupRow {

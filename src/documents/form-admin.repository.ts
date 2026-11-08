@@ -16,7 +16,7 @@ import type {
 } from './form-templates.types';
 
 const FORM_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(${FORM_VERSION_COLUMNS})`;
-const FORM_LIST_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(language, version, published_at)`;
+const FORM_LIST_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(language, version, published_at, source_key, updated_at)`;
 
 export interface FormDraftWrite {
   title: string;

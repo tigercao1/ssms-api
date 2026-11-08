@@ -196,7 +196,15 @@ function toSummary(row: FormTemplateRow): FormTemplateSummary {
       (l) => versionsOf(row, l).published?.version ?? null,
     ),
     hasDraft: byLanguage((l) => versionsOf(row, l).draft !== undefined),
+    hasOriginalPdf: byLanguage(
+      (l) => !!versionsOf(row, l).published?.source_key,
+    ),
     updatedAt: row.updated_at,
+    lastChangedAt: row.versions.reduce(
+      (latest, v) =>
+        Date.parse(v.updated_at) > Date.parse(latest) ? v.updated_at : latest,
+      row.updated_at,
+    ),
   };
 }
 

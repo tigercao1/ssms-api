@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db": "./scripts/db.sh",
-    "admin": "./scripts/admin.sh"
+    "admin": "./scripts/admin.sh",
+    "openapi:metadata": "ts-node scripts/generate-openapi-metadata.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1150.0",
@@ -31,6 +32,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/swagger": "^11.4.8",
     "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.107.0",
     "class-transformer": "^0.5.1",
@@ -117,5 +119,8 @@
   },
   "engines": {
     "node": ">=20.11.0"
+  },
+  "scarfSettings": {
+    "enabled": false
   }
 }

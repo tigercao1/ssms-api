@@ -14,6 +14,7 @@ import { Roles, RolesGuard } from '../admin/roles.guard';
 import { toActor } from '../audit/admin-actor';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
+import { SessionOnly } from '../auth/session-only.decorator';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { FreeBusyQueryDto } from './dto/freebusy-query.dto';
 import type {
@@ -32,6 +33,7 @@ export class GoogleAdminController {
   constructor(private readonly google: GoogleConnectionService) {}
 
   @Get('connect')
+  @SessionOnly()
   connect(@CurrentUser() user: SupabaseJwtPayload): { url: string } {
     return this.google.connectUrl(user.sub);
   }

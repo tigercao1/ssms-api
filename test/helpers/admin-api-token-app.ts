@@ -18,6 +18,8 @@ import { AdminApiTokensModule } from '../../src/admin-api-tokens/admin-api-token
 import { AdminApiTokensRepository } from '../../src/admin-api-tokens/admin-api-tokens.repository';
 import { ADMIN_API_TOKEN_CLOCK } from '../../src/admin-api-tokens/admin-api-tokens.types';
 import { AdminController } from '../../src/admin/admin.controller';
+import { AdminInstructorEmailController } from '../../src/admin/admin-instructor-email.controller';
+import { AdminInstructorEmailService } from '../../src/admin/admin-instructor-email.service';
 import { AdminRepository } from '../../src/admin/admin.repository';
 import { AdminService } from '../../src/admin/admin.service';
 import { AuditService } from '../../src/audit/audit.service';
@@ -28,6 +30,8 @@ import { SupabaseAuthGuard } from '../../src/auth/supabase-auth.guard';
 import { BIO_TRANSLATOR } from '../../src/bio-translation/bio-translator.interface';
 import { SUPABASE_CLIENT } from '../../src/database/supabase-client.token';
 import { DocumentOnboardingService } from '../../src/documents/document-onboarding.service';
+import { GoogleAdminController } from '../../src/google/google.controller';
+import { GoogleConnectionService } from '../../src/google/google-connection.service';
 import { InstructorsService } from '../../src/instructors/instructors.service';
 import { MailerService } from '../../src/mailer/mailer.service';
 import { SeasonsService } from '../../src/seasons/seasons.service';
@@ -65,6 +69,10 @@ export async function startAdminApiTokenApp() {
   const ownerLookups: string[] = [];
   const owners = { failing: false };
   const setUserRole = jest.fn().mockResolvedValue(undefined);
+  const changeInstructorEmail = jest.fn().mockResolvedValue({});
+  const googleConnectUrl = jest
+    .fn()
+    .mockReturnValue({ url: 'https://accounts.google.com/o/oauth2' });
   const { privateKey, publicKey } = generateKeyPairSync('ec', {
     namedCurve: 'P-256',
   });
@@ -127,7 +135,12 @@ export async function startAdminApiTokenApp() {
       AuthModule,
       AdminApiTokensModule,
     ],
-    controllers: [AdminController, MeProbeController],
+    controllers: [
+      AdminController,
+      AdminInstructorEmailController,
+      GoogleAdminController,
+      MeProbeController,
+    ],
     providers: [
       AdminService,
       { provide: SeasonsService, useValue: {} },
@@ -152,6 +165,14 @@ export async function startAdminApiTokenApp() {
       { provide: MailerService, useValue: {} },
       { provide: DocumentOnboardingService, useValue: {} },
       { provide: BIO_TRANSLATOR, useValue: {} },
+      {
+        provide: AdminInstructorEmailService,
+        useValue: { changeEmail: changeInstructorEmail },
+      },
+      {
+        provide: GoogleConnectionService,
+        useValue: { connectUrl: googleConnectUrl },
+      },
     ],
   })
     .overrideProvider(AdminApiTokensRepository)
@@ -186,6 +207,8 @@ export async function startAdminApiTokenApp() {
     ownerLookups,
     owners,
     setUserRole,
+    changeInstructorEmail,
+    googleConnectUrl,
     addAdmin,
     reset(): void {
       clock.advance(DAY);
@@ -196,6 +219,8 @@ export async function startAdminApiTokenApp() {
       ownerLookups.length = 0;
       owners.failing = false;
       setUserRole.mockClear();
+      changeInstructorEmail.mockClear();
+      googleConnectUrl.mockClear();
     },
     sessionJwt(sub = ADMIN): string {
       return `Bearer ${sign(

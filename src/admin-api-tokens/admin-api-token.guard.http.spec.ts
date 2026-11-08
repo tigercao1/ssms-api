@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import request from 'supertest';
 import {
   ADMIN,
@@ -121,27 +122,26 @@ describe('SupabaseAuthGuard with an admin API token', () => {
   });
 
   describe('rejects', () => {
-    it('an unknown or malformed token with 401 and audits it without the secret', async () => {
+    it('an unknown or malformed token with 401, a throttled warning and no audit row', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
       const unknown = `ssms_pat_${'A'.repeat(43)}`;
 
-      await listInstructors(unknown).expect(401);
+      for (let i = 0; i < 4; i++) {
+        await listInstructors(unknown).expect(401);
+      }
       await listInstructors('ssms_pat_short').expect(401);
 
-      const failure = {
-        action: 'admin_api_token.auth_failure',
-        actor: { userId: null, role: null, userAgent: null },
-        targetType: 'admin_api_token',
-        targetId: null,
-        metadata: {
-          reason: 'unknown',
-          method: 'GET',
-          path: '/admin/instructors',
-        },
-      };
-      expect(ctx.audit.entries).toEqual([failure, failure]);
-      expect(JSON.stringify(ctx.audit.entries)).not.toMatch(
+      expect(ctx.audit.entries).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('GET /admin/instructors');
+      ctx.clock.advance(MINUTE);
+      await listInstructors(unknown).expect(401);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[1][0]).toContain('4 more');
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(
         /A{43}|ssms_pat_short/,
       );
+      warn.mockRestore();
     });
 
     it('a revoked token at once', async () => {
@@ -236,6 +236,37 @@ describe('SupabaseAuthGuard with an admin API token', () => {
         .send({ role: 'admin' })
         .expect(200);
       expect(ctx.setUserRole).toHaveBeenCalledWith(TARGET_USER, 'admin');
+    });
+
+    it('a token on the instructor sign-in email change', async () => {
+      const { token } = await seed();
+      const change = (authorization: string) =>
+        http()
+          .patch(`/admin/instructors/${TARGET_USER}/email`)
+          .set('Authorization', authorization)
+          .send({ email: 'new@example.com', expectedCurrentEmail: 'old@x.io' });
+
+      await change(bearer(token)).expect(403);
+      expect(ctx.changeInstructorEmail).not.toHaveBeenCalled();
+      expect(lastFailure()).toMatchObject({ reason: 'session_only' });
+
+      await change(ctx.sessionJwt()).expect(200);
+      expect(ctx.changeInstructorEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('a token on the Google Calendar connect', async () => {
+      const { token } = await seed();
+      const connect = (authorization: string) =>
+        http().get('/admin/google/connect').set('Authorization', authorization);
+
+      await connect(bearer(token)).expect(403);
+      expect(ctx.googleConnectUrl).not.toHaveBeenCalled();
+      expect(lastFailure()).toMatchObject({ reason: 'session_only' });
+
+      await connect(ctx.sessionJwt()).expect(200, {
+        url: 'https://accounts.google.com/o/oauth2',
+      });
+      expect(ctx.googleConnectUrl).toHaveBeenCalledWith(ADMIN);
     });
 
     it('a token on a non-admin route', async () => {

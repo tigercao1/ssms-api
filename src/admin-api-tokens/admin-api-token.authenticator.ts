@@ -32,9 +32,9 @@ import {
 
 export const ADMIN_API_TOKEN_RATE_LIMIT_PER_MIN = 120;
 const LAST_USED_INTERVAL_MS = 60_000;
+const UNKNOWN_TOKEN_LOG_INTERVAL_MS = 60_000;
 
 type FailureReason =
-  | 'unknown'
   | 'revoked'
   | 'expired'
   | 'owner_not_admin'
@@ -44,6 +44,8 @@ type FailureReason =
 @Injectable()
 export class AdminApiTokenAuthenticator extends ApiTokenAuthenticator {
   private readonly logger = new Logger(AdminApiTokenAuthenticator.name);
+  private unknownLoggedAt = Number.NEGATIVE_INFINITY;
+  private unknownSuppressed = 0;
 
   constructor(
     private readonly repo: AdminApiTokensRepository,
@@ -64,7 +66,8 @@ export class AdminApiTokenAuthenticator extends ApiTokenAuthenticator {
       ? await this.lookup(hashAdminApiToken(token))
       : null;
     if (row === null) {
-      throw this.reject(route, 'unknown', null);
+      this.warnUnknown(route);
+      throw new UnauthorizedException();
     }
     const now = this.clock.now();
     const status = tokenStatus(row, now);
@@ -109,16 +112,31 @@ export class AdminApiTokenAuthenticator extends ApiTokenAuthenticator {
     }
   }
 
+  private warnUnknown(route: ApiTokenRoute): void {
+    const now = this.clock.now();
+    if (now - this.unknownLoggedAt < UNKNOWN_TOKEN_LOG_INTERVAL_MS) {
+      this.unknownSuppressed += 1;
+      return;
+    }
+    const suppressed = this.unknownSuppressed;
+    this.unknownLoggedAt = now;
+    this.unknownSuppressed = 0;
+    this.logger.warn(
+      `Rejected unknown admin API token on ${route.method} ${route.path}` +
+        (suppressed > 0 ? ` (${suppressed} more since the last warning)` : ''),
+    );
+  }
+
   private reject(
     route: ApiTokenRoute,
     reason: FailureReason,
-    row: AdminApiTokenRow | null,
+    row: AdminApiTokenRow,
   ): HttpException {
     void this.audit.record({
       action: AUDIT_ACTIONS.adminApiTokenAuthFailure,
       actor: { userId: null, role: null, userAgent: route.userAgent },
       targetType: 'admin_api_token',
-      targetId: row?.id ?? null,
+      targetId: row.id,
       metadata: { reason, method: route.method, path: route.path },
     });
     if (reason === 'not_admin_route') {

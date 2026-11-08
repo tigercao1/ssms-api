@@ -94,6 +94,7 @@
       "!test-env.setup.ts",
       "!test-loopback.setup.ts",
       "!main.ts",
+      "!main-sign.ts",
       "!**/*.module.ts"
     ],
     "coverageDirectory": "../coverage",

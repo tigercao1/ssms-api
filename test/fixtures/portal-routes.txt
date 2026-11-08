@@ -1,3 +1,4 @@
+DELETE /admin/api-tokens/:id
 DELETE /admin/documents/templates/:id
 DELETE /admin/documents/templates/:id/translations/:language
 DELETE /admin/instructors/:id/photo/:slot
@@ -7,6 +8,7 @@ DELETE /admin/reference/:type/:id
 DELETE /admin/reference/seasons/:key
 DELETE /me/instructor/photo/:slot
 GET /
+GET /admin/api-tokens
 GET /admin/booking/availability
 GET /admin/booking/customers/:id/last
 GET /admin/booking/settings
@@ -109,6 +111,8 @@ PATCH /admin/users/:id/role
 PATCH /me/instructor
 POST /activation/redeem
 POST /activation/resend
+POST /admin/api-tokens
+POST /admin/api-tokens/:id/rotate
 POST /admin/booking/classes
 POST /admin/booking/classes/:id/cancel
 POST /admin/booking/classes/:id/status

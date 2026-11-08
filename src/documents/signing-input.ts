@@ -47,7 +47,7 @@ function label(field: TemplateFieldRow): string {
   return `${field.label_en} (${field.id})`;
 }
 
-function isValidDate(value: string): boolean {
+export function isValidDate(value: string): boolean {
   if (!ISO_DATE.test(value)) {
     return false;
   }
@@ -57,29 +57,28 @@ function isValidDate(value: string): boolean {
   );
 }
 
-function decodePng(field: TemplateFieldRow, encoded: unknown): Uint8Array {
+/** Decodes a base64 or `data:image/png;base64,` PNG of at most {@link MAX_SIGNATURE_PNG_BYTES}. */
+export function decodeSignaturePng(name: string, encoded: unknown): Uint8Array {
   if (typeof encoded !== 'string') {
-    throw new SigningInputError(`Signature ${label(field)} needs a base64 PNG`);
+    throw new SigningInputError(`Signature ${name} needs a base64 PNG`);
   }
   const base64 = encoded.replace(DATA_URL_PREFIX, '').replace(/\s/g, '');
   if (base64.length > Math.ceil(MAX_SIGNATURE_PNG_BYTES / 3) * 4 + 4) {
     throw new SigningInputError(
-      `Signature ${label(field)} is larger than ${MAX_SIGNATURE_PNG_BYTES / 1024} KB`,
+      `Signature ${name} is larger than ${MAX_SIGNATURE_PNG_BYTES / 1024} KB`,
     );
   }
   if (!BASE64.test(base64)) {
-    throw new SigningInputError(
-      `Signature ${label(field)} is not valid base64`,
-    );
+    throw new SigningInputError(`Signature ${name} is not valid base64`);
   }
   const png = Buffer.from(base64, 'base64');
   if (png.length > MAX_SIGNATURE_PNG_BYTES) {
     throw new SigningInputError(
-      `Signature ${label(field)} is larger than ${MAX_SIGNATURE_PNG_BYTES / 1024} KB`,
+      `Signature ${name} is larger than ${MAX_SIGNATURE_PNG_BYTES / 1024} KB`,
     );
   }
   if (!png.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) {
-    throw new SigningInputError(`Signature ${label(field)} is not a PNG`);
+    throw new SigningInputError(`Signature ${name} is not a PNG`);
   }
   return png;
 }
@@ -96,7 +95,7 @@ function parseSignature(
     unknown
   >;
   if (mode === 'drawn') {
-    return { mode, png: decodePng(field, png) };
+    return { mode, png: decodeSignaturePng(label(field), png) };
   }
   if (mode === 'typed' && typeof text === 'string') {
     const trimmed = text.trim();

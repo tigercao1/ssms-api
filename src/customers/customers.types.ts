@@ -3,7 +3,7 @@ import type { ShopifyCustomer } from './shopify-customers';
 
 export interface Customer {
   id: string;
-  shopifyCustomerId: number;
+  shopifyCustomerId: number | null;
   firstName: string | null;
   lastName: string | null;
   email: string | null;
@@ -17,7 +17,8 @@ export interface Customer {
 export function toCustomer(row: CustomerRow): Customer {
   return {
     id: row.id,
-    shopifyCustomerId: Number(row.shopify_customer_id),
+    shopifyCustomerId:
+      row.shopify_customer_id === null ? null : Number(row.shopify_customer_id),
     firstName: row.first_name,
     lastName: row.last_name,
     email: row.email,

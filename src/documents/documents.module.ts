@@ -46,6 +46,11 @@ import {
   SupabaseDocumentTemplatesRepository,
 } from './document-templates.repository';
 import { DocumentTemplatesService } from './document-templates.service';
+import {
+  FormSigningRepository,
+  SupabaseFormSigningRepository,
+} from './form-signing.repository';
+import { FormSigningService } from './form-signing.service';
 import { InternalDocumentsController } from './internal-documents.controller';
 import { MeCertificationUploadsController } from './me-certification-uploads.controller';
 import { MeCertificationUploadsService } from './me-certification-uploads.service';
@@ -54,6 +59,8 @@ import { MeDocumentsService } from './me-documents.service';
 import { MeEmploymentLetterController } from './me-employment-letter.controller';
 import { EmploymentLetterService } from './employment-letter.service';
 import { PdfWorkQueue } from './pdf-work-queue';
+import { SignFormsController } from './sign-forms.controller';
+import { SignFormsThrottlerGuard } from './sign-forms-throttler.guard';
 import {
   PrivateStorageClient,
   R2PrivateStorageClient,
@@ -72,6 +79,7 @@ import {
     MeCertificationUploadsController,
     AdminCertificationUploadsController,
     AdminDocumentReviewsController,
+    SignFormsController,
   ],
   providers: [
     { provide: PrivateStorageClient, useClass: R2PrivateStorageClient },
@@ -120,6 +128,9 @@ import {
     AdminCertificationUploadsService,
     AdminDocumentReviewsService,
     CertificationExpiryService,
+    { provide: FormSigningRepository, useClass: SupabaseFormSigningRepository },
+    FormSigningService,
+    SignFormsThrottlerGuard,
   ],
   exports: [
     PrivateStorageClient,

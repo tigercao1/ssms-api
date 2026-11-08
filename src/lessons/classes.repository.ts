@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
-import { check } from '../database/db-result';
+import { check, likePattern, searchTokens } from '../database/db-result';
 import {
   type CountedResult,
   type PageRequest,
@@ -10,6 +10,7 @@ import {
 } from '../database/pagination';
 import type {
   Attendance,
+  ClassSort,
   ClassSource,
   ClassStatus,
   GoogleSyncStatus,
@@ -24,6 +25,11 @@ export const CLASS_COLUMNS = [
   'lesson_type:lesson_types(name_en, name_zh, duration_min, group_size, is_promo)',
   'participants:class_participants(customer_id, attendance, customer:customers(first_name, last_name, email, phone))',
 ].join(', ');
+export const CLASS_SEARCH_EMBED =
+  'search:class_participants(customer:customers!inner())';
+const CLASS_ID_PREFIX = /^[0-9a-f-]+$/i;
+const CLASS_ID_PREFIX_MIN_HEX = 4;
+const UUID_HEX_LENGTH = 32;
 
 export interface ClassParticipantRow {
   customer_id: string;
@@ -74,13 +80,53 @@ export interface ClassFilter {
   from?: string;
   to?: string;
   instructorId?: string;
+  q?: string;
+  statuses?: ClassStatus[];
+  lessonTypeId?: string;
+  locationId?: string;
+  createdFrom?: string;
+  createdTo?: string;
 }
 
 export abstract class ClassesRepository {
   abstract list(
     filter: ClassFilter,
     page?: PageRequest,
+    sort?: ClassSort,
   ): Promise<RowPage<ClassRow>>;
+}
+
+function asUuid(hex: string): string {
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
+}
+
+export function classIdRange(
+  q: string,
+): { lowest: string; highest: string } | null {
+  if (!CLASS_ID_PREFIX.test(q)) {
+    return null;
+  }
+  const hex = q.replace(/-/g, '').toLowerCase();
+  if (hex.length < CLASS_ID_PREFIX_MIN_HEX || hex.length > UUID_HEX_LENGTH) {
+    return null;
+  }
+  return {
+    lowest: asUuid(hex.padEnd(UUID_HEX_LENGTH, '0')),
+    highest: asUuid(hex.padEnd(UUID_HEX_LENGTH, 'f')),
+  };
+}
+
+function searchMatch(q: string): string {
+  const range = classIdRange(q);
+  return range
+    ? `search.not.is.null,and(id.gte.${range.lowest},id.lte.${range.highest})`
+    : 'search.not.is.null';
 }
 
 @Injectable()
@@ -94,10 +140,12 @@ export class SupabaseClassesRepository extends ClassesRepository {
   async list(
     filter: ClassFilter,
     page?: PageRequest,
+    sort: ClassSort = 'startsAt',
   ): Promise<RowPage<ClassRow>> {
+    const ascending = sort === 'startsAt';
     const ordered = this.matching(filter, CLASS_COLUMNS, { count: 'exact' })
-      .order('starts_at', { ascending: true })
-      .order('id', { ascending: true });
+      .order(ascending ? 'starts_at' : 'created_at', { ascending })
+      .order('id', { ascending });
     const { data, error, count } = (await (page
       ? ordered.range(page.offset, page.offset + page.limit - 1)
       : ordered.limit(MAX_CLASSES_PER_LIST))) as CountedResult<ClassRow[]>;
@@ -122,7 +170,13 @@ export class SupabaseClassesRepository extends ClassesRepository {
     columns: string,
     options: { count: 'exact'; head?: boolean },
   ) {
-    let query = this.supabase.from(CLASSES_TABLE).select(columns, options);
+    const tokens = searchTokens(filter.q);
+    let query = this.supabase
+      .from(CLASSES_TABLE)
+      .select(
+        tokens.length > 0 ? `${columns}, ${CLASS_SEARCH_EMBED}` : columns,
+        options,
+      );
     if (filter.from) {
       query = query.gte('starts_at', filter.from);
     }
@@ -131,6 +185,30 @@ export class SupabaseClassesRepository extends ClassesRepository {
     }
     if (filter.instructorId) {
       query = query.eq('instructor_id', filter.instructorId);
+    }
+    if (filter.statuses?.length) {
+      query = query.in('status', filter.statuses);
+    }
+    if (filter.lessonTypeId) {
+      query = query.eq('lesson_type_id', filter.lessonTypeId);
+    }
+    if (filter.locationId) {
+      query = query.eq('location_id', filter.locationId);
+    }
+    if (filter.createdFrom) {
+      query = query.gte('created_at', filter.createdFrom);
+    }
+    if (filter.createdTo) {
+      query = query.lt('created_at', filter.createdTo);
+    }
+    if (filter.q && tokens.length > 0) {
+      for (const token of tokens) {
+        query = query.ilike(
+          'search.customer.search_text',
+          likePattern(token.toLowerCase()),
+        );
+      }
+      query = query.or(searchMatch(filter.q));
     }
     return query;
   }

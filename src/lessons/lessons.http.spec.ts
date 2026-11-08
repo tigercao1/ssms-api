@@ -23,7 +23,12 @@ import { GoogleApiError } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
 import { ClassesController } from './classes.controller';
 import { ClassesRepository, MAX_CLASSES_PER_LIST } from './classes.repository';
-import { ClassesService } from './classes.service';
+import { CSV_BOM } from './classes-csv';
+import {
+  CLASS_EXPORT_MAX_ROWS,
+  CLASS_EXPORT_TOO_LARGE,
+  ClassesService,
+} from './classes.service';
 import { InstructorCalendarsController } from './instructor-calendars.controller';
 import { InstructorCalendarsRepository } from './instructor-calendars.repository';
 import {
@@ -107,6 +112,7 @@ describe('lessons admin HTTP', () => {
         (r) => r.patch(`/admin/pay-rates/${UNKNOWN_ID}`).send({}),
       ],
       ['GET classes', (r) => r.get('/admin/classes')],
+      ['GET classes export', (r) => r.get('/admin/classes/export')],
       ['GET instructor calendars', (r) => r.get('/admin/instructor-calendars')],
       [
         'GET google calendar',
@@ -781,6 +787,297 @@ describe('lessons admin HTTP', () => {
       'from=2026-12-14&to=2026-12-13&page=1&limit=10',
     ])('rejects %s with 400', async (query) => {
       await list(`?${query}`).expect(400);
+      expect(ctx.classes.filters).toEqual([]);
+    });
+  });
+
+  describe('GET /admin/classes filters, search and sort', () => {
+    const LESSON_TYPE_ID = '8b9c0d1e-2f3a-4b4c-8d5e-6f7a8b9c0d1e';
+    const LOCATION_ID = '6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c';
+    const LILY = {
+      customer_id: '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d',
+      attendance: 'expected' as const,
+      customer: {
+        first_name: 'Lily',
+        last_name: 'Chen',
+        email: 'lily@example.com',
+        phone: '+1 (416) 555-0101',
+      },
+    };
+    const MING = {
+      customer_id: '8c9d0e1f-2a3b-4c5d-8e6f-7a8b9c0d1e2f',
+      attendance: 'expected' as const,
+      customer: {
+        first_name: '小明',
+        last_name: '王',
+        email: 'ming@example.com',
+        phone: null,
+      },
+    };
+    const list = (query: string) =>
+      http().get(`/admin/classes?${query}`).set('Authorization', admin);
+    const ids = (res: request.Response) =>
+      (res.body as { id: string }[]).map((c) => c.id);
+    const total = (res: request.Response) =>
+      res.headers[TOTAL_COUNT_HEADER.toLowerCase()];
+
+    beforeEach(async () => {
+      ctx = await build();
+      ctx.classes.rows.push(
+        classRow({
+          id: 'a1000000-0000-4000-8000-000000000001',
+          starts_at: '2026-12-12T15:00:00.000Z',
+          created_at: '2026-11-01T12:00:00.000Z',
+          lesson_type_id: LESSON_TYPE_ID,
+          location_id: LOCATION_ID,
+          participants: [LILY],
+        }),
+        classRow({
+          id: 'b2000000-0000-4000-8000-000000000002',
+          starts_at: '2026-12-13T15:00:00.000Z',
+          created_at: '2026-11-07T12:00:00.000Z',
+          status: 'cancelled',
+          instructor_id: ERIC_ID,
+          participants: [MING],
+        }),
+        classRow({
+          id: 'c3000000-0000-4000-8000-000000000003',
+          starts_at: '2026-12-14T15:00:00.000Z',
+          created_at: '2026-11-05T12:00:00.000Z',
+          status: 'completed',
+          lesson_type_id: LESSON_TYPE_ID,
+          participants: [LILY, MING],
+        }),
+      );
+    });
+
+    it.each([
+      ['status=cancelled', ['b2000000-0000-4000-8000-000000000002']],
+      [
+        'status=scheduled,completed',
+        [
+          'a1000000-0000-4000-8000-000000000001',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [
+        'status=completed&status=cancelled',
+        [
+          'b2000000-0000-4000-8000-000000000002',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [
+        `lessonTypeId=${LESSON_TYPE_ID}`,
+        [
+          'a1000000-0000-4000-8000-000000000001',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [`locationId=${LOCATION_ID}`, ['a1000000-0000-4000-8000-000000000001']],
+      [
+        'createdFrom=2026-11-05T00:00:00Z&createdTo=2026-11-07T00:00:00Z',
+        ['c3000000-0000-4000-8000-000000000003'],
+      ],
+      [
+        'q=lily',
+        [
+          'a1000000-0000-4000-8000-000000000001',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [
+        'q=%20%20LILY%20chen%20',
+        [
+          'a1000000-0000-4000-8000-000000000001',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [
+        'q=ming%40example',
+        [
+          'b2000000-0000-4000-8000-000000000002',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [
+        'q=4165550101',
+        [
+          'a1000000-0000-4000-8000-000000000001',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      [
+        `q=${encodeURIComponent('小明')}`,
+        [
+          'b2000000-0000-4000-8000-000000000002',
+          'c3000000-0000-4000-8000-000000000003',
+        ],
+      ],
+      ['q=b200', ['b2000000-0000-4000-8000-000000000002']],
+      ['q=nobody', []],
+      [
+        `q=lily&status=completed&lessonTypeId=${LESSON_TYPE_ID}&instructorId=${EDDIE_ID}&from=2026-12-14T00:00:00Z`,
+        ['c3000000-0000-4000-8000-000000000003'],
+      ],
+    ])('%s', async (query, expected) => {
+      const res = await list(query).expect(200);
+      expect(ids(res)).toEqual(expected);
+      expect(total(res)).toBe(String(expected.length));
+    });
+
+    it('passes every filter to the repository', async () => {
+      await list(
+        `q=%20Lily%20&status=scheduled,no_show,scheduled&lessonTypeId=${LESSON_TYPE_ID}&locationId=${LOCATION_ID}&createdFrom=2026-11-01T00:00:00Z&createdTo=2026-11-08T00:00:00Z&sort=createdAt&page=1&limit=10`,
+      ).expect(200);
+      expect(ctx.classes.filters).toEqual([
+        {
+          q: 'Lily',
+          statuses: ['scheduled', 'no_show'],
+          lessonTypeId: LESSON_TYPE_ID,
+          locationId: LOCATION_ID,
+          createdFrom: '2026-11-01T00:00:00Z',
+          createdTo: '2026-11-08T00:00:00Z',
+        },
+      ]);
+      expect(ctx.classes.sorts).toEqual(['createdAt']);
+    });
+
+    it('treats a blank search as no search', async () => {
+      const res = await list('q=%20%20').expect(200);
+      expect(ids(res)).toHaveLength(3);
+      expect(ctx.classes.filters[0].q).toBeUndefined();
+    });
+
+    it('sorts by start time by default and newest booked first on request', async () => {
+      const byStart = await list('').expect(200);
+      expect(ids(byStart)).toEqual([
+        'a1000000-0000-4000-8000-000000000001',
+        'b2000000-0000-4000-8000-000000000002',
+        'c3000000-0000-4000-8000-000000000003',
+      ]);
+      expect(ctx.classes.sorts).toEqual([undefined]);
+      const byCreated = await list('sort=createdAt').expect(200);
+      expect(ids(byCreated)).toEqual([
+        'b2000000-0000-4000-8000-000000000002',
+        'c3000000-0000-4000-8000-000000000003',
+        'a1000000-0000-4000-8000-000000000001',
+      ]);
+    });
+
+    it('pages a filtered list with the filtered total', async () => {
+      const res = await list('q=lily&page=2&limit=1').expect(200);
+      expect(ids(res)).toEqual(['c3000000-0000-4000-8000-000000000003']);
+      expect(total(res)).toBe('2');
+    });
+
+    it.each([
+      'status=booked',
+      'status=scheduled,later',
+      'lessonTypeId=private',
+      'locationId=blue',
+      'createdFrom=last-week',
+      'createdTo=2026-13-01',
+      'createdFrom=2026-11-08&createdTo=2026-11-01',
+      'sort=startsAt,createdAt',
+      'sort=updatedAt',
+      `q=${'x'.repeat(101)}`,
+    ])('rejects %s with 400', async (query) => {
+      await list(query).expect(400);
+      expect(ctx.classes.filters).toEqual([]);
+    });
+
+    it('accepts a search at the length limit', async () => {
+      await list(`q=${'x'.repeat(100)}`).expect(200);
+    });
+  });
+
+  describe('GET /admin/classes/export', () => {
+    const exportCsv = (query = '') =>
+      http().get(`/admin/classes/export${query}`).set('Authorization', admin);
+    const seed = (count: number) =>
+      ctx.classes.rows.push(
+        ...Array.from({ length: count }, (_, i) =>
+          classRow({
+            starts_at: new Date(Date.UTC(2026, 11, 1, 0, i)).toISOString(),
+          }),
+        ),
+      );
+
+    beforeEach(async () => {
+      ctx = await build();
+    });
+
+    it('returns the filtered classes as a CSV attachment', async () => {
+      ctx.classes.rows.push(
+        classRow({
+          id: 'a1000000-0000-4000-8000-000000000001',
+          starts_at: '2026-12-12T15:00:00.000Z',
+          ends_at: '2026-12-12T16:00:00.000Z',
+          created_at: '2026-11-08T17:00:00.000Z',
+          notes: '=cmd()',
+          location: { name: 'Blue Mountain' },
+          participants: [
+            {
+              customer_id: '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d',
+              attendance: 'expected',
+              customer: {
+                first_name: '小明',
+                last_name: '王',
+                email: 'ming@example.com',
+                phone: null,
+              },
+            },
+          ],
+        }),
+        classRow({ status: 'cancelled' }),
+      );
+      const res = await exportCsv('?status=scheduled&q=ming').expect(200);
+      expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
+      expect(res.headers['content-disposition']).toMatch(
+        /^attachment; filename="classes-\d{4}-\d{2}-\d{2}\.csv"$/,
+      );
+      expect(res.headers['cache-control']).toBe('no-store');
+      const body = res.text;
+      expect(body.startsWith(CSV_BOM)).toBe(true);
+      expect(body.slice(CSV_BOM.length).split('\r\n')).toEqual([
+        'Class ID,Date,Start,End,Instructor,Lesson type,Location,Status,Customers,Notes,Created at',
+        "a1000000-0000-4000-8000-000000000001,2026-12-12,10:00,11:00,Eddie,,Blue Mountain,scheduled,小明 王; ming@example.com,'=cmd(),2026-11-08 12:00",
+        '',
+      ]);
+      expect(ctx.classes.filters[0]).toEqual({
+        q: 'ming',
+        statuses: ['scheduled'],
+      });
+      expect(ctx.classes.pages).toEqual([
+        { limit: MAX_CLASSES_PER_LIST, offset: 0 },
+      ]);
+    });
+
+    it('is not paged and keeps the requested order', async () => {
+      seed(MAX_CLASSES_PER_LIST + 1);
+      const res = await exportCsv('?sort=createdAt').expect(200);
+      expect(res.text.trimEnd().split('\r\n')).toHaveLength(
+        MAX_CLASSES_PER_LIST + 2,
+      );
+      expect(ctx.classes.sorts).toEqual(['createdAt', 'createdAt']);
+    });
+
+    it('refuses more than the cap with 422', async () => {
+      seed(CLASS_EXPORT_MAX_ROWS + 1);
+      const res = await exportCsv().expect(422);
+      expect((res.body as { message: string }).message).toBe(
+        CLASS_EXPORT_TOO_LARGE,
+      );
+    });
+
+    it.each([
+      'page=1',
+      'limit=10',
+      'status=booked',
+      'from=2026-12-14&to=2026-12-13',
+    ])('rejects %s with 400', async (query) => {
+      await exportCsv(`?${query}`).expect(400);
       expect(ctx.classes.filters).toEqual([]);
     });
   });

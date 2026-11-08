@@ -10,9 +10,11 @@ import type { GoogleCalendarClient } from '../../src/google/google-calendar.clie
 import {
   type ClassFilter,
   ClassesRepository,
+  classIdRange,
   type ClassRow,
   MAX_CLASSES_PER_LIST,
 } from '../../src/lessons/classes.repository';
+import type { ClassSort } from '../../src/lessons/lessons.types';
 import {
   type CalendarInstructorRow,
   type InstructorCalendarInput,
@@ -122,24 +124,60 @@ export function recordingSupabase(
   return { client: client as never, queries };
 }
 
+function matchesSearch(row: ClassRow, q: string | undefined): boolean {
+  const tokens = (q ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return true;
+  }
+  const range = classIdRange(q ?? '');
+  if (range && row.id >= range.lowest && row.id <= range.highest) {
+    return true;
+  }
+  return (row.participants ?? []).some(({ customer }) => {
+    const text = [
+      customer?.first_name,
+      customer?.last_name,
+      customer?.email,
+      customer?.phone,
+      customer?.phone?.replace(/[^0-9]/g, ''),
+    ]
+      .join(' ')
+      .toLowerCase();
+    return tokens.every((token) => text.includes(token));
+  });
+}
+
 export class InMemoryClassesRepository extends ClassesRepository {
   rows: ClassRow[] = [];
   filters: ClassFilter[] = [];
   pages: (PageRequest | undefined)[] = [];
+  sorts: (ClassSort | undefined)[] = [];
 
-  list(filter: ClassFilter, page?: PageRequest): Promise<RowPage<ClassRow>> {
+  list(
+    filter: ClassFilter,
+    page?: PageRequest,
+    sort?: ClassSort,
+  ): Promise<RowPage<ClassRow>> {
     this.filters.push(filter);
     this.pages.push(page);
+    this.sorts.push(sort);
     const matches = this.rows
       .filter(
         (r) =>
           (!filter.from || r.starts_at >= filter.from) &&
           (!filter.to || r.starts_at < filter.to) &&
-          (!filter.instructorId || r.instructor_id === filter.instructorId),
+          (!filter.instructorId || r.instructor_id === filter.instructorId) &&
+          (!filter.statuses || filter.statuses.includes(r.status)) &&
+          (!filter.lessonTypeId || r.lesson_type_id === filter.lessonTypeId) &&
+          (!filter.locationId || r.location_id === filter.locationId) &&
+          (!filter.createdFrom || r.created_at >= filter.createdFrom) &&
+          (!filter.createdTo || r.created_at < filter.createdTo) &&
+          matchesSearch(r, filter.q),
       )
-      .sort(
-        (a, b) =>
-          a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id),
+      .sort((a, b) =>
+        sort === 'createdAt'
+          ? b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)
+          : a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id),
       );
     return Promise.resolve({
       rows: page

@@ -11,6 +11,7 @@ import type { ClassStatus } from '../lessons/lessons.types';
 
 export const BOOKING_SETTINGS_TABLE = 'booking_settings';
 export const EVENT_DELETIONS_TABLE = 'google_event_deletions';
+export const BATCH_ROWS_TABLE = 'booking_batch_rows';
 const DELETION_COLUMNS =
   'id, google_calendar_id, google_event_id, class_id, attempts, last_error, last_attempt_at, created_at';
 const SETTINGS_COLUMNS =
@@ -93,6 +94,23 @@ export interface SeriesBooking {
   created_by: string | null;
 }
 
+export interface BatchRowKey {
+  batch_id: string;
+  row_index: number;
+  payload_hash: string;
+}
+
+export interface BatchRowRecord {
+  row_index: number;
+  payload_hash: string;
+  class_id: string;
+}
+
+export interface BatchRowCommit {
+  outcome: 'created' | 'existing';
+  row: BatchRowRecord;
+}
+
 export interface ClassRebooking {
   instructor_id: string;
   lesson_type_id: string | null;
@@ -151,6 +169,11 @@ export abstract class BookingRepository {
     series: SeriesBooking | null,
     classes: ClassBooking[],
   ): Promise<void>;
+  abstract findBatchRows(batchId: string): Promise<BatchRowRecord[]>;
+  abstract bookBatchRow(
+    key: BatchRowKey,
+    booking: ClassBooking,
+  ): Promise<BatchRowCommit>;
   abstract rebookClass(
     id: string,
     rebooking: ClassRebooking,
@@ -333,6 +356,34 @@ export class SupabaseBookingRepository extends BookingRepository {
       p_classes: classes,
     })) as DbResult<null>;
     check(error, 'book classes');
+  }
+
+  async findBatchRows(batchId: string): Promise<BatchRowRecord[]> {
+    const { data, error } = (await this.supabase
+      .from(BATCH_ROWS_TABLE)
+      .select('row_index, payload_hash, class_id')
+      .eq('batch_id', batchId)
+      .order('row_index', { ascending: true })) as DbResult<BatchRowRecord[]>;
+    check(error, 'load booking batch rows');
+    return data ?? [];
+  }
+
+  async bookBatchRow(
+    key: BatchRowKey,
+    booking: ClassBooking,
+  ): Promise<BatchRowCommit> {
+    const { data, error } = (await this.supabase.rpc('book_batch_row', {
+      p_batch_id: key.batch_id,
+      p_row_index: key.row_index,
+      p_payload_hash: key.payload_hash,
+      p_class: booking,
+    })) as DbResult<BatchRowRecord & { outcome: BatchRowCommit['outcome'] }>;
+    check(error, 'book batch row');
+    if (!data) {
+      throw new Error('book_batch_row returned no row');
+    }
+    const { outcome, ...row } = data;
+    return { outcome, row };
   }
 
   async rebookClass(

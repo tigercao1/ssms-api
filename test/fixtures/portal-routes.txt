@@ -113,6 +113,7 @@ POST /admin/booking/classes
 POST /admin/booking/classes/:id/cancel
 POST /admin/booking/classes/:id/status
 POST /admin/booking/classes/:id/sync
+POST /admin/booking/classes/batch
 POST /admin/class-imports
 POST /admin/class-imports/:id/commit
 POST /admin/class-imports/:id/discard

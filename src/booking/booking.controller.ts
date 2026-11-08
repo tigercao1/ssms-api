@@ -22,6 +22,10 @@ import { toActor } from '../audit/admin-actor';
 import { GoogleErrorFilter } from '../google/google-error.filter';
 import { type Availability, AvailabilityService } from './availability.service';
 import {
+  type BatchBookingResult,
+  BookingBatchService,
+} from './booking-batch.service';
+import {
   type BookingSettings,
   BookingSettingsService,
 } from './booking-settings.service';
@@ -33,6 +37,7 @@ import {
 import type { BookedClass } from './calendar-sync.service';
 import {
   AvailabilityQueryDto,
+  BatchBookingDto,
   BookingSettingsDto,
   CreateBookingDto,
   SetClassStatusDto,
@@ -48,6 +53,7 @@ export class BookingController {
     private readonly booking: BookingService,
     private readonly availabilityService: AvailabilityService,
     private readonly settings: BookingSettingsService,
+    private readonly batch: BookingBatchService,
   ) {}
 
   @Get('settings')
@@ -80,6 +86,16 @@ export class BookingController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<BookedClass[]> {
     return this.booking.create(dto, toActor(user, userAgent));
+  }
+
+  @Post('classes/batch')
+  @HttpCode(HttpStatus.OK)
+  createBatch(
+    @Body() dto: BatchBookingDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<BatchBookingResult> {
+    return this.batch.create(dto, toActor(user, userAgent));
   }
 
   @Patch('classes/:id')

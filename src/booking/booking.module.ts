@@ -5,6 +5,7 @@ import {
   BOOKING_CLOCK,
   BookingCalendarsService,
 } from './booking-calendars.service';
+import { BookingBatchService } from './booking-batch.service';
 import { BookingController } from './booking.controller';
 import {
   BookingRepository,
@@ -25,6 +26,7 @@ import { CalendarSyncWorker } from './calendar-sync.worker';
     BookingSettingsService,
     AvailabilityService,
     BookingService,
+    BookingBatchService,
     CalendarSyncService,
     CalendarSyncWorker,
   ],

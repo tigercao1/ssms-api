@@ -7,7 +7,7 @@ export const SIGNING_BODY_LIMIT = '4mb';
 export const SIGNING_BODY_TOO_LARGE =
   'The signing request is larger than 4 MB; use smaller signature images';
 
-const COMPLETE_PATH = /^\/me\/documents\/[^/]+\/complete\/?$/;
+const COMPLETE_PATH = /^\/(me\/documents|sign\/forms)\/[^/]+\/complete\/?$/;
 const parseSigningJson = json({ limit: SIGNING_BODY_LIMIT });
 
 function toHttpError(err: unknown): Error {
@@ -17,7 +17,7 @@ function toHttpError(err: unknown): Error {
 }
 
 /**
- * Parses `POST /me/documents/:id/complete` bodies with {@link SIGNING_BODY_LIMIT}
+ * Parses `POST /me/documents/:id/complete` and `/sign/forms/:slug/complete` bodies with {@link SIGNING_BODY_LIMIT}
  * instead of the default 100 KB. Register it before the global body parser
  * (`app.use(signingBodyParser)` before `listen`/`init`); other routes pass through.
  */

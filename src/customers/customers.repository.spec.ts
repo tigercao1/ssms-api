@@ -155,9 +155,15 @@ describe('SupabaseCustomersRepository', () => {
     const repo = new SupabaseCustomersRepository(client);
     await expect(repo.countCustomers(false)).resolves.toBe(7);
     await expect(repo.countCustomers(true)).resolves.toBe(0);
-    expect(queries.map((q) => q.ops[1])).toEqual([
-      ['is', 'shopify_deleted_at', null],
-      ['not', 'shopify_deleted_at', 'is', null],
+    expect(queries.map((q) => q.ops.slice(1))).toEqual([
+      [
+        ['is', 'shopify_deleted_at', null],
+        ['not', 'shopify_customer_id', 'is', null],
+      ],
+      [
+        ['not', 'shopify_deleted_at', 'is', null],
+        ['not', 'shopify_customer_id', 'is', null],
+      ],
     ]);
   });
 

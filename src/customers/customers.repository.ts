@@ -15,7 +15,7 @@ export const CUSTOMER_COLUMNS =
 
 export interface CustomerRow {
   id: string;
-  shopify_customer_id: number | string;
+  shopify_customer_id: number | string | null;
   first_name: string | null;
   last_name: string | null;
   email: string | null;
@@ -207,9 +207,14 @@ export class SupabaseCustomersRepository extends CustomersRepository {
     const query = this.supabase
       .from(CUSTOMERS_TABLE)
       .select('id', { count: 'exact', head: true });
-    const { error, count } = (await (deleted
+    const scoped = deleted
       ? query.not('shopify_deleted_at', 'is', null)
-      : query.is('shopify_deleted_at', null))) as CountedResult<null>;
+      : query.is('shopify_deleted_at', null);
+    const { error, count } = (await scoped.not(
+      'shopify_customer_id',
+      'is',
+      null,
+    )) as CountedResult<null>;
     check(error, 'count customers');
     return count ?? 0;
   }

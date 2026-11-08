@@ -376,7 +376,7 @@ export function auditRows(audit: StampAudit): [string, string][] {
   ];
 }
 
-function drawAuditPage(
+export function drawAuditPage(
   doc: PDFDocument,
   font: PDFFont,
   audit: StampAudit,

@@ -4,16 +4,25 @@ import {
   buildInstructorFields,
   englishTranslations,
 } from './instructor-fields.builder';
-import { baseHandle, handleCandidate } from './instructor-handle';
+import {
+  baseHandle,
+  handleCandidates,
+  type HandleSource,
+  isFallbackHandle,
+} from './instructor-handle';
 import { InstructorPhotoSync } from './instructor-photo.sync';
 import { InstructorSyncRepository } from './instructor-sync.repository';
 import { InstructorTranslationsSync } from './instructor-translations.sync';
 import { LegacyRoster } from './legacy-roster';
 import type {
   InstructorShopifyState,
+  InstructorShopifyStatePatch,
   InstructorSnapshot,
 } from './instructor-sync.types';
-import { ShopifyInstructorGateway } from './shopify-instructor.gateway';
+import {
+  type ShopifyEntryRef,
+  ShopifyInstructorGateway,
+} from './shopify-instructor.gateway';
 
 export type SyncOutcome = 'active' | 'draft' | 'held' | 'skipped';
 
@@ -22,8 +31,6 @@ export interface ReconcileResult {
   instructors: number;
   orphaned: number;
 }
-
-export const MAX_HANDLE_ATTEMPTS = 50;
 
 @Injectable()
 export class InstructorSyncService {
@@ -60,11 +67,18 @@ export class InstructorSyncService {
     instructorId: string,
     state: InstructorShopifyState | null,
   ): Promise<SyncOutcome> {
-    if (!state?.shopify_metaobject_id || !state.shopify_handle) {
+    if (!state?.shopify_metaobject_id && !state?.shopify_handle) {
       return 'skipped';
     }
-    await this.gateway.setEntryStatus(state.shopify_handle, 'DRAFT');
+    const found = await this.ownEntry(instructorId, state);
+    if (!found) {
+      return 'skipped';
+    }
+    const entry = await this.gateway.updateEntry(found.id, { status: 'DRAFT' });
     await this.repo.saveState(instructorId, {
+      ...(await this.legacyPairPatch(state, entry.handle)),
+      shopify_metaobject_id: entry.id,
+      shopify_handle: entry.handle,
       last_synced_at: new Date().toISOString(),
       last_status: 'draft',
     });
@@ -76,23 +90,31 @@ export class InstructorSyncService {
     state: InstructorShopifyState | null,
   ): Promise<SyncOutcome> {
     const { instructor } = snapshot;
-    const existingEntry = Boolean(state?.shopify_metaobject_id);
-    const handle = state?.shopify_handle
-      ? await this.verifiedStoredHandle(
-          instructor.id,
-          state.shopify_handle,
-          existingEntry,
-        )
-      : await this.claimHandle(instructor.id, instructor.display_name_en);
+    const found = await this.ownEntry(instructor.id, state);
+    const target = found ? await this.healedTarget(instructor, found) : null;
+    const newHandle = target
+      ? null
+      : await this.newEntryHandle(instructor, state);
     const photo = await this.photos.prepare(instructor, state);
     const fields = buildInstructorFields(snapshot, {
-      existingEntry,
+      existingEntry: target !== null,
       ...photo.fields,
     });
-    const entry = await this.gateway.upsertEntry(handle, fields, 'ACTIVE');
+    const entry = target
+      ? await this.gateway.updateEntry(target.entry.id, {
+          handle: target.rename,
+          fields,
+          status: 'ACTIVE',
+        })
+      : await this.gateway.upsertEntry(newHandle as string, fields, 'ACTIVE');
+    if (found && target && target.entry.id !== found.id) {
+      await this.gateway.updateEntry(found.id, { status: 'DRAFT' });
+    }
     await this.repo.saveState(instructor.id, {
       ...photo.statePatch,
+      ...(await this.legacyPairPatch(state, entry.handle)),
       shopify_metaobject_id: entry.id,
+      shopify_handle: entry.handle,
       last_synced_at: new Date().toISOString(),
       last_status: 'active',
     });
@@ -103,14 +125,80 @@ export class InstructorSyncService {
     return 'active';
   }
 
+  private async legacyPairPatch(
+    state: InstructorShopifyState | null,
+    handle: string,
+  ): Promise<InstructorShopifyStatePatch> {
+    const stored = state?.shopify_handle;
+    if (
+      !stored ||
+      stored === handle ||
+      state.paired_legacy_handle ||
+      !(await this.legacy.handles()).has(stored)
+    ) {
+      return {};
+    }
+    return { paired_legacy_handle: stored };
+  }
+
+  private async ownEntry(
+    instructorId: string,
+    state: InstructorShopifyState | null,
+  ): Promise<ShopifyEntryRef | null> {
+    const stored = state?.shopify_metaobject_id
+      ? await this.gateway.findEntryById(state.shopify_metaobject_id)
+      : null;
+    if (stored?.ssmsId && stored.ssmsId !== instructorId) {
+      throw new Error(
+        `Stored entry ${stored.id} belongs to another instructor (${stored.ssmsId})`,
+      );
+    }
+    return stored ?? this.gateway.findEntryBySsmsId(instructorId);
+  }
+
+  private async healedTarget(
+    instructor: HandleSource,
+    entry: ShopifyEntryRef,
+  ): Promise<{ entry: ShopifyEntryRef; rename?: string }> {
+    if (!isFallbackHandle(entry.handle, instructor.id)) {
+      return { entry };
+    }
+    const base = baseHandle(instructor);
+    if (isFallbackHandle(base, instructor.id)) {
+      return { entry };
+    }
+    const legacyHandles = await this.legacy.handles();
+    for (const candidate of handleCandidates(base, instructor.id)) {
+      if (
+        legacyHandles.has(candidate) ||
+        (await this.repo.isHandleStoredByOther(candidate, instructor.id))
+      ) {
+        continue;
+      }
+      const holder = await this.gateway.findEntryByHandle(candidate);
+      if (!holder) {
+        return { entry, rename: candidate };
+      }
+      if (holder.ssmsId === instructor.id) {
+        return { entry: holder };
+      }
+    }
+    return { entry };
+  }
+
+  private async newEntryHandle(
+    instructor: HandleSource,
+    state: InstructorShopifyState | null,
+  ): Promise<string> {
+    return state?.shopify_handle
+      ? this.verifiedStoredHandle(instructor.id, state.shopify_handle)
+      : this.claimHandle(instructor);
+  }
+
   private async verifiedStoredHandle(
     instructorId: string,
     handle: string,
-    existingEntry: boolean,
   ): Promise<string> {
-    if (existingEntry) {
-      return handle;
-    }
     const entry = await this.gateway.findEntryByHandle(handle);
     if (entry && entry.ssmsId !== instructorId) {
       throw new Error(
@@ -120,25 +208,21 @@ export class InstructorSyncService {
     return handle;
   }
 
-  private async claimHandle(
-    instructorId: string,
-    displayNameEn: string,
-  ): Promise<string> {
-    const base = baseHandle(instructorId, displayNameEn);
+  private async claimHandle(instructor: HandleSource): Promise<string> {
+    const base = baseHandle(instructor);
     const legacyHandles = await this.legacy.handles();
-    for (let attempt = 1; attempt <= MAX_HANDLE_ATTEMPTS; attempt++) {
-      const candidate = handleCandidate(base, attempt);
+    for (const candidate of handleCandidates(base, instructor.id)) {
       if (legacyHandles.has(candidate)) {
         continue;
       }
-      if (await this.repo.isHandleStoredByOther(candidate, instructorId)) {
+      if (await this.repo.isHandleStoredByOther(candidate, instructor.id)) {
         continue;
       }
       const entry = await this.gateway.findEntryByHandle(candidate);
-      if (entry && entry.ssmsId !== instructorId) {
+      if (entry && entry.ssmsId !== instructor.id) {
         continue;
       }
-      await this.repo.saveState(instructorId, { shopify_handle: candidate });
+      await this.repo.saveState(instructor.id, { shopify_handle: candidate });
       return candidate;
     }
     throw new Error(`No free handle for "${base}"`);

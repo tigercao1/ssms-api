@@ -8,6 +8,7 @@ describe('ShopifyInstructorGateway', () => {
     const gateway = new ShopifyInstructorGateway(shopify.client);
     await expect(gateway.findEntryByHandle('eddie')).resolves.toEqual({
       id: entry.id,
+      handle: 'eddie',
       ssmsId: null,
     });
     await expect(gateway.findEntryByHandle('nobody')).resolves.toBeNull();
@@ -18,10 +19,9 @@ describe('ShopifyInstructorGateway', () => {
     const gateway = new ShopifyInstructorGateway(shopify.client);
     await gateway.findEntryByHandle('eddie');
     await gateway.upsertEntry('eddie', [{ key: 'name', value: 'E' }], 'ACTIVE');
-    await gateway.setEntryStatus('eddie', 'DRAFT');
     expect(
       shopify.calls.map((c) => (c.variables.handle as { type: string }).type),
-    ).toEqual(['ssms_instructor', 'ssms_instructor', 'ssms_instructor']);
+    ).toEqual(['ssms_instructor', 'ssms_instructor']);
   });
 
   it('lists every legacy our_team entry across pages by handle and name', async () => {
@@ -63,15 +63,110 @@ describe('ShopifyInstructorGateway', () => {
     ]);
   });
 
+  it('reads an entry by id and ignores ids of other metaobject types', async () => {
+    const shopify = new FakeShopify();
+    const entry = shopify.addEntry('lele', { ssms_id: 'abc' });
+    const legacy = shopify.addLegacyEntry('aaron', 'Aaron');
+    const gateway = new ShopifyInstructorGateway(shopify.client);
+
+    await expect(gateway.findEntryById(entry.id)).resolves.toEqual({
+      id: entry.id,
+      handle: 'lele',
+      ssmsId: 'abc',
+    });
+    await expect(gateway.findEntryById(legacy.id)).resolves.toBeNull();
+    await expect(
+      gateway.findEntryById('gid://shopify/Metaobject/999'),
+    ).resolves.toBeNull();
+  });
+
+  it('finds the entry carrying an SSMS id across pages, preferring the oldest ACTIVE one', async () => {
+    const shopify = new FakeShopify();
+    const node = (id: string, status: string, createdAt: string) => ({
+      id,
+      handle: `h-${id}`,
+      createdAt,
+      capabilities: { publishable: { status } },
+      ssmsId: { value: 'abc' },
+    });
+    shopify.on('SsmsInstructorEntries', (v) =>
+      v.after == null
+        ? {
+            metaobjects: {
+              pageInfo: { hasNextPage: true, endCursor: 'c1' },
+              nodes: [
+                node('draft-old', 'DRAFT', '2026-01-01T00:00:00Z'),
+                {
+                  ...node('other', 'ACTIVE', '2025-01-01T00:00:00Z'),
+                  ssmsId: null,
+                },
+              ],
+            },
+          }
+        : {
+            metaobjects: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                node('active-new', 'ACTIVE', '2026-03-01T00:00:00Z'),
+                node('active-old', 'ACTIVE', '2026-02-01T00:00:00Z'),
+              ],
+            },
+          },
+    );
+    const gateway = new ShopifyInstructorGateway(shopify.client);
+
+    await expect(gateway.findEntryBySsmsId('abc')).resolves.toEqual({
+      id: 'active-old',
+      handle: 'h-active-old',
+      ssmsId: 'abc',
+    });
+    await expect(gateway.findEntryBySsmsId('nobody')).resolves.toBeNull();
+    expect(shopify.calls.map((c) => c.variables).slice(0, 2)).toEqual([
+      { type: 'ssms_instructor', first: 250, after: null },
+      { type: 'ssms_instructor', first: 250, after: 'c1' },
+    ]);
+  });
+
+  it('updates by id, sending a handle with a redirect only when renaming', async () => {
+    const shopify = new FakeShopify();
+    const entry = shopify.addEntry('instructor-3f1c2b7a');
+    const gateway = new ShopifyInstructorGateway(shopify.client);
+
+    await gateway.updateEntry(entry.id, { status: 'DRAFT' });
+    await expect(
+      gateway.updateEntry(entry.id, {
+        handle: 'lele',
+        fields: [{ key: 'name', value: 'Lele' }],
+        status: 'ACTIVE',
+      }),
+    ).resolves.toEqual({ id: entry.id, handle: 'lele' });
+
+    expect(shopify.calls.map((c) => c.variables)).toEqual([
+      {
+        id: entry.id,
+        metaobject: { capabilities: { publishable: { status: 'DRAFT' } } },
+      },
+      {
+        id: entry.id,
+        metaobject: {
+          handle: 'lele',
+          redirectNewHandle: true,
+          fields: [{ key: 'name', value: 'Lele' }],
+          capabilities: { publishable: { status: 'ACTIVE' } },
+        },
+      },
+    ]);
+  });
+
   it('throws when an upsert returns no metaobject', async () => {
     const shopify = new FakeShopify();
     shopify.on('SsmsInstructorUpsert', () => ({
       metaobjectUpsert: { metaobject: null, userErrors: [] },
     }));
     const gateway = new ShopifyInstructorGateway(shopify.client);
-    await expect(gateway.setEntryStatus('eddie', 'DRAFT')).rejects.toThrow(
-      'returned no metaobject',
-    );
+    await expect(
+      gateway.upsertEntry('eddie', [{ key: 'name', value: 'E' }], 'ACTIVE'),
+    ).rejects.toThrow('returned no metaobject');
   });
 
   describe('files', () => {

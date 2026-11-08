@@ -15,7 +15,14 @@ import {
 
 export interface ShopifyEntryRef {
   id: string;
+  handle: string;
   ssmsId: string | null;
+}
+
+export interface EntryUpdate {
+  handle?: string;
+  fields?: ShopifyFieldInput[];
+  status: PublishableStatus;
 }
 
 export interface UpsertedEntry {
@@ -48,7 +55,34 @@ const ENTRY_BY_HANDLE = `
   query SsmsInstructorByHandle($handle: MetaobjectHandleInput!) {
     metaobjectByHandle(handle: $handle) {
       id
+      handle
       ssmsId: field(key: "ssms_id") { value }
+    }
+  }
+`;
+
+const ENTRY_BY_ID = `
+  query SsmsInstructorById($id: ID!) {
+    metaobject(id: $id) {
+      id
+      handle
+      type
+      ssmsId: field(key: "ssms_id") { value }
+    }
+  }
+`;
+
+const ENTRIES = `
+  query SsmsInstructorEntries($type: String!, $first: Int!, $after: String) {
+    metaobjects(type: $type, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        handle
+        createdAt
+        capabilities { publishable { status } }
+        ssmsId: field(key: "ssms_id") { value }
+      }
     }
   }
 `;
@@ -67,6 +101,7 @@ const LEGACY_ROSTER = `
 `;
 
 const LEGACY_ROSTER_PAGE_SIZE = 250;
+const ENTRIES_PAGE_SIZE = 250;
 
 const UPSERT_ENTRY = `
   mutation SsmsInstructorUpsert(
@@ -74,6 +109,15 @@ const UPSERT_ENTRY = `
     $metaobject: MetaobjectUpsertInput!
   ) {
     metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
+      metaobject { id handle }
+      userErrors { field message code }
+    }
+  }
+`;
+
+const UPDATE_ENTRY = `
+  mutation SsmsInstructorUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+    metaobjectUpdate(id: $id, metaobject: $metaobject) {
       metaobject { id handle }
       userErrors { field message code }
     }
@@ -167,6 +211,14 @@ interface UpsertPayload {
   userErrors: ShopifyUserError[];
 }
 
+interface ListedEntry {
+  id: string;
+  handle: string;
+  createdAt: string;
+  capabilities: { publishable: { status: string } | null } | null;
+  ssmsId: { value: string | null } | null;
+}
+
 @Injectable()
 export class ShopifyInstructorGateway {
   constructor(private readonly shopify: ShopifyAdminClient) {}
@@ -175,11 +227,90 @@ export class ShopifyInstructorGateway {
     const data = await this.shopify.graphql<{
       metaobjectByHandle: {
         id: string;
+        handle: string;
         ssmsId: { value: string | null } | null;
       } | null;
     }>(ENTRY_BY_HANDLE, { handle: { type: SSMS_INSTRUCTOR_TYPE, handle } });
     const entry = data.metaobjectByHandle;
-    return entry ? { id: entry.id, ssmsId: entry.ssmsId?.value ?? null } : null;
+    return entry
+      ? {
+          id: entry.id,
+          handle: entry.handle,
+          ssmsId: entry.ssmsId?.value ?? null,
+        }
+      : null;
+  }
+
+  async findEntryById(id: string): Promise<ShopifyEntryRef | null> {
+    const data = await this.shopify.graphql<{
+      metaobject: {
+        id: string;
+        handle: string;
+        type: string;
+        ssmsId: { value: string | null } | null;
+      } | null;
+    }>(ENTRY_BY_ID, { id });
+    const entry = data.metaobject;
+    return entry?.type === SSMS_INSTRUCTOR_TYPE
+      ? {
+          id: entry.id,
+          handle: entry.handle,
+          ssmsId: entry.ssmsId?.value ?? null,
+        }
+      : null;
+  }
+
+  async findEntryBySsmsId(ssmsId: string): Promise<ShopifyEntryRef | null> {
+    const matches: ListedEntry[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const data: {
+        metaobjects: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: ListedEntry[];
+        };
+      } = await this.shopify.graphql(ENTRIES, {
+        type: SSMS_INSTRUCTOR_TYPE,
+        first: ENTRIES_PAGE_SIZE,
+        after,
+      });
+      matches.push(
+        ...data.metaobjects.nodes.filter((n) => n.ssmsId?.value === ssmsId),
+      );
+      if (!data.metaobjects.pageInfo.hasNextPage) {
+        break;
+      }
+      after = data.metaobjects.pageInfo.endCursor;
+    }
+    const [best] = matches.sort(
+      (a, b) =>
+        Number(isActive(b)) - Number(isActive(a)) ||
+        a.createdAt.localeCompare(b.createdAt),
+    );
+    return best ? { id: best.id, handle: best.handle, ssmsId } : null;
+  }
+
+  async updateEntry(id: string, update: EntryUpdate): Promise<UpsertedEntry> {
+    const data = await this.shopify.graphql<{
+      metaobjectUpdate: UpsertPayload;
+    }>(UPDATE_ENTRY, {
+      id,
+      metaobject: {
+        ...(update.handle === undefined
+          ? {}
+          : { handle: update.handle, redirectNewHandle: true }),
+        ...(update.fields === undefined ? {} : { fields: update.fields }),
+        capabilities: { publishable: { status: update.status } },
+      },
+    });
+    const payload = assertNoUserErrors(
+      'metaobjectUpdate',
+      data.metaobjectUpdate,
+    );
+    if (!payload.metaobject) {
+      throw new Error('metaobjectUpdate returned no metaobject');
+    }
+    return payload.metaobject;
   }
 
   async listLegacyEntries(): Promise<LegacyEntryName[]> {
@@ -222,13 +353,6 @@ export class ShopifyInstructorGateway {
       fields,
       capabilities: { publishable: { status } },
     });
-  }
-
-  async setEntryStatus(
-    handle: string,
-    status: PublishableStatus,
-  ): Promise<UpsertedEntry> {
-    return this.upsert(handle, { capabilities: { publishable: { status } } });
   }
 
   private async upsert(
@@ -366,4 +490,8 @@ export class ShopifyInstructorGateway {
     }>(REMOVE_TRANSLATIONS, { resourceId, translationKeys, locales });
     assertNoUserErrors('translationsRemove', data.translationsRemove);
   }
+}
+
+function isActive(entry: ListedEntry): boolean {
+  return entry.capabilities?.publishable?.status === 'ACTIVE';
 }

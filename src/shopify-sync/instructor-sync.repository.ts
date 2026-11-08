@@ -15,7 +15,7 @@ import type {
 } from './instructor-sync.types';
 
 const INSTRUCTOR_COLUMNS =
-  'id, display_name_en, display_name_zh, bio_en, bio_zh, profile_photo_url, profile_photo_version, ' +
+  'id, display_name_en, display_name_zh, first_name, bio_en, bio_zh, profile_photo_url, profile_photo_version, ' +
   'photo_2_url, photo_2_version, photo_3_url, photo_3_version, min_student_age, display_order, approval_status, is_active';
 
 const STATE_TABLE = 'instructor_shopify_state';
@@ -271,7 +271,7 @@ export class SupabaseInstructorSyncRepository extends InstructorSyncRepository {
     const { data, error } = await this.supabase
       .from(STATE_TABLE)
       .select('instructor_id')
-      .eq('shopify_handle', handle)
+      .or(`shopify_handle.eq.${handle},paired_legacy_handle.eq.${handle}`)
       .neq('instructor_id', instructorId)
       .limit(1);
     check(error, 'check stored handles');

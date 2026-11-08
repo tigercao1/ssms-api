@@ -206,7 +206,6 @@ export class InMemoryFormSigningRepository extends FormSigningRepository {
 const uniqueViolation = () =>
   new DatabaseError('insert', PG_UNIQUE_VIOLATION, 'duplicate key');
 
-/** In-memory form templates for the admin endpoints; the lookups return `lookupRows` / `studentRows` and record their calls. */
 export class InMemoryFormAdminRepository extends FormAdminRepository {
   readonly forms = new Map<string, FormTemplateRow>();
   lookupRows: SignatureLookupRow[] = [];

@@ -6,10 +6,6 @@ import { MeDocumentsService } from './me-documents.service';
 export const SIGNER_LOOKUP_LIMIT = 25;
 export const STUDENT_LOOKUP_LIMIT = 100;
 
-/**
- * Who signed what: the admin search across instructors and customers, and an
- * instructor's view of their own students' waivers (name and date only).
- */
 @Injectable()
 export class SignatureLookupsService {
   constructor(
@@ -17,7 +13,6 @@ export class SignatureLookupsService {
     private readonly me: MeDocumentsService,
   ) {}
 
-  /** `GET /admin/signatures?q=`: at most {@link SIGNER_LOOKUP_LIMIT} instructors and as many customers. */
   async lookup(query: string): Promise<Signer[]> {
     const signers = new Map<string, Signer>();
     for (const row of await this.repo.lookupSignatures(
@@ -53,7 +48,6 @@ export class SignatureLookupsService {
     return [...signers.values()];
   }
 
-  /** `GET /me/students/signatures?q=`: participants of the caller's classes. */
   async students(authUserId: string, query = ''): Promise<StudentSignature[]> {
     const instructor = await this.me.approvedInstructorFor(authUserId);
     const rows = await this.repo.studentSignatures(

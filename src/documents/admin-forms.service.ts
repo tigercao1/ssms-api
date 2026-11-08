@@ -132,11 +132,6 @@ function toFormTemplate(row: FormTemplateRow): FormTemplate {
   };
 }
 
-/**
- * Admin editing of `form` templates (customer waivers): metadata, one draft
- * per language, and publishing a draft as the version signers see. Every
- * change is audited.
- */
 @Injectable()
 export class AdminFormsService {
   constructor(

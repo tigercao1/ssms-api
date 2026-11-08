@@ -98,7 +98,6 @@ export interface CompletedForm {
   emailed: boolean;
 }
 
-/** A `form` template row with its versions (bodies omitted in lists). */
 export interface FormTemplateRow {
   id: string;
   slug: string;
@@ -148,7 +147,6 @@ export interface FormTemplateSummary {
   updatedAt: string;
 }
 
-/** One row of `admin_signature_lookup`. */
 export interface SignatureLookupRow {
   subject_type: 'instructor' | 'customer';
   subject_id: string;

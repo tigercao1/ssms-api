@@ -33,11 +33,9 @@ export interface FormTemplateWrite {
   updated_by?: string | null;
 }
 
-/** Admin data access for `form` templates and the signature lookups. */
 export abstract class FormAdminRepository {
   abstract list(): Promise<FormTemplateRow[]>;
   abstract findById(id: string): Promise<FormTemplateRow | null>;
-  /** Throws a unique violation when the slug is taken. */
   abstract insert(
     row: FormTemplateWrite & { slug: string; title_en: string },
   ): Promise<FormTemplateRow>;
@@ -45,20 +43,17 @@ export abstract class FormAdminRepository {
     id: string,
     patch: FormTemplateWrite,
   ): Promise<FormTemplateRow | null>;
-  /** Updates the language's draft; null when it has none. */
   abstract updateDraft(
     templateId: string,
     language: DocumentLanguage,
     draft: FormDraftWrite,
   ): Promise<FormVersionRow | null>;
-  /** Inserts a draft as `version`; throws a unique violation when that version or a draft exists. */
   abstract insertDraft(
     templateId: string,
     language: DocumentLanguage,
     version: number,
     draft: FormDraftWrite,
   ): Promise<FormVersionRow>;
-  /** Publishes the language's draft; null when it has none. */
   abstract publishDraft(
     templateId: string,
     language: DocumentLanguage,

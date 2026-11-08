@@ -10,6 +10,8 @@ import { ShopifySyncModule } from '../shopify-sync/shopify-sync.module';
 import { AdminInstructorEmailController } from './admin-instructor-email.controller';
 import { AdminInstructorEmailService } from './admin-instructor-email.service';
 import { AdminMediaController } from './admin-media.controller';
+import { AdminOpenApiController } from './admin-openapi.controller';
+import { AdminOpenApiService } from './admin-openapi.service';
 import { AdminController } from './admin.controller';
 import { AdminRepository, SupabaseAdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
@@ -44,10 +46,12 @@ import { AdminService } from './admin.service';
     AdminController,
     AdminMediaController,
     AdminInstructorEmailController,
+    AdminOpenApiController,
   ],
   providers: [
     AdminService,
     AdminInstructorEmailService,
+    AdminOpenApiService,
     { provide: AdminRepository, useClass: SupabaseAdminRepository },
   ],
 })

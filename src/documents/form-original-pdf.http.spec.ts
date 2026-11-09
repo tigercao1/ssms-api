@@ -852,6 +852,65 @@ describe('form versions with an original PDF', () => {
       expect(without).toMatchObject({ hasOriginalPdf: false, emailCopy: true });
     });
 
+    it('returns the page boxes and placements of the served original, and null without one', async () => {
+      const A4: PageGeometry = {
+        width: 595,
+        height: 842,
+        rotate: 90,
+        x: 10,
+        y: 20,
+      };
+      forms.seedForm('ferry', [
+        pdfVersion('zh', 3, { pages: [LETTER, A4], placements: PLACEMENTS }),
+      ]);
+
+      const withPdf = (
+        await request(app.getHttpServer())
+          .get('/sign/forms/ferry?lang=zh')
+          .expect(200)
+      ).body as PublicForm;
+      const without = (
+        await request(app.getHttpServer()).get('/sign/forms/waiver').expect(200)
+      ).body as PublicForm;
+
+      expect(withPdf).toMatchObject({ lang: 'zh', version: 3 });
+      expect(withPdf.originalPdf).toEqual({
+        pageCount: 2,
+        pages: [LETTER, A4],
+        placements: PLACEMENTS,
+      });
+      expect(without).toMatchObject({
+        hasOriginalPdf: false,
+        originalPdf: null,
+      });
+    });
+
+    it('returns the short-lived URL as JSON with format=json, and 404s without an original', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/sign/forms/boat-rental/original?lang=zh&format=json')
+        .expect(200);
+
+      expect(res.body).toEqual({
+        url: `memory://GET/${storageKeys.formSource(TEMPLATE_ID, 'en', 1, 'seed')}`,
+        expiresAt: '2026-10-13T00:05:00.000Z',
+      });
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(storage.presigned.at(-1)).toMatchObject({
+        input: {
+          contentDisposition: 'inline; filename="boat-rental-en-v1.pdf"',
+        },
+      });
+      await request(app.getHttpServer())
+        .get('/sign/forms/waiver/original?format=json')
+        .expect(404);
+      await request(app.getHttpServer())
+        .get('/sign/forms/unknown/original?format=json')
+        .expect(404);
+      await request(app.getHttpServer())
+        .get('/sign/forms/boat-rental/original?format=xml')
+        .expect(400);
+    });
+
     it('redirects to a short-lived URL of the newest published original, and 404s without one', async () => {
       const res = await request(app.getHttpServer())
         .get('/sign/forms/boat-rental/original?lang=zh')

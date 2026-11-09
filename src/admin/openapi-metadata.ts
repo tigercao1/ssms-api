@@ -506,6 +506,9 @@ export default async () => {
               consent: { required: true, type: () => Boolean },
             },
             FormQueryDto: { lang: { required: false, enum: ['en', 'zh'] } },
+            OriginalPdfQueryDto: {
+              format: { required: false, type: () => String },
+            },
           },
         ],
         [

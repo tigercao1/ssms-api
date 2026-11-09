@@ -33,3 +33,9 @@ export class FormQueryDto {
   @IsIn(DOCUMENT_LANGUAGES)
   lang?: DocumentLanguage;
 }
+
+export class OriginalPdfQueryDto extends FormQueryDto {
+  @IsOptional()
+  @IsIn(['json'])
+  format?: 'json';
+}

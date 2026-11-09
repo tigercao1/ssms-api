@@ -697,5 +697,13 @@ describe('public form signing (/sign/forms)', () => {
       }
       await get(`/sign/forms/${SLUG}`, ip).expect(429);
     });
+
+    it('429s the 31st original PDF link a minute from one IP, as JSON too', async () => {
+      const ip = '198.51.100.10';
+      for (let i = 0; i < 30; i += 1) {
+        await get(`/sign/forms/${SLUG}/original?format=json`, ip).expect(404);
+      }
+      await get(`/sign/forms/${SLUG}/original?format=json`, ip).expect(429);
+    });
   });
 });

@@ -5,18 +5,24 @@ import {
   Header,
   Headers,
   Param,
+  HttpStatus,
   Post,
   Query,
-  Redirect,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { clientIp } from '../activation/activation-throttler.guard';
-import { CompleteFormDto, FormQueryDto } from './dto/complete-form.dto';
+import {
+  CompleteFormDto,
+  FormQueryDto,
+  OriginalPdfQueryDto,
+} from './dto/complete-form.dto';
 import { FormSigningService } from './form-signing.service';
 import type { CompletedForm, PublicForm } from './form-templates.types';
+import type { PresignedUrl } from './private-storage.client';
 import {
   SIGN_FORMS_COMPLETE_LIMIT,
   SignFormsThrottlerGuard,
@@ -37,14 +43,18 @@ export class SignFormsController {
   }
 
   @Get(':slug/original')
-  @Redirect()
   @Header('Cache-Control', 'no-store')
   async original(
     @Param('slug') slug: string,
-    @Query() query: FormQueryDto,
-  ): Promise<{ url: string }> {
-    const { url } = await this.forms.originalUrl(slug, query.lang ?? 'en');
-    return { url };
+    @Query() query: OriginalPdfQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PresignedUrl | undefined> {
+    const signed = await this.forms.originalUrl(slug, query.lang ?? 'en');
+    if (query.format === 'json') {
+      return signed;
+    }
+    res.status(HttpStatus.FOUND).location(signed.url);
+    return undefined;
   }
 
   @Post(':slug/complete')

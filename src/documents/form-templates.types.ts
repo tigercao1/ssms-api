@@ -107,7 +107,15 @@ export interface PublicForm {
   bodyMarkdown: string;
   fields: FormField[];
   hasOriginalPdf: boolean;
+  originalPdf: PublicOriginalPdf | null;
   emailCopy: boolean;
+}
+
+/** Layout of the served version's original PDF, for overlaying answers in the browser. */
+export interface PublicOriginalPdf {
+  pageCount: number;
+  pages: PageGeometry[];
+  placements: FormPlacement[];
 }
 
 /** `POST /sign/forms/:slug/complete`. */

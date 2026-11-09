@@ -84,6 +84,14 @@ export class FormSigningService {
       bodyMarkdown: version.body_markdown,
       fields: version.fields,
       hasOriginalPdf: version.source_key !== null,
+      originalPdf:
+        version.source_key === null
+          ? null
+          : {
+              pageCount: version.page_count!,
+              pages: version.pages,
+              placements: version.placements,
+            },
       emailCopy: form.emailCopy,
     };
   }

@@ -103,6 +103,12 @@ export class InMemoryCustomersRepository extends CustomersRepository {
   upsertCalls: CustomerUpsert[][] = [];
   searches: ({ tokens: string[] } & CustomerPageRequest)[] = [];
   reconcileCalls: { ids: number[]; startedAt: string }[] = [];
+  signatures: {
+    subjectId: string;
+    signerEmail: string | null;
+    signedAt: string;
+  }[] = [];
+  latestSignatureCalls: string[][] = [];
 
   search(
     tokens: string[],
@@ -221,6 +227,37 @@ export class InMemoryCustomersRepository extends CustomersRepository {
       this.rows.filter((r) => (r.shopify_deleted_at !== null) === deleted)
         .length,
     );
+  }
+
+  findById(id: string): Promise<CustomerRow | null> {
+    const row = this.rows.find((r) => r.id === id);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  latestSignatures(ids: string[]): Promise<Map<string, string | null>> {
+    this.latestSignatureCalls.push([...ids]);
+    const lower = (email: string | null) => email?.toLowerCase() ?? null;
+    const latest = new Map<string, string | null>();
+    for (const customer of this.rows.filter((r) => ids.includes(r.id))) {
+      const email = lower(customer.email);
+      const sameEmail = new Set(
+        this.rows
+          .filter(
+            (r) => r.id === customer.id || (email && lower(r.email) === email),
+          )
+          .map((r) => r.id),
+      );
+      const times = this.signatures
+        .filter(
+          (s) =>
+            sameEmail.has(s.subjectId) ||
+            (email !== null && lower(s.signerEmail) === email),
+        )
+        .map((s) => s.signedAt)
+        .sort();
+      latest.set(customer.id, times.at(-1) ?? null);
+    }
+    return Promise.resolve(latest);
   }
 
   private find(shopifyCustomerId: number): CustomerRow | undefined {

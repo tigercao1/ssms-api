@@ -19,6 +19,8 @@ import {
   InMemoryFormAdminRepository,
   InMemoryFormSigningRepository,
 } from '../../test/helpers/form-signing-fakes';
+import { InMemoryCustomersRepository } from '../../test/helpers/customers-fakes';
+import { fakeDate } from '../../test/helpers/fake-date';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import {
   activeContentIn,
@@ -39,6 +41,7 @@ import {
   seasonsRepo,
 } from '../../test/helpers/seasons-fakes';
 import { AuditService } from '../audit/audit.service';
+import { CustomersRepository } from '../customers/customers.repository';
 import { MailerService } from '../mailer/mailer.service';
 import {
   AdminFormsController,
@@ -129,6 +132,10 @@ describe('form versions with an original PDF', () => {
           PdfWorkQueue,
           SignFormsThrottlerGuard,
           { provide: FormAdminRepository, useValue: adminRepo },
+          {
+            provide: CustomersRepository,
+            useValue: new InMemoryCustomersRepository(),
+          },
           { provide: FormSigningRepository, useValue: forms },
           { provide: PrivateStorageClient, useValue: storage },
           { provide: MailerService, useValue: mailer.asService() },
@@ -732,7 +739,12 @@ describe('form versions with an original PDF', () => {
   });
 
   describe('GET /admin/signatures/check', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     it('answers for the exact lower-cased email with only signed, date and titles', async () => {
+      fakeDate('2026-11-09T15:00:00.000Z');
       adminRepo.checkRows.set('mia.chen@example.com', [
         { title_en: 'Lesson waiver', signed_at: '2026-11-02T00:00:00Z' },
         { title_en: 'Boat rental', signed_at: '2026-10-01T00:00:00Z' },
@@ -751,13 +763,36 @@ describe('form versions with an original PDF', () => {
       ]);
       expect(hit.body).toEqual({
         signed: true,
+        status: 'signed',
+        year: '2026/27',
         signedAt: '2026-11-02T00:00:00Z',
         templateTitles: ['Lesson waiver', 'Boat rental'],
       });
       expect(miss.body).toEqual({
         signed: false,
+        status: 'none',
+        year: '2026/27',
         signedAt: null,
         templateTitles: [],
+      });
+    });
+
+    it('counts only a signature from the current waiver year as signed', async () => {
+      fakeDate('2026-11-09T15:00:00.000Z');
+      adminRepo.checkRows.set('mia@example.com', [
+        { title_en: 'Lesson waiver', signed_at: '2026-07-01T03:59:00Z' },
+      ]);
+
+      const res = await admin
+        .get('/admin/signatures/check?email=mia@example.com')
+        .expect(200);
+
+      expect(res.body).toEqual({
+        signed: false,
+        status: 'expired',
+        year: '2026/27',
+        signedAt: '2026-07-01T03:59:00Z',
+        templateTitles: ['Lesson waiver'],
       });
     });
 

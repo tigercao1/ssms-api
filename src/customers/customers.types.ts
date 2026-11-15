@@ -1,5 +1,6 @@
 import type { CustomerRow, CustomerUpsert } from './customers.repository';
 import type { ShopifyCustomer } from './shopify-customers';
+import type { Waiver } from '../documents/waiver-year';
 
 export interface Customer {
   id: string;
@@ -12,6 +13,10 @@ export interface Customer {
   shopifyDeletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CustomerWithWaiver extends Customer {
+  waiver: Waiver;
 }
 
 export function toCustomer(row: CustomerRow): Customer {

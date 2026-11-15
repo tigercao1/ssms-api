@@ -145,6 +145,31 @@ describe('SupabaseCustomersRepository', () => {
     ]);
   });
 
+  it('loads the latest signature of a whole page of customers in one RPC and skips an empty page', async () => {
+    const { client, queries } = recordingSupabase({
+      'rpc:customer_latest_signatures': [
+        {
+          data: [
+            { customer_id: 'c1', signed_at: '2026-11-01T00:00:00Z' },
+            { customer_id: 'c2', signed_at: null },
+          ],
+          error: null,
+        },
+      ],
+    });
+    const repo = new SupabaseCustomersRepository(client);
+    await expect(repo.latestSignatures(['c1', 'c2'])).resolves.toEqual(
+      new Map([
+        ['c1', '2026-11-01T00:00:00Z'],
+        ['c2', null],
+      ]),
+    );
+    await expect(repo.latestSignatures([])).resolves.toEqual(new Map());
+    expect(queries.map((q) => q.ops[0])).toEqual([
+      ['rpc', { p_customer_ids: ['c1', 'c2'] }],
+    ]);
+  });
+
   it('counts active and deleted customers', async () => {
     const { client, queries } = recordingSupabase({
       customers: [

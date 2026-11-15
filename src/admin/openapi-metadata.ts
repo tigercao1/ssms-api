@@ -206,6 +206,36 @@ export default async () => {
           },
         ],
         [
+          require('../customers/dto/customers.dto'),
+          {
+            SearchCustomersQueryDto: {
+              q: { required: false, type: () => String, maxLength: 200 },
+              limit: { required: false, type: () => Number, minimum: 1 },
+              page: { required: false, type: () => Number, minimum: 1 },
+              includeDeleted: { required: false, type: () => Boolean },
+            },
+            CreateCustomerDto: {
+              firstName: { required: true, type: () => String },
+              lastName: { required: true, type: () => String },
+              email: {
+                required: false,
+                type: () => String,
+                maxLength: 320,
+                format: 'email',
+              },
+              phone: {
+                required: false,
+                type: () => String,
+                pattern: '^\\+?[0-9][0-9 ().-]{5,24}$',
+              },
+            },
+            SyncCustomersDto: {
+              full: { required: false, type: () => Boolean },
+              cursor: { required: false, type: () => String, maxLength: 1000 },
+            },
+          },
+        ],
+        [
           require('../documents/dto/certification-upload.dto'),
           {
             CertificationUploadUrlDto: {
@@ -478,6 +508,13 @@ export default async () => {
             },
             SignatureCheckQueryDto: {
               email: { required: true, type: () => String, format: 'email' },
+            },
+            LinkSignatureDto: {
+              customerId: {
+                required: true,
+                type: () => String,
+                format: 'uuid',
+              },
             },
             SignatureLookupQueryDto: {
               q: { required: true, type: () => String, minLength: 2 },
@@ -1008,36 +1045,6 @@ export default async () => {
                 format: 'uuid',
               },
               date: { required: true, type: () => String },
-            },
-          },
-        ],
-        [
-          require('../customers/dto/customers.dto'),
-          {
-            SearchCustomersQueryDto: {
-              q: { required: false, type: () => String, maxLength: 200 },
-              limit: { required: false, type: () => Number, minimum: 1 },
-              page: { required: false, type: () => Number, minimum: 1 },
-              includeDeleted: { required: false, type: () => Boolean },
-            },
-            CreateCustomerDto: {
-              firstName: { required: true, type: () => String },
-              lastName: { required: true, type: () => String },
-              email: {
-                required: false,
-                type: () => String,
-                maxLength: 320,
-                format: 'email',
-              },
-              phone: {
-                required: false,
-                type: () => String,
-                pattern: '^\\+?[0-9][0-9 ().-]{5,24}$',
-              },
-            },
-            SyncCustomersDto: {
-              full: { required: false, type: () => Boolean },
-              cursor: { required: false, type: () => String, maxLength: 1000 },
             },
           },
         ],

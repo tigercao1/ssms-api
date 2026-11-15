@@ -16,6 +16,7 @@ import {
   InMemoryCustomerSyncStatusRepository,
   InMemoryShopifyWebhookEventsRepository,
 } from '../../test/helpers/customers-fakes';
+import { fakeDate } from '../../test/helpers/fake-date';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { buildCorsOptions } from '../config/cors';
@@ -104,6 +105,7 @@ describe('customers admin HTTP', () => {
   afterEach(async () => {
     await ctx.app.close();
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   describe('auth', () => {
@@ -348,6 +350,7 @@ describe('customers admin HTTP', () => {
 
   describe('GET /admin/customers', () => {
     beforeEach(async () => {
+      fakeDate('2026-11-09T15:00:00.000Z');
       ctx = await build({ enabled: false });
       await ctx.repo.upsertMany([
         {
@@ -409,6 +412,93 @@ describe('customers admin HTTP', () => {
         shopifyDeletedAt: null,
         createdAt: expect.any(String) as unknown,
         updatedAt: expect.any(String) as unknown,
+        waiver: { status: 'none', signedAt: null, year: '2026/27' },
+      });
+    });
+
+    it('marks each customer signed, expired or none for the waiver year in one batched lookup', async () => {
+      const ids = new Map(
+        ctx.repo.rows.map((r) => [Number(r.shopify_customer_id), r.id]),
+      );
+      ctx.repo.signatures = [
+        {
+          subjectId: ids.get(1)!,
+          signerEmail: 'mei@example.com',
+          signedAt: '2025-08-01T16:00:00.000Z',
+        },
+        {
+          subjectId: ids.get(1)!,
+          signerEmail: 'mei@example.com',
+          signedAt: '2026-07-01T04:00:00.000Z',
+        },
+        {
+          subjectId: ids.get(2)!,
+          signerEmail: null,
+          signedAt: '2026-07-01T03:59:59.000Z',
+        },
+      ];
+
+      const res = await get('?limit=3').expect(200);
+
+      const waivers = Object.fromEntries(
+        (
+          res.body as {
+            shopifyCustomerId: number;
+            waiver: { status: string; signedAt: string | null };
+          }[]
+        ).map((c) => [c.shopifyCustomerId, c.waiver]),
+      );
+      expect(waivers).toEqual({
+        1: {
+          status: 'signed',
+          signedAt: '2026-07-01T04:00:00.000Z',
+          year: '2026/27',
+        },
+        2: {
+          status: 'expired',
+          signedAt: '2026-07-01T03:59:59.000Z',
+          year: '2026/27',
+        },
+        3: { status: 'none', signedAt: null, year: '2026/27' },
+      });
+      expect(ctx.repo.latestSignatureCalls).toEqual([
+        [ids.get(3), ids.get(1), ids.get(2)],
+      ]);
+      expect(res.headers['x-total-count']).toBe('3');
+    });
+
+    it('counts a signature filed under another customer row with the same email', async () => {
+      const [eric] = ctx.repo.rows.filter(
+        (r) => r.email === 'eric.li@example.com',
+      );
+      ctx.repo.rows.push({
+        ...eric,
+        id: 'waiver-only-eric',
+        shopify_customer_id: null,
+        email: 'Eric.Li@Example.com',
+      });
+      ctx.repo.signatures = [
+        {
+          subjectId: 'waiver-only-eric',
+          signerEmail: null,
+          signedAt: '2026-11-01T12:00:00.000Z',
+        },
+        {
+          subjectId: 'someone-else',
+          signerEmail: 'ERIC.LI@example.com',
+          signedAt: '2026-11-02T12:00:00.000Z',
+        },
+      ];
+
+      const [found] = (await search('?q=eric&limit=1')) as unknown as {
+        id: string;
+        waiver: { status: string; signedAt: string };
+      }[];
+
+      expect(found.id).toBe(eric.id);
+      expect(found.waiver).toMatchObject({
+        status: 'signed',
+        signedAt: '2026-11-02T12:00:00.000Z',
       });
     });
 

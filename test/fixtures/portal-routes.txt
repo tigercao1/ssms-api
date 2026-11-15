@@ -165,6 +165,7 @@ POST /admin/payroll/periods/:id/reopen
 POST /admin/reference/:type
 POST /admin/reference/seasons
 POST /admin/shopify-sync/run
+POST /admin/signatures/:assignmentId/link
 POST /hooks/auth/send-email
 POST /internal/documents/reminders
 POST /internal/shopify-sync/reconcile

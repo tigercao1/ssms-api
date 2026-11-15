@@ -26,7 +26,7 @@ import {
   type CustomerSyncStatus,
 } from './customer-sync.worker';
 import { CustomersService } from './customers.service';
-import type { Customer } from './customers.types';
+import type { Customer, CustomerWithWaiver } from './customers.types';
 import {
   CreateCustomerDto,
   SearchCustomersQueryDto,
@@ -47,7 +47,7 @@ export class CustomersController {
   async search(
     @Query() query: SearchCustomersQueryDto,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<Customer[]> {
+  ): Promise<CustomerWithWaiver[]> {
     const { customers, total } = await this.customers.search(
       query.q,
       query.limit,

@@ -128,12 +128,11 @@ export class InMemoryCustomersRepository extends CustomersRepository {
       ]
         .join(' ')
         .toLowerCase();
-    const key = (r: CustomerRow) =>
-      [r.last_name ?? '\uffff', r.first_name ?? '\uffff', r.id].join('\u0000');
-    const matches = this.rows
-      .filter((r) => includeDeleted || !r.shopify_deleted_at)
-      .filter((r) => tokens.every((t) => text(r).includes(t.toLowerCase())))
-      .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+    const matches = this.sorted(
+      this.rows
+        .filter((r) => includeDeleted || !r.shopify_deleted_at)
+        .filter((r) => tokens.every((t) => text(r).includes(t.toLowerCase()))),
+    );
     return Promise.resolve({
       rows: matches.slice(offset, offset + limit).map((r) => ({ ...r })),
       total: matches.length,
@@ -234,6 +233,25 @@ export class InMemoryCustomersRepository extends CustomersRepository {
   findById(id: string): Promise<CustomerRow | null> {
     const row = this.rows.find((r) => r.id === id);
     return Promise.resolve(row ? { ...row } : null);
+  }
+
+  findByIdsCalls: string[][] = [];
+
+  findByIds(ids: string[]): Promise<CustomerRow[]> {
+    this.findByIdsCalls.push([...ids]);
+    return Promise.resolve(
+      this.sorted(this.rows.filter((r) => ids.includes(r.id))).map((r) => ({
+        ...r,
+      })),
+    );
+  }
+
+  private sorted(rows: CustomerRow[]): CustomerRow[] {
+    const key = (r: CustomerRow) =>
+      [r.last_name ?? '\uffff', r.first_name ?? '\uffff', r.id].join('\u0000');
+    return rows.sort((a, b) =>
+      key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0,
+    );
   }
 
   latestSignatures(ids: string[]): Promise<Map<string, string | null>> {

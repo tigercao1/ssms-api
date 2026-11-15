@@ -1,11 +1,13 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsBoolean,
   IsEmail,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -15,6 +17,7 @@ import { MAX_PAGE, MAX_PAGE_SIZE } from '../../database/pagination';
 
 export const CUSTOMER_SEARCH_DEFAULT_LIMIT = 20;
 export const CUSTOMER_NAME_MAX_LENGTH = 255;
+export const CUSTOMER_IDS_MAX = 50;
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -31,7 +34,22 @@ const blankToUndefined = ({ value }: { value: unknown }) => {
   return trimmed === '' ? undefined : trimmed;
 };
 
+const toIdList = ({ value }: { value: unknown }) => [
+  ...new Set(
+    (Array.isArray(value) ? value : [value])
+      .flatMap((v): unknown[] => (typeof v === 'string' ? v.split(',') : [v]))
+      .map((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v))
+      .filter((v) => v !== ''),
+  ),
+];
+
 export class SearchCustomersQueryDto {
+  @IsOptional()
+  @Transform(toIdList)
+  @ArrayMaxSize(CUSTOMER_IDS_MAX)
+  @IsUUID('all', { each: true })
+  ids?: string[];
+
   @IsOptional()
   @Transform(trim)
   @IsString()

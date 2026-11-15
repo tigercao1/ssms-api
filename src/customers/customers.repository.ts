@@ -67,6 +67,7 @@ export abstract class CustomersRepository {
   ): Promise<CustomerReconcileCounts>;
   abstract countCustomers(deleted: boolean): Promise<number>;
   abstract findById(id: string): Promise<CustomerRow | null>;
+  abstract findByIds(ids: string[]): Promise<CustomerRow[]>;
   abstract latestSignatures(ids: string[]): Promise<Map<string, string | null>>;
 }
 
@@ -229,6 +230,21 @@ export class SupabaseCustomersRepository extends CustomersRepository {
       .maybeSingle()) as DbResult<CustomerRow>;
     check(error, 'load customer');
     return data ?? null;
+  }
+
+  async findByIds(ids: string[]): Promise<CustomerRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const { data, error } = (await this.supabase
+      .from(CUSTOMERS_TABLE)
+      .select(CUSTOMER_COLUMNS)
+      .in('id', ids)
+      .order('last_name', { ascending: true, nullsFirst: false })
+      .order('first_name', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true })) as DbResult<CustomerRow[]>;
+    check(error, 'load customers');
+    return data ?? [];
   }
 
   async latestSignatures(ids: string[]): Promise<Map<string, string | null>> {

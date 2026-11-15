@@ -6,7 +6,7 @@ import { pageOffset } from '../database/pagination';
 import { waiverFor } from '../documents/waiver-year';
 import { syncDisabled, toHttpError } from './customer-errors';
 import { CustomerSyncService } from './customer-sync.service';
-import { CustomersRepository } from './customers.repository';
+import { type CustomerRow, CustomersRepository } from './customers.repository';
 import {
   type Customer,
   type CustomerWithWaiver,
@@ -59,15 +59,23 @@ export class CustomersService {
       offset: pageOffset(page, limit),
       includeDeleted,
     });
+    return { customers: await this.withWaivers(rows), total };
+  }
+
+  async findByIds(ids: string[]): Promise<CustomerSearchPage> {
+    const customers = await this.withWaivers(await this.repo.findByIds(ids));
+    return { customers, total: customers.length };
+  }
+
+  private async withWaivers(
+    rows: CustomerRow[],
+  ): Promise<CustomerWithWaiver[]> {
     const signedAt = await this.repo.latestSignatures(rows.map((r) => r.id));
     const now = new Date();
-    return {
-      customers: rows.map((row) => ({
-        ...toCustomer(row),
-        waiver: waiverFor(signedAt.get(row.id) ?? null, now),
-      })),
-      total,
-    };
+    return rows.map((row) => ({
+      ...toCustomer(row),
+      waiver: waiverFor(signedAt.get(row.id) ?? null, now),
+    }));
   }
 
   async create(dto: CreateCustomerDto, actor: AuditActor): Promise<Customer> {

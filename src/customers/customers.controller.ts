@@ -48,12 +48,14 @@ export class CustomersController {
     @Query() query: SearchCustomersQueryDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CustomerWithWaiver[]> {
-    const { customers, total } = await this.customers.search(
-      query.q,
-      query.limit,
-      query.page,
-      query.includeDeleted,
-    );
+    const { customers, total } = query.ids
+      ? await this.customers.findByIds(query.ids)
+      : await this.customers.search(
+          query.q,
+          query.limit,
+          query.page,
+          query.includeDeleted,
+        );
     res.setHeader(TOTAL_COUNT_HEADER, String(total));
     return customers;
   }

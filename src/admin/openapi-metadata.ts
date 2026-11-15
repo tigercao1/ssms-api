@@ -209,6 +209,7 @@ export default async () => {
           require('../customers/dto/customers.dto'),
           {
             SearchCustomersQueryDto: {
+              ids: { required: false, type: () => [String], format: 'uuid' },
               q: { required: false, type: () => String, maxLength: 200 },
               limit: { required: false, type: () => Number, minimum: 1 },
               page: { required: false, type: () => Number, minimum: 1 },

@@ -16,6 +16,7 @@ import {
   InMemoryCustomerSyncStatusRepository,
   InMemoryShopifyWebhookEventsRepository,
 } from '../../test/helpers/customers-fakes';
+import { fakeDate } from '../../test/helpers/fake-date';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { buildCorsOptions } from '../config/cors';
@@ -104,6 +105,7 @@ describe('customers admin HTTP', () => {
   afterEach(async () => {
     await ctx.app.close();
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   describe('auth', () => {
@@ -348,6 +350,7 @@ describe('customers admin HTTP', () => {
 
   describe('GET /admin/customers', () => {
     beforeEach(async () => {
+      fakeDate('2026-11-09T15:00:00.000Z');
       ctx = await build({ enabled: false });
       await ctx.repo.upsertMany([
         {
@@ -409,7 +412,180 @@ describe('customers admin HTTP', () => {
         shopifyDeletedAt: null,
         createdAt: expect.any(String) as unknown,
         updatedAt: expect.any(String) as unknown,
+        waiver: { status: 'none', signedAt: null, year: '2026/27' },
       });
+    });
+
+    it('marks each customer signed, expired or none for the waiver year in one batched lookup', async () => {
+      const ids = new Map(
+        ctx.repo.rows.map((r) => [Number(r.shopify_customer_id), r.id]),
+      );
+      ctx.repo.signatures = [
+        {
+          subjectId: ids.get(1)!,
+          signerEmail: 'mei@example.com',
+          signedAt: '2025-08-01T16:00:00.000Z',
+        },
+        {
+          subjectId: ids.get(1)!,
+          signerEmail: 'mei@example.com',
+          signedAt: '2026-07-01T04:00:00.000Z',
+        },
+        {
+          subjectId: ids.get(2)!,
+          signerEmail: null,
+          signedAt: '2026-07-01T03:59:59.000Z',
+        },
+      ];
+
+      const res = await get('?limit=3').expect(200);
+
+      const waivers = Object.fromEntries(
+        (
+          res.body as {
+            shopifyCustomerId: number;
+            waiver: { status: string; signedAt: string | null };
+          }[]
+        ).map((c) => [c.shopifyCustomerId, c.waiver]),
+      );
+      expect(waivers).toEqual({
+        1: {
+          status: 'signed',
+          signedAt: '2026-07-01T04:00:00.000Z',
+          year: '2026/27',
+        },
+        2: {
+          status: 'expired',
+          signedAt: '2026-07-01T03:59:59.000Z',
+          year: '2026/27',
+        },
+        3: { status: 'none', signedAt: null, year: '2026/27' },
+      });
+      expect(ctx.repo.latestSignatureCalls).toEqual([
+        [ids.get(3), ids.get(1), ids.get(2)],
+      ]);
+      expect(res.headers['x-total-count']).toBe('3');
+    });
+
+    it('counts a signature filed under another customer row with the same email', async () => {
+      const [eric] = ctx.repo.rows.filter(
+        (r) => r.email === 'eric.li@example.com',
+      );
+      ctx.repo.rows.push({
+        ...eric,
+        id: 'waiver-only-eric',
+        shopify_customer_id: null,
+        email: 'Eric.Li@Example.com',
+      });
+      ctx.repo.signatures = [
+        {
+          subjectId: 'waiver-only-eric',
+          signerEmail: null,
+          signedAt: '2026-11-01T12:00:00.000Z',
+        },
+        {
+          subjectId: 'someone-else',
+          signerEmail: 'ERIC.LI@example.com',
+          signedAt: '2026-11-02T12:00:00.000Z',
+        },
+      ];
+
+      const [found] = (await search('?q=eric&limit=1')) as unknown as {
+        id: string;
+        waiver: { status: string; signedAt: string };
+      }[];
+
+      expect(found.id).toBe(eric.id);
+      expect(found.waiver).toMatchObject({
+        status: 'signed',
+        signedAt: '2026-11-02T12:00:00.000Z',
+      });
+    });
+
+    it("ignores an instructor's own agreement signed with the customer's email", async () => {
+      const [eric] = ctx.repo.rows.filter(
+        (r) => r.email === 'eric.li@example.com',
+      );
+      ctx.repo.signatures = [
+        {
+          subjectId: 'instructor-eric',
+          subjectType: 'instructor',
+          signerEmail: 'eric.li@example.com',
+          signedAt: '2026-11-02T12:00:00.000Z',
+        },
+      ];
+
+      const [found] = (await search('?q=eric&limit=1')) as unknown as {
+        id: string;
+        waiver: { status: string };
+      }[];
+
+      expect(found.id).toBe(eric.id);
+      expect(found.waiver).toEqual({
+        status: 'none',
+        signedAt: null,
+        year: '2026/27',
+      });
+    });
+
+    it('finds a waiver-only customer and later counts its waiver for a Shopify customer with the same email', async () => {
+      const [mei] = ctx.repo.rows;
+      ctx.repo.rows.push({
+        ...mei,
+        id: 'waiver-only-ada',
+        shopify_customer_id: null,
+        first_name: 'Ada',
+        last_name: 'Zhou',
+        email: 'ada.zhou@example.com',
+        phone: null,
+      });
+      ctx.repo.signatures = [
+        {
+          subjectId: 'waiver-only-ada',
+          signerEmail: 'ada.zhou@example.com',
+          signedAt: '2026-10-01T12:00:00.000Z',
+        },
+      ];
+      const signed = {
+        status: 'signed',
+        signedAt: '2026-10-01T12:00:00.000Z',
+        year: '2026/27',
+      };
+
+      const before = (await search('?q=zhou')) as unknown as {
+        id: string;
+        shopifyCustomerId: number | null;
+        waiver: unknown;
+      }[];
+      expect(before).toEqual([
+        expect.objectContaining({
+          id: 'waiver-only-ada',
+          shopifyCustomerId: null,
+          waiver: signed,
+        }),
+      ]);
+
+      await ctx.repo.upsertMany([
+        {
+          shopify_customer_id: 9,
+          first_name: 'Ada',
+          last_name: 'Zhou',
+          email: 'Ada.Zhou@Example.com',
+          phone: null,
+          shopify_updated_at: null,
+        },
+      ]);
+      const after = (await search('?q=zhou')) as unknown as {
+        shopifyCustomerId: number | null;
+        waiver: unknown;
+      }[];
+      expect(after).toHaveLength(2);
+      expect(after).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ shopifyCustomerId: 9, waiver: signed }),
+          expect.objectContaining({ shopifyCustomerId: null, waiver: signed }),
+        ]),
+      );
     });
 
     it('hides customers deleted in Shopify unless includeDeleted=true', async () => {
@@ -469,6 +645,144 @@ describe('customers admin HTTP', () => {
       await get('?page=1.5').expect(400);
       await get('?page=abc').expect(400);
       await get('?page=10001').expect(400);
+    });
+
+    describe('?ids=', () => {
+      type Found = {
+        id: string;
+        shopifyCustomerId: number | null;
+        shopifyDeletedAt: string | null;
+        waiver: { status: string; signedAt: string | null };
+      };
+      const idOf = (shopifyId: number) =>
+        ctx.repo.rows.find((r) => Number(r.shopify_customer_id) === shopifyId)!
+          .id;
+      const byIds = async (ids: string[], extra = '') => {
+        const res = await get(`?ids=${ids.join(',')}${extra}`).expect(200);
+        return { res, body: res.body as Found[] };
+      };
+      const unknownId = '20000000-0000-4000-8000-000000000001';
+
+      it('returns exactly the requested customers with waiver status from one batched lookup', async () => {
+        ctx.repo.signatures = [
+          {
+            subjectId: idOf(1),
+            signerEmail: 'mei@example.com',
+            signedAt: '2026-07-01T04:00:00.000Z',
+          },
+        ];
+
+        const { res, body } = await byIds([
+          idOf(1),
+          unknownId,
+          idOf(3),
+          idOf(1).toUpperCase(),
+        ]);
+
+        expect(body.map((c) => [c.shopifyCustomerId, c.waiver])).toEqual([
+          [3, { status: 'none', signedAt: null, year: '2026/27' }],
+          [
+            1,
+            {
+              status: 'signed',
+              signedAt: '2026-07-01T04:00:00.000Z',
+              year: '2026/27',
+            },
+          ],
+        ]);
+        expect(res.headers['x-total-count']).toBe('2');
+        expect(ctx.repo.findByIdsCalls).toEqual([
+          [idOf(1), unknownId, idOf(3)],
+        ]);
+        expect(ctx.repo.latestSignatureCalls).toHaveLength(1);
+        expect(ctx.repo.searches).toEqual([]);
+      });
+
+      it('returns customers without names or contacts, deleted ones and waiver-only rows', async () => {
+        await ctx.repo.upsertMany([
+          {
+            shopify_customer_id: 4,
+            first_name: null,
+            last_name: null,
+            email: null,
+            phone: null,
+            shopify_updated_at: null,
+          },
+        ]);
+        await ctx.repo.markDeletedInShopify(3, '2026-10-12T00:00:00.000Z');
+        const waiverOnlyId = '30000000-0000-4000-8000-000000000001';
+        ctx.repo.rows.push({
+          ...ctx.repo.rows[0],
+          id: waiverOnlyId,
+          shopify_customer_id: null,
+          first_name: 'Ada',
+          last_name: 'Zhou',
+          email: 'ada.zhou@example.com',
+          phone: null,
+        });
+        ctx.repo.signatures = [
+          {
+            subjectId: waiverOnlyId,
+            signerEmail: 'ada.zhou@example.com',
+            signedAt: '2026-10-01T12:00:00.000Z',
+          },
+        ];
+
+        const { res, body } = await byIds([idOf(4), idOf(3), waiverOnlyId]);
+
+        expect(res.headers['x-total-count']).toBe('3');
+        expect(Object.fromEntries(body.map((c) => [c.id, c]))).toEqual({
+          [idOf(4)]: expect.objectContaining({
+            shopifyCustomerId: 4,
+            firstName: null,
+            lastName: null,
+            email: null,
+            phone: null,
+            waiver: { status: 'none', signedAt: null, year: '2026/27' },
+          }) as unknown,
+          [idOf(3)]: expect.objectContaining({
+            shopifyDeletedAt: '2026-10-12T00:00:00.000Z',
+          }) as unknown,
+          [waiverOnlyId]: expect.objectContaining({
+            shopifyCustomerId: null,
+            waiver: {
+              status: 'signed',
+              signedAt: '2026-10-01T12:00:00.000Z',
+              year: '2026/27',
+            },
+          }) as unknown,
+        });
+      });
+
+      it('ignores q, page and limit', async () => {
+        const { res, body } = await byIds(
+          [idOf(2), idOf(3)],
+          '&q=nobody&page=9&limit=1',
+        );
+        expect(body.map((c) => c.shopifyCustomerId).sort()).toEqual([2, 3]);
+        expect(res.headers['x-total-count']).toBe('2');
+        expect(ctx.repo.searches).toEqual([]);
+      });
+
+      it('rejects more than 50 ids and malformed ids', async () => {
+        const many = Array.from(
+          { length: 51 },
+          (_, i) => `20000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        );
+        await get(`?ids=${many.slice(0, 50).join(',')},${many[0]}`).expect(200);
+        expect(
+          message(await get(`?ids=${many.join(',')}`).expect(400)),
+        ).toEqual(['ids must contain no more than 50 elements']);
+        await get(`?ids=${idOf(1)},not-a-uuid`).expect(400);
+        await get(`?ids=${idOf(1)}&ids=42`).expect(400);
+        expect(ctx.repo.findByIdsCalls).toHaveLength(1);
+      });
+
+      it('leaves the search unchanged without ids', async () => {
+        await search('?q=wang');
+        expect(ctx.repo.findByIdsCalls).toEqual([]);
+        expect(ctx.repo.searches).toHaveLength(1);
+      });
     });
 
     it('lets the portal origin read X-Total-Count through CORS', async () => {

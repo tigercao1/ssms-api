@@ -13,6 +13,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -171,6 +172,11 @@ export class SignatureCheckQueryDto {
   @IsEmail()
   @MaxLength(EMAIL_MAX_LENGTH)
   email!: string;
+}
+
+export class LinkSignatureDto {
+  @IsUUID()
+  customerId!: string;
 }
 
 export class SignatureLookupQueryDto {

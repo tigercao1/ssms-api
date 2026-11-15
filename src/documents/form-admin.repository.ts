@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
+import { DOCUMENT_ASSIGNMENTS_TABLE } from './document-assignments.repository';
 import { DOCUMENT_TEMPLATES_TABLE } from './document-templates.repository';
 import type { DocumentLanguage } from './documents.types';
 import {
@@ -13,10 +14,22 @@ import type {
   FormTemplateRow,
   FormVersionRow,
   SignatureLookupRow,
+  SignatureSubjectRow,
+  SignedDocumentRow,
 } from './form-templates.types';
 
 const FORM_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(${FORM_VERSION_COLUMNS})`;
 const FORM_LIST_COLUMNS = `id, slug, title_en, title_zh, email_copy, inserted_at, updated_at, versions:${DOCUMENT_FORM_VERSIONS_TABLE}(language, version, published_at, source_key, updated_at)`;
+
+interface CustomerSignatureRow {
+  id: string;
+  template_id: string;
+  language: DocumentLanguage | null;
+  form_version: number | null;
+  completed_at: string | null;
+  signed_key: string | null;
+  template: { title_en: string; title_zh: string | null; kind: string } | null;
+}
 
 export interface FormDraftWrite {
   title: string;
@@ -94,6 +107,15 @@ export abstract class FormAdminRepository {
     query: string,
     limit: number,
   ): Promise<{ name: string | null; signed_at: string | null }[]>;
+  abstract findSignatureSubject(
+    assignmentId: string,
+  ): Promise<SignatureSubjectRow | null>;
+  abstract relinkCustomerSignature(
+    assignmentId: string,
+    fromCustomerId: string,
+    toCustomerId: string,
+  ): Promise<boolean>;
+  abstract customerSignatures(customerId: string): Promise<SignedDocumentRow[]>;
 }
 
 @Injectable()
@@ -263,5 +285,61 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
     )) as DbResult<{ name: string | null; signed_at: string | null }[]>;
     check(error, 'look up student signatures');
     return data ?? [];
+  }
+
+  async findSignatureSubject(
+    assignmentId: string,
+  ): Promise<SignatureSubjectRow | null> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .select('subject_type, subject_id, status')
+      .eq('id', assignmentId)
+      .maybeSingle()) as DbResult<SignatureSubjectRow>;
+    check(error, 'load signature');
+    return data ?? null;
+  }
+
+  async relinkCustomerSignature(
+    assignmentId: string,
+    fromCustomerId: string,
+    toCustomerId: string,
+  ): Promise<boolean> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .update({ subject_id: toCustomerId })
+      .eq('id', assignmentId)
+      .eq('subject_type', 'customer')
+      .eq('subject_id', fromCustomerId)
+      .eq('status', 'completed')
+      .select('id')
+      .maybeSingle()) as DbResult<{ id: string }>;
+    check(error, 'link signature to customer');
+    return data !== null;
+  }
+
+  async customerSignatures(customerId: string): Promise<SignedDocumentRow[]> {
+    const { data, error } = (await this.supabase
+      .from(DOCUMENT_ASSIGNMENTS_TABLE)
+      .select(
+        `id, template_id, language, form_version, completed_at, signed_key, template:${DOCUMENT_TEMPLATES_TABLE}(title_en, title_zh, kind)`,
+      )
+      .eq('subject_type', 'customer')
+      .eq('subject_id', customerId)
+      .eq('status', 'completed')
+      .order('completed_at', { ascending: false })) as DbResult<
+      CustomerSignatureRow[]
+    >;
+    check(error, 'list customer signatures');
+    return (data ?? []).map((row) => ({
+      assignment_id: row.id,
+      template_id: row.template_id,
+      title_en: row.template?.title_en ?? null,
+      title_zh: row.template?.title_zh ?? null,
+      kind: row.template?.kind ?? null,
+      language: row.language,
+      form_version: row.form_version,
+      signed_at: row.completed_at,
+      has_signed_copy: row.signed_key !== null,
+    }));
   }
 }

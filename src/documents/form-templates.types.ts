@@ -1,4 +1,5 @@
 import type { DocumentLanguage, PageGeometry } from './documents.types';
+import type { Waiver, WaiverStatus } from './waiver-year';
 
 export const FORM_FIELD_TYPES = ['text', 'email', 'date', 'signature'] as const;
 export type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
@@ -206,6 +207,17 @@ export interface SignatureLookupRow {
   has_signed_copy: boolean | null;
 }
 
+export type SignedDocumentRow = Omit<
+  SignatureLookupRow,
+  'subject_type' | 'subject_id' | 'name' | 'email'
+>;
+
+export interface SignatureSubjectRow {
+  subject_type: 'instructor' | 'customer';
+  subject_id: string;
+  status: string;
+}
+
 export interface SignedDocumentEntry {
   assignmentId: string;
   templateId: string;
@@ -216,20 +228,25 @@ export interface SignedDocumentEntry {
   formVersion: number | null;
   signedAt: string;
   hasSignedCopy: boolean;
+  validThisYear: boolean;
 }
 
 /** `GET /admin/signatures`: one instructor or customer and what they completed. */
 export interface Signer {
   subjectType: 'instructor' | 'customer';
   subjectId: string;
+  customerId: string | null;
   name: string | null;
   email: string | null;
+  waiver: Waiver | null;
   signatures: SignedDocumentEntry[];
 }
 
 /** `GET /admin/signatures/check?email=`: whether that exact email signed anything, and what. */
 export interface SignatureCheck {
   signed: boolean;
+  status: WaiverStatus;
+  year: string;
   signedAt: string | null;
   templateTitles: string[];
 }
@@ -238,5 +255,6 @@ export interface SignatureCheck {
 export interface StudentSignature {
   name: string | null;
   signed: boolean;
+  status: WaiverStatus;
   signedAt: string | null;
 }

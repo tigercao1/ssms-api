@@ -27,6 +27,7 @@ import {
   CreateFormDto,
   ExpectedRevisionDto,
   FormSourceUploadUrlDto,
+  LinkSignatureDto,
   PutFormPlacementsDto,
   SaveFormDraftDto,
   SignatureCheckQueryDto,
@@ -44,6 +45,7 @@ import { SignFormsThrottlerGuard } from './sign-forms-throttler.guard';
 import { SignatureLookupsService } from './signature-lookups.service';
 
 export const SIGNATURE_CHECK_LIMIT = { limit: 60, ttl: MINUTE_MS };
+export const SIGNATURE_LINK_LIMIT = { limit: 30, ttl: MINUTE_MS };
 
 /** `/admin/documents/forms`: customer waiver forms, one draft and published versions per language. */
 @Controller('admin/documents/forms')
@@ -158,7 +160,7 @@ export class AdminFormsController {
   }
 }
 
-/** `GET /admin/signatures?q=` and `GET /admin/signatures/check?email=`: instructors and customers by name or email, with what they signed and when. */
+/** `GET /admin/signatures?q=` and `GET /admin/signatures/check?email=`: instructors and customers by name or email, with what they signed and when; `POST /admin/signatures/:assignmentId/link` files a customer signature under another customer. */
 @Controller('admin/signatures')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')
@@ -175,5 +177,22 @@ export class AdminSignaturesController {
   @Throttle({ default: SIGNATURE_CHECK_LIMIT })
   check(@Query() query: SignatureCheckQueryDto): Promise<SignatureCheck> {
     return this.lookups.check(query.email);
+  }
+
+  @Post(':assignmentId/link')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(SignFormsThrottlerGuard)
+  @Throttle({ default: SIGNATURE_LINK_LIMIT })
+  link(
+    @Param('assignmentId', new ParseUUIDPipe()) assignmentId: string,
+    @Body() dto: LinkSignatureDto,
+    @CurrentUser() user: SupabaseJwtPayload,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<Signer> {
+    return this.lookups.linkToCustomer(
+      assignmentId,
+      dto.customerId,
+      toActor(user, userAgent),
+    );
   }
 }

@@ -66,6 +66,9 @@ export abstract class CustomersRepository {
     startedAt: string,
   ): Promise<CustomerReconcileCounts>;
   abstract countCustomers(deleted: boolean): Promise<number>;
+  abstract findById(id: string): Promise<CustomerRow | null>;
+  abstract findByIds(ids: string[]): Promise<CustomerRow[]>;
+  abstract latestSignatures(ids: string[]): Promise<Map<string, string | null>>;
 }
 
 @Injectable()
@@ -217,5 +220,42 @@ export class SupabaseCustomersRepository extends CustomersRepository {
     )) as CountedResult<null>;
     check(error, 'count customers');
     return count ?? 0;
+  }
+
+  async findById(id: string): Promise<CustomerRow | null> {
+    const { data, error } = (await this.supabase
+      .from(CUSTOMERS_TABLE)
+      .select(CUSTOMER_COLUMNS)
+      .eq('id', id)
+      .maybeSingle()) as DbResult<CustomerRow>;
+    check(error, 'load customer');
+    return data ?? null;
+  }
+
+  async findByIds(ids: string[]): Promise<CustomerRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const { data, error } = (await this.supabase
+      .from(CUSTOMERS_TABLE)
+      .select(CUSTOMER_COLUMNS)
+      .in('id', ids)
+      .order('last_name', { ascending: true, nullsFirst: false })
+      .order('first_name', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true })) as DbResult<CustomerRow[]>;
+    check(error, 'load customers');
+    return data ?? [];
+  }
+
+  async latestSignatures(ids: string[]): Promise<Map<string, string | null>> {
+    if (ids.length === 0) {
+      return new Map();
+    }
+    const { data, error } = (await this.supabase.rpc(
+      'customer_latest_signatures',
+      { p_customer_ids: ids },
+    )) as DbResult<{ customer_id: string; signed_at: string | null }[]>;
+    check(error, 'load customer signatures');
+    return new Map((data ?? []).map((r) => [r.customer_id, r.signed_at]));
   }
 }

@@ -145,6 +145,50 @@ describe('SupabaseCustomersRepository', () => {
     ]);
   });
 
+  it('loads the latest signature of a whole page of customers in one RPC and skips an empty page', async () => {
+    const { client, queries } = recordingSupabase({
+      'rpc:customer_latest_signatures': [
+        {
+          data: [
+            { customer_id: 'c1', signed_at: '2026-11-01T00:00:00Z' },
+            { customer_id: 'c2', signed_at: null },
+          ],
+          error: null,
+        },
+      ],
+    });
+    const repo = new SupabaseCustomersRepository(client);
+    await expect(repo.latestSignatures(['c1', 'c2'])).resolves.toEqual(
+      new Map([
+        ['c1', '2026-11-01T00:00:00Z'],
+        ['c2', null],
+      ]),
+    );
+    await expect(repo.latestSignatures([])).resolves.toEqual(new Map());
+    expect(queries.map((q) => q.ops[0])).toEqual([
+      ['rpc', { p_customer_ids: ['c1', 'c2'] }],
+    ]);
+  });
+
+  it('loads customers by id in one query, deleted ones included, and skips an empty list', async () => {
+    const { client, queries } = recordingSupabase({
+      customers: [{ data: [row], error: null }, fail],
+    });
+    const repo = new SupabaseCustomersRepository(client);
+    await expect(repo.findByIds(['c1', 'c2'])).resolves.toEqual([row]);
+    await expect(repo.findByIds([])).resolves.toEqual([]);
+    expect(queries.map((q) => q.ops)).toEqual([
+      [
+        ['select', CUSTOMER_COLUMNS],
+        ['in', 'id', ['c1', 'c2']],
+        ['order', 'last_name', { ascending: true, nullsFirst: false }],
+        ['order', 'first_name', { ascending: true, nullsFirst: false }],
+        ['order', 'id', { ascending: true }],
+      ],
+    ]);
+    await expect(repo.findByIds(['c1'])).rejects.toBeInstanceOf(DatabaseError);
+  });
+
   it('counts active and deleted customers', async () => {
     const { client, queries } = recordingSupabase({
       customers: [

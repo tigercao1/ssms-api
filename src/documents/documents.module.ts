@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { RolesGuard } from '../admin/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { CustomersModule } from '../customers/customers.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { SeasonsModule } from '../seasons/seasons.module';
 import { AdminCertificationUploadsController } from './admin-certification-uploads.controller';
@@ -65,6 +66,7 @@ import { SignatureLookupsService } from './signature-lookups.service';
 
 @Module({
   imports: [
+    CustomersModule,
     MailerModule,
     SeasonsModule,
     DocumentsCoreModule,

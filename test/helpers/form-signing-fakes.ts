@@ -24,8 +24,11 @@ import {
   type FormVersionRow,
   type PublishedForm,
   type SignatureLookupRow,
+  type SignatureSubjectRow,
+  type SignedDocumentRow,
 } from '../../src/documents/form-templates.types';
 import { sha256Hex } from '../../src/documents/template-pdf';
+import type { InMemoryCustomersRepository } from './customers-fakes';
 
 export interface FakeCustomer {
   id: string;
@@ -226,6 +229,11 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
   checkRows = new Map<string, { title_en: string; signed_at: string }[]>();
   readonly checkCalls: string[] = [];
   studentRows: { name: string | null; signed_at: string | null }[] = [];
+  readonly signatureSubjects = new Map<string, SignatureSubjectRow>();
+  readonly signedDocuments = new Map<string, SignedDocumentRow>();
+  onRelink?: (fromCustomerId: string, toCustomerId: string) => void;
+  waiverSource?: InMemoryCustomersRepository;
+  studentIds: string[] = [];
   readonly lookupCalls: { query: string; limit: number }[] = [];
   readonly studentCalls: {
     instructorId: string;
@@ -376,7 +384,21 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
     email: string,
   ): Promise<{ title_en: string; signed_at: string }[]> {
     this.checkCalls.push(email);
-    return Promise.resolve(this.checkRows.get(email) ?? []);
+    if (!this.waiverSource) {
+      return Promise.resolve(this.checkRows.get(email) ?? []);
+    }
+    const latest = new Map<string, string>();
+    for (const s of this.waiverSource.waiverSignatures(email)) {
+      const title = s.titleEn ?? 'Waiver';
+      if ((latest.get(title) ?? '') < s.signedAt) {
+        latest.set(title, s.signedAt);
+      }
+    }
+    return Promise.resolve(
+      [...latest.entries()]
+        .map(([title_en, signed_at]) => ({ title_en, signed_at }))
+        .sort((a, b) => b.signed_at.localeCompare(a.signed_at)),
+    );
   }
 
   studentSignatures(
@@ -385,6 +407,58 @@ export class InMemoryFormAdminRepository extends FormAdminRepository {
     limit: number,
   ): Promise<{ name: string | null; signed_at: string | null }[]> {
     this.studentCalls.push({ instructorId, query, limit });
-    return Promise.resolve(this.studentRows);
+    const source = this.waiverSource;
+    if (!source) {
+      return Promise.resolve(this.studentRows);
+    }
+    return source.latestSignatures(this.studentIds).then((latest) =>
+      this.studentIds.map((id) => {
+        const row = source.rows.find((r) => r.id === id)!;
+        return {
+          name: [row.first_name, row.last_name].filter(Boolean).join(' '),
+          signed_at: latest.get(id) ?? null,
+        };
+      }),
+    );
+  }
+
+  findSignatureSubject(
+    assignmentId: string,
+  ): Promise<SignatureSubjectRow | null> {
+    const row = this.signatureSubjects.get(assignmentId);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  relinkCustomerSignature(
+    assignmentId: string,
+    fromCustomerId: string,
+    toCustomerId: string,
+  ): Promise<boolean> {
+    const row = this.signatureSubjects.get(assignmentId);
+    if (
+      !row ||
+      row.subject_type !== 'customer' ||
+      row.subject_id !== fromCustomerId ||
+      row.status !== 'completed'
+    ) {
+      return Promise.resolve(false);
+    }
+    row.subject_id = toCustomerId;
+    this.onRelink?.(fromCustomerId, toCustomerId);
+    return Promise.resolve(true);
+  }
+
+  customerSignatures(customerId: string): Promise<SignedDocumentRow[]> {
+    return Promise.resolve(
+      [...this.signatureSubjects.entries()]
+        .filter(
+          ([, row]) =>
+            row.subject_type === 'customer' &&
+            row.subject_id === customerId &&
+            row.status === 'completed',
+        )
+        .flatMap(([id]) => this.signedDocuments.get(id) ?? [])
+        .sort((a, b) => (b.signed_at ?? '').localeCompare(a.signed_at ?? '')),
+    );
   }
 }

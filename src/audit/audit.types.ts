@@ -89,6 +89,7 @@ export const AUDIT_ACTIONS = {
   documentAssignmentCreate: 'document_assignment.create',
   documentAssignmentArchive: 'document_assignment.archive',
   documentAssignmentRemind: 'document_assignment.remind',
+  documentAssignmentLinkCustomer: 'document_assignment.link_customer',
   documentExportCreate: 'document_export.create',
   documentExportDownload: 'document_export.download',
   certificationUploadReview: 'certification_upload.review',

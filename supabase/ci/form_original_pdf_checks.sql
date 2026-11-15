@@ -2,7 +2,8 @@
 begin;
 
 insert into customers (id, shopify_customer_id, first_name, last_name, email) values
-  ('77777777-7777-4777-8777-777777777901', null, 'Mia', 'Chen', 'mia@example.com');
+  ('77777777-7777-4777-8777-777777777901', null, 'Mia', 'Chen', 'mia@example.com'),
+  ('77777777-7777-4777-8777-777777777902', null, 'Mia', 'Au', 'mia@example.com.au');
 insert into document_templates (id, kind, audience, title_en, slug) values
   ('33333333-3333-4333-8333-333333333901', 'form', 'customer', 'CI boat rental', 'ci-boat-rental'),
   ('33333333-3333-4333-8333-333333333902', 'form', 'customer', 'CI lesson waiver', 'ci-lesson-waiver');
@@ -64,7 +65,7 @@ insert into document_assignments (template_id, subject_type, subject_id, status,
   ('33333333-3333-4333-8333-333333333901', 'customer', '77777777-7777-4777-8777-777777777901', 'completed', 1, 'mia@example.com', '2026-11-01Z'),
   ('33333333-3333-4333-8333-333333333902', 'customer', '77777777-7777-4777-8777-777777777901', 'completed', 1, 'mia@example.com', '2026-11-03Z'),
   ('33333333-3333-4333-8333-333333333902', 'customer', '77777777-7777-4777-8777-777777777901', 'completed', 1, 'Mia@Example.com', '2026-11-02Z'),
-  ('33333333-3333-4333-8333-333333333901', 'customer', '77777777-7777-4777-8777-777777777901', 'completed', 1, 'mia@example.com.au', '2026-11-04Z');
+  ('33333333-3333-4333-8333-333333333901', 'customer', '77777777-7777-4777-8777-777777777902', 'completed', 1, 'mia@example.com.au', '2026-11-04Z');
 insert into document_assignments (template_id, subject_type, subject_id, status, form_version, signer_email) values
   ('33333333-3333-4333-8333-333333333901', 'customer', '77777777-7777-4777-8777-777777777901', 'assigned', 1, 'pending@example.com');
 

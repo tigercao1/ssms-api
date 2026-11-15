@@ -3,10 +3,16 @@ import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, type AuditActor } from '../audit/audit.types';
 import { searchTokens } from '../database/db-result';
 import { pageOffset } from '../database/pagination';
+import { waiverFor } from '../documents/waiver-year';
 import { syncDisabled, toHttpError } from './customer-errors';
 import { CustomerSyncService } from './customer-sync.service';
-import { CustomersRepository } from './customers.repository';
-import { type Customer, toCustomer, toCustomerUpsert } from './customers.types';
+import { type CustomerRow, CustomersRepository } from './customers.repository';
+import {
+  type Customer,
+  type CustomerWithWaiver,
+  toCustomer,
+  toCustomerUpsert,
+} from './customers.types';
 import type { CreateCustomerDto } from './dto/customers.dto';
 import { CUSTOMER_SEARCH_DEFAULT_LIMIT } from './dto/customers.dto';
 import {
@@ -15,7 +21,7 @@ import {
 } from './shopify-customers';
 
 export interface CustomerSearchPage {
-  customers: Customer[];
+  customers: CustomerWithWaiver[];
   total: number;
 }
 
@@ -53,7 +59,23 @@ export class CustomersService {
       offset: pageOffset(page, limit),
       includeDeleted,
     });
-    return { customers: rows.map(toCustomer), total };
+    return { customers: await this.withWaivers(rows), total };
+  }
+
+  async findByIds(ids: string[]): Promise<CustomerSearchPage> {
+    const customers = await this.withWaivers(await this.repo.findByIds(ids));
+    return { customers, total: customers.length };
+  }
+
+  private async withWaivers(
+    rows: CustomerRow[],
+  ): Promise<CustomerWithWaiver[]> {
+    const signedAt = await this.repo.latestSignatures(rows.map((r) => r.id));
+    const now = new Date();
+    return rows.map((row) => ({
+      ...toCustomer(row),
+      waiver: waiverFor(signedAt.get(row.id) ?? null, now),
+    }));
   }
 
   async create(dto: CreateCustomerDto, actor: AuditActor): Promise<Customer> {

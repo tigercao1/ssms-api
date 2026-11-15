@@ -1,10 +1,7 @@
 import { crc32, inflateSync } from 'node:zlib';
 import { isEmail } from 'class-validator';
-import {
-  type FormField,
-  SIGNER_EMAIL_KEY,
-  SIGNER_NAME_KEY,
-} from './form-templates.types';
+import { isDrawnField, signerFields } from './form-fields';
+import type { FormField } from './form-templates.types';
 import {
   decodeSignaturePng,
   isValidDate,
@@ -36,10 +33,12 @@ const CHANNELS_BY_COLOUR_TYPE: Record<number, number> = {
 const ALLOWED_CHUNK_TYPES = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND']);
 const MAX_FILTER_TYPE = 4;
 
+export type FormValue = string | boolean;
+
 export interface FormAnswers {
   signerName: string;
   signerEmail: string;
-  values: Record<string, string>;
+  values: Record<string, FormValue>;
   signatures: Record<string, Uint8Array>;
 }
 
@@ -170,6 +169,13 @@ function readSignaturePng(label: string, raw: unknown): Uint8Array {
   return png;
 }
 
+function parseChecked(field: FormField, raw: unknown): boolean {
+  if (raw !== undefined && raw !== null && typeof raw !== 'boolean') {
+    throw new SigningInputError(`Field ${name(field)} must be true or false`);
+  }
+  return raw === true;
+}
+
 function parseValue(field: FormField, raw: unknown): string {
   if (raw !== undefined && raw !== null && typeof raw !== 'string') {
     throw new SigningInputError(`Field ${name(field)} must be text`);
@@ -200,15 +206,17 @@ export function parseFormAnswers(
   signatures: Record<string, unknown>,
 ): FormAnswers {
   const byKey = new Map(fields.map((f) => [f.key, f]));
+  const drawn = (key: string) => {
+    const field = byKey.get(key);
+    return field !== undefined && isDrawnField(field);
+  };
   const strayAnswer = Object.keys(answers).find(
-    (key) => byKey.get(key)?.type === 'signature' || !byKey.has(key),
+    (key) => !byKey.has(key) || drawn(key),
   );
   if (strayAnswer !== undefined) {
     throw new SigningInputError(`Unknown answer ${strayAnswer}`);
   }
-  const straySignature = Object.keys(signatures).find(
-    (key) => byKey.get(key)?.type !== 'signature',
-  );
+  const straySignature = Object.keys(signatures).find((key) => !drawn(key));
   if (straySignature !== undefined) {
     throw new SigningInputError(`Unknown signature ${straySignature}`);
   }
@@ -219,12 +227,22 @@ export function parseFormAnswers(
     signatures: {},
   };
   for (const field of fields) {
-    if (field.type === 'signature') {
+    if (isDrawnField(field)) {
       const raw = signatures[field.key];
       if (raw !== undefined && raw !== null && raw !== '') {
         parsed.signatures[field.key] = readSignaturePng(name(field), raw);
       } else if (field.required) {
         throw new SigningInputError(`Signature ${name(field)} is required`);
+      }
+      continue;
+    }
+    if (field.type === 'checkbox') {
+      const checked = parseChecked(field, answers[field.key]);
+      if (!checked && field.required) {
+        throw new SigningInputError(`Field ${name(field)} must be checked`);
+      }
+      if (checked) {
+        parsed.values[field.key] = true;
       }
       continue;
     }
@@ -236,11 +254,16 @@ export function parseFormAnswers(
       parsed.values[field.key] = value;
     }
   }
-  parsed.signerName = parsed.values[SIGNER_NAME_KEY] ?? '';
-  parsed.signerEmail = parsed.values[SIGNER_EMAIL_KEY] ?? '';
+  const signer = signerFields(fields);
+  const text = (field: FormField | null) => {
+    const value = field ? parsed.values[field.key] : undefined;
+    return typeof value === 'string' ? value : '';
+  };
+  parsed.signerName = text(signer.name);
+  parsed.signerEmail = text(signer.email);
   if (parsed.signerName === '' || parsed.signerEmail === '') {
     throw new SigningInputError(
-      'The participant name and email are required to sign',
+      'The signer name and email are required to sign',
     );
   }
   return parsed;

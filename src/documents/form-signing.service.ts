@@ -50,6 +50,10 @@ const ANSWERS_HEADING: Record<DocumentLanguage, string> = {
   en: 'Answers',
   zh: '填写内容',
 };
+const CHECKED_TEXT: Record<DocumentLanguage, string> = {
+  en: 'Yes',
+  zh: '是',
+};
 
 interface SignedForm {
   assignment: DocumentAssignmentRow;
@@ -231,6 +235,7 @@ export class FormSigningService {
           values: answers.values,
           signatures: answers.signatures,
           answersHeading: ANSWERS_HEADING[version.language],
+          checkedText: CHECKED_TEXT[version.language],
           audit,
         });
     const key = storageKeys.customerDocument(customerId, id);

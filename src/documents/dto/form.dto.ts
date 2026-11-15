@@ -1,7 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -28,7 +27,7 @@ import { TEMPLATE_TITLE_MAX_LENGTH } from './template.dto';
 export const FORM_SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const FORM_FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,39}$/;
 export const FORM_BODY_MAX_LENGTH = 50_000;
-export const FORM_MAX_FIELDS = 30;
+export const FORM_MAX_FIELDS = 50;
 export const LOOKUP_QUERY_MAX_LENGTH = 100;
 export const MAX_FORM_PDF_BYTES = 10 * 1024 * 1024;
 export const MAX_FORM_PDF_PAGES = 30;
@@ -83,8 +82,11 @@ export class UpdateFormDto extends ExpectedRevisionDto {
   emailCopy?: boolean;
 }
 
+const FIELD_KEY_RULE =
+  '$property must start with a lowercase letter and use only lowercase letters, digits and underscores, at most 40';
+
 export class FormFieldDto {
-  @Matches(FORM_FIELD_KEY_PATTERN)
+  @Matches(FORM_FIELD_KEY_PATTERN, { message: FIELD_KEY_RULE })
   key!: string;
 
   @IsIn(FORM_FIELD_TYPES)
@@ -100,41 +102,8 @@ export class FormFieldDto {
   required!: boolean;
 }
 
-/** `PUT /admin/documents/forms/:id/versions/:lang`; `fields` defaults to the current ones, else the default waiver fields. */
-export class SaveFormDraftDto {
-  @IsOptional()
-  @IsISO8601({ strict: true })
-  expectedUpdatedAt?: string | null;
-
-  @Transform(trim)
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(TEMPLATE_TITLE_MAX_LENGTH)
-  title!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(FORM_BODY_MAX_LENGTH)
-  bodyMarkdown!: string;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(FORM_MAX_FIELDS)
-  @ValidateNested({ each: true })
-  @Type(() => FormFieldDto)
-  fields?: FormFieldDto[];
-}
-
-export class FormSourceUploadUrlDto {
-  @IsInt()
-  @Min(1)
-  @Max(MAX_FORM_PDF_BYTES)
-  contentLength!: number;
-}
-
 export class FormPlacementDto {
-  @Matches(FORM_FIELD_KEY_PATTERN)
+  @Matches(FORM_FIELD_KEY_PATTERN, { message: FIELD_KEY_RULE })
   key!: string;
 
   @IsInt()
@@ -154,6 +123,44 @@ export class FormPlacementDto {
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @IsPositive()
   h!: number;
+}
+
+/** `PUT /admin/documents/forms/:id/versions/:lang`; `fields` and `placements` default to the current ones. */
+export class SaveFormDraftDto {
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt?: string | null;
+
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(TEMPLATE_TITLE_MAX_LENGTH)
+  title!: string;
+
+  @IsString()
+  @MaxLength(FORM_BODY_MAX_LENGTH)
+  bodyMarkdown!: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(FORM_MAX_FIELDS)
+  @ValidateNested({ each: true })
+  @Type(() => FormFieldDto)
+  fields?: FormFieldDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(FORM_MAX_PLACEMENTS)
+  @ValidateNested({ each: true })
+  @Type(() => FormPlacementDto)
+  placements?: FormPlacementDto[];
+}
+
+export class FormSourceUploadUrlDto {
+  @IsInt()
+  @Min(1)
+  @Max(MAX_FORM_PDF_BYTES)
+  contentLength!: number;
 }
 
 /** `PUT /admin/documents/forms/:id/versions/:lang/placements`: replaces the draft's placements. */

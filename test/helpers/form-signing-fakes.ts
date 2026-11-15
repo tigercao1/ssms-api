@@ -18,14 +18,15 @@ import type {
   DocumentAssignmentRow,
   DocumentLanguage,
 } from '../../src/documents/documents.types';
-import {
-  defaultWaiverFields,
-  type FormTemplateRow,
-  type FormVersionRow,
-  type PublishedForm,
-  type SignatureLookupRow,
-  type SignatureSubjectRow,
-  type SignedDocumentRow,
+import type {
+  FormField,
+  FormFieldType,
+  FormTemplateRow,
+  FormVersionRow,
+  PublishedForm,
+  SignatureLookupRow,
+  SignatureSubjectRow,
+  SignedDocumentRow,
 } from '../../src/documents/form-templates.types';
 import { sha256Hex } from '../../src/documents/template-pdf';
 import type { InMemoryCustomersRepository } from './customers-fakes';
@@ -47,6 +48,40 @@ interface FakeForm {
   versions: FormVersionRow[];
 }
 
+const WAIVER_FIELDS: [string, FormFieldType, boolean, string, string][] = [
+  ['participant_name', 'full_name', true, 'Participant name', '参与者姓名'],
+  ['email', 'email', true, 'Email', '电子邮箱'],
+  ['date', 'date', true, 'Date', '日期'],
+  ['id_number', 'text', false, 'ID number', '证件号码'],
+  ['initials', 'text', false, 'Initials', '姓名缩写'],
+  [
+    'participant_signature',
+    'signature',
+    true,
+    'Participant signature',
+    '参与者签名',
+  ],
+  ['guardian_name', 'text', false, 'Guardian name', '监护人姓名'],
+  [
+    'guardian_signature',
+    'signature',
+    false,
+    'Guardian signature',
+    '监护人签名',
+  ],
+  ['witness_name', 'text', false, 'Witness name', '见证人姓名'],
+  ['witness_signature', 'signature', false, 'Witness signature', '见证人签名'],
+];
+
+export function waiverFields(language: DocumentLanguage = 'en'): FormField[] {
+  return WAIVER_FIELDS.map(([key, type, required, en, zh]) => ({
+    key,
+    type,
+    required,
+    label: language === 'en' ? en : zh,
+  }));
+}
+
 export function formVersion(
   templateId: string,
   language: DocumentLanguage,
@@ -63,7 +98,7 @@ export function formVersion(
     title: language === 'en' ? 'Lesson waiver' : '课程免责声明',
     body_markdown: body,
     body_sha256: sha256Hex(Buffer.from(body, 'utf8')),
-    fields: defaultWaiverFields(language),
+    fields: waiverFields(language),
     source_key: null,
     source_sha256: null,
     source_size_bytes: null,

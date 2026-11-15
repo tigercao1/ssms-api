@@ -1,8 +1,8 @@
 import { pdftotext } from '../../test/helpers/pdf-render';
+import { waiverFields } from '../../test/helpers/form-signing-fakes';
 import { signaturePng } from '../../test/helpers/png-fixtures';
 import { SIGNING_CONSENT } from './document-signing.service';
 import { renderFormPdf, type FormPdfInput } from './form-pdf';
-import { defaultWaiverFields } from './form-templates.types';
 import { loadStampFonts } from './pdf-stamper';
 import { MAX_SIGNATURE_PNG_BYTES } from './signing-input';
 
@@ -11,10 +11,11 @@ jest.setTimeout(60_000);
 const input = (overrides: Partial<FormPdfInput> = {}): FormPdfInput => ({
   title: 'Lesson waiver',
   bodyMarkdown: '## Risks\n\nSkiing is **dangerous**.\n\n* Wear a helmet',
-  fields: defaultWaiverFields('en'),
+  fields: waiverFields('en'),
   values: { participant_name: 'Mia Chen', email: 'mia@example.com' },
   signatures: {},
   answersHeading: 'Answers',
+  checkedText: 'Yes',
   audit: {
     titleEn: 'Lesson waiver',
     titleZh: null,
@@ -43,6 +44,35 @@ describe('renderFormPdf', () => {
     expect(text).toMatch(/Witness name\s+—/);
     expect(text).toContain('Signature record / 签署记录');
     expect(text).toContain('a'.repeat(64));
+  });
+
+  it('prints a checked box as the checked text and an unchecked one as a dash', async () => {
+    const { bytes } = await renderFormPdf(
+      input({
+        fields: [
+          { key: 'renter', type: 'full_name', label: 'Renter', required: true },
+          {
+            key: 'photos_ok',
+            type: 'checkbox',
+            label: 'Photos OK',
+            required: false,
+          },
+          {
+            key: 'videos_ok',
+            type: 'checkbox',
+            label: 'Videos OK',
+            required: false,
+          },
+        ],
+        values: { renter: 'Ana Lima', photos_ok: true },
+        checkedText: 'Yes',
+      }),
+    );
+    const text = await pdftotext(bytes);
+
+    expect(text).toMatch(/Renter\s+Ana Lima/);
+    expect(text).toMatch(/Photos OK\s+Yes/);
+    expect(text).toMatch(/Videos OK\s+—/);
   });
 
   it('flows a long waiver over several pages and stays within the VM memory budget', async () => {

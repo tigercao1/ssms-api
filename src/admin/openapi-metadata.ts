@@ -471,10 +471,26 @@ export default async () => {
               key: { required: true, type: () => String },
               type: {
                 required: true,
-                enum: ['email', 'date', 'text', 'signature'],
+                enum: [
+                  'email',
+                  'date',
+                  'text',
+                  'signature',
+                  'initials',
+                  'full_name',
+                  'checkbox',
+                ],
               },
               label: { required: true, type: () => String },
               required: { required: true, type: () => Boolean },
+            },
+            FormPlacementDto: {
+              key: { required: true, type: () => String },
+              page: { required: true, type: () => Number, minimum: 1 },
+              x: { required: true, type: () => Number },
+              y: { required: true, type: () => Number },
+              w: { required: true, type: () => Number, minimum: 1 },
+              h: { required: true, type: () => Number, minimum: 1 },
             },
             SaveFormDraftDto: {
               expectedUpdatedAt: {
@@ -487,19 +503,14 @@ export default async () => {
               fields: {
                 required: false,
                 type: () => [t['../documents/dto/form.dto'].FormFieldDto],
-                minItems: 1,
+              },
+              placements: {
+                required: false,
+                type: () => [t['../documents/dto/form.dto'].FormPlacementDto],
               },
             },
             FormSourceUploadUrlDto: {
               contentLength: { required: true, type: () => Number, minimum: 1 },
-            },
-            FormPlacementDto: {
-              key: { required: true, type: () => String },
-              page: { required: true, type: () => Number, minimum: 1 },
-              x: { required: true, type: () => Number },
-              y: { required: true, type: () => Number },
-              w: { required: true, type: () => Number, minimum: 1 },
-              h: { required: true, type: () => Number, minimum: 1 },
             },
             PutFormPlacementsDto: {
               placements: {

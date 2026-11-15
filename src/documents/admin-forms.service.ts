@@ -16,6 +16,7 @@ import { DocumentTemplatesService } from './document-templates.service';
 import {
   DOCUMENT_LANGUAGES,
   type DocumentLanguage,
+  type PageGeometry,
   type UploadUrl,
 } from './documents.types';
 import {
@@ -31,18 +32,16 @@ import {
   type FormTemplateWrite,
   FormAdminRepository,
 } from './form-admin.repository';
-import {
-  defaultWaiverFields,
-  type FormField,
-  type FormOriginalPdf,
-  type FormPlacement,
-  type FormTemplate,
-  type FormTemplateRow,
-  type FormTemplateSummary,
-  type FormVersion,
-  type FormVersionRow,
-  SIGNER_EMAIL_KEY,
-  SIGNER_NAME_KEY,
+import { duplicateKeys, publishProblems } from './form-fields';
+import type {
+  FormField,
+  FormOriginalPdf,
+  FormPlacement,
+  FormTemplate,
+  FormTemplateRow,
+  FormTemplateSummary,
+  FormVersion,
+  FormVersionRow,
 } from './form-templates.types';
 import { runPdfTask } from './pdf-isolation';
 import { PrivateStorageClient } from './private-storage.client';
@@ -63,8 +62,8 @@ export const FORM_NEEDS_DRAFT =
 export const FORM_NO_SOURCE = 'This draft has no original PDF';
 export const FORM_PLACEMENT_INVALID = (reason: string) =>
   `The field positions are not valid: ${reason}`;
-export const FORM_PLACEMENTS_MISSING = (keys: string[]) =>
-  `Place these required fields on the PDF before publishing: ${keys.join(', ')}`;
+export const FORM_NOT_READY = (problems: string[]) =>
+  `Before publishing, ${problems.join('; ')}`;
 
 const NO_SOURCE = {
   source_key: null,
@@ -78,42 +77,28 @@ const NO_SOURCE = {
 type SourceUrls = Map<string, { url: string; expiresAt: string }>;
 
 function validateFields(fields: readonly FormField[]): void {
-  const keys = new Set<string>();
-  for (const field of fields) {
-    if (keys.has(field.key)) {
-      throw new BadRequestException(
-        FORM_FIELDS_INVALID(`${field.key} appears twice`),
-      );
-    }
-    keys.add(field.key);
-  }
-  const has = (key: string, type: FormField['type']) =>
-    fields.some((f) => f.key === key && f.type === type && f.required);
-  if (!has(SIGNER_NAME_KEY, 'text') || !has(SIGNER_EMAIL_KEY, 'email')) {
+  const repeated = duplicateKeys(fields);
+  if (repeated.length > 0) {
     throw new BadRequestException(
       FORM_FIELDS_INVALID(
-        `it needs a required ${SIGNER_NAME_KEY} text field and a required ${SIGNER_EMAIL_KEY} email field`,
+        `each key must be unique, but ${repeated.join(', ')} appears more than once`,
       ),
-    );
-  }
-  if (!fields.some((f) => f.type === 'signature' && f.required)) {
-    throw new BadRequestException(
-      FORM_FIELDS_INVALID('it needs a required signature field'),
     );
   }
 }
 
 function validatePlacements(
   placements: readonly FormPlacement[],
-  version: FormVersionRow,
+  fields: readonly FormField[],
+  pages: readonly PageGeometry[],
 ): void {
-  const keys = new Set(version.fields.map((f) => f.key));
+  const keys = new Set(fields.map((f) => f.key));
   for (const placement of placements) {
-    const page = version.pages[placement.page - 1];
+    const page = pages[placement.page - 1];
     const problem = !keys.has(placement.key)
       ? `${placement.key} is not a field of this version`
       : !page
-        ? `${placement.key} is on page ${placement.page}, but the PDF has ${version.pages.length} page(s)`
+        ? `${placement.key} is on page ${placement.page}, but the PDF has ${pages.length} page(s)`
         : !insidePageBox(placement, page)
           ? `${placement.key} is outside page ${placement.page}`
           : null;
@@ -121,13 +106,6 @@ function validatePlacements(
       throw new BadRequestException(FORM_PLACEMENT_INVALID(problem));
     }
   }
-}
-
-function unplacedRequired(version: FormVersionRow): string[] {
-  const placed = new Set(version.placements.map((p) => p.key));
-  return version.fields
-    .filter((f) => f.required && !placed.has(f.key))
-    .map((f) => f.key);
 }
 
 function toOriginalPdf(
@@ -222,7 +200,6 @@ function toFormTemplate(row: FormTemplateRow, urls: SourceUrls): FormTemplate {
         draft: toVersion(draft, urls),
       };
     }),
-    defaultFields: byLanguage(defaultWaiverFields),
     insertedAt: row.inserted_at,
     updatedAt: row.updated_at,
   };
@@ -311,14 +288,16 @@ export class AdminFormsService {
       await this.load(id),
       language,
     );
-    const fields =
-      dto.fields ??
-      draft?.fields ??
-      published?.fields ??
-      defaultWaiverFields(language);
+    const fields = dto.fields ?? draft?.fields ?? published?.fields ?? [];
     validateFields(fields);
     const keys = new Set(fields.map((f) => f.key));
     const source = draft ?? published;
+    if (dto.placements && dto.placements.length > 0 && !source?.source_key) {
+      throw new BadRequestException(FORM_NO_SOURCE);
+    }
+    if (dto.placements && source?.source_key) {
+      validatePlacements(dto.placements, fields, source.pages);
+    }
     const write = {
       title: dto.title,
       body_markdown: dto.bodyMarkdown,
@@ -331,7 +310,9 @@ export class AdminFormsService {
             source_size_bytes: source.source_size_bytes,
             page_count: source.page_count,
             pages: source.pages,
-            placements: source.placements.filter((p) => keys.has(p.key)),
+            placements:
+              dto.placements ??
+              source.placements.filter((p) => keys.has(p.key)),
           }
         : NO_SOURCE),
       updated_by: actor.userId ?? null,
@@ -384,9 +365,9 @@ export class AdminFormsService {
     if (!draft) {
       throw new BadRequestException(FORM_NO_DRAFT);
     }
-    const missing = draft.source_key ? unplacedRequired(draft) : [];
-    if (missing.length > 0) {
-      throw new BadRequestException(FORM_PLACEMENTS_MISSING(missing));
+    const problems = publishProblems(draft);
+    if (problems.length > 0) {
+      throw new BadRequestException(FORM_NOT_READY(problems));
     }
     const published = await this.repo.publishDraft(
       id,
@@ -505,7 +486,7 @@ export class AdminFormsService {
     if (!draft.source_key) {
       throw new BadRequestException(FORM_NO_SOURCE);
     }
-    validatePlacements(placements, draft);
+    validatePlacements(placements, draft.fields, draft.pages);
     await this.updateDraft(
       id,
       language,

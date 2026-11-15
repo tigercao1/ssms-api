@@ -48,6 +48,53 @@ begin
 end
 $$;
 
+do $$
+declare
+  v_waiver uuid := waiver_customer_for_email('New.Signer@example.com', 'New', 'Signer');
+  v_other uuid := waiver_customer_for_email('other.signer@example.com', 'Other', 'Signer');
+  v_shopify uuid;
+begin
+  if (select shopify_customer_id from customers where id = v_waiver) is not null then
+    raise exception 'the probe expected a waiver-only customer row';
+  end if;
+  insert into document_assignments (template_id, subject_type, subject_id, status, form_version, signer_email, completed_at)
+  values ('33333333-3333-4333-8333-333333333a01', 'customer', v_waiver, 'completed', 1, 'new.signer@example.com', '2026-10-01Z'),
+         ('33333333-3333-4333-8333-333333333a01', 'customer', v_other, 'completed', 1, 'nobody.listed@example.com', '2026-10-02Z');
+
+  if (select array_agg((signed_at at time zone 'UTC')::date::text) from admin_signature_check('NEW.SIGNER@example.com'))
+     <> array['2026-10-01'] then
+    raise exception 'admin_signature_check missed a signature filed under a waiver-only customer';
+  end if;
+  if (select array_agg((signed_at at time zone 'UTC')::date::text) from admin_signature_check('nobody.listed@example.com'))
+     <> array['2026-10-02'] then
+    raise exception 'admin_signature_check missed a signer email that no customer row has';
+  end if;
+  if (select signed_at from customer_latest_signatures(array[v_waiver])) <> '2026-10-01Z' then
+    raise exception 'a waiver-only customer did not carry its own signature';
+  end if;
+
+  perform upsert_customer_if_newer(49100, 'New', 'Signer', 'new.signer@EXAMPLE.com', null, now());
+  select id into v_shopify from customers where shopify_customer_id = 49100;
+  if v_shopify is null or v_shopify = v_waiver then
+    raise exception 'the probe expected Shopify to create a second customer row later';
+  end if;
+  if (select signed_at from customer_latest_signatures(array[v_shopify])) is distinct from '2026-10-01Z' then
+    raise exception 'a Shopify customer created later with the same email did not count the earlier signature';
+  end if;
+
+  update document_assignments set subject_id = v_shopify
+   where subject_id = v_other and status = 'completed';
+  if (select signed_at from customer_latest_signatures(array[v_shopify])) is distinct from '2026-10-02Z' then
+    raise exception 'a signature linked from a waiver-only customer did not count for the Shopify customer';
+  end if;
+  update document_assignments set subject_id = v_other
+   where signer_email = 'nobody.listed@example.com';
+  if (select signed_at from customer_latest_signatures(array[v_other])) is distinct from '2026-10-02Z' then
+    raise exception 'a signature linked to a waiver-only customer did not count for it';
+  end if;
+end
+$$;
+
 set local role anon;
 do $$
 begin

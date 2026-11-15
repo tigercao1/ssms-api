@@ -502,6 +502,66 @@ describe('customers admin HTTP', () => {
       });
     });
 
+    it('finds a waiver-only customer and later counts its waiver for a Shopify customer with the same email', async () => {
+      const [mei] = ctx.repo.rows;
+      ctx.repo.rows.push({
+        ...mei,
+        id: 'waiver-only-ada',
+        shopify_customer_id: null,
+        first_name: 'Ada',
+        last_name: 'Zhou',
+        email: 'ada.zhou@example.com',
+        phone: null,
+      });
+      ctx.repo.signatures = [
+        {
+          subjectId: 'waiver-only-ada',
+          signerEmail: 'ada.zhou@example.com',
+          signedAt: '2026-10-01T12:00:00.000Z',
+        },
+      ];
+      const signed = {
+        status: 'signed',
+        signedAt: '2026-10-01T12:00:00.000Z',
+        year: '2026/27',
+      };
+
+      const before = (await search('?q=zhou')) as unknown as {
+        id: string;
+        shopifyCustomerId: number | null;
+        waiver: unknown;
+      }[];
+      expect(before).toEqual([
+        expect.objectContaining({
+          id: 'waiver-only-ada',
+          shopifyCustomerId: null,
+          waiver: signed,
+        }),
+      ]);
+
+      await ctx.repo.upsertMany([
+        {
+          shopify_customer_id: 9,
+          first_name: 'Ada',
+          last_name: 'Zhou',
+          email: 'Ada.Zhou@Example.com',
+          phone: null,
+          shopify_updated_at: null,
+        },
+      ]);
+      const after = (await search('?q=zhou')) as unknown as {
+        shopifyCustomerId: number | null;
+        waiver: unknown;
+      }[];
+      expect(after).toHaveLength(2);
+      expect(after).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ shopifyCustomerId: 9, waiver: signed }),
+          expect.objectContaining({ shopifyCustomerId: null, waiver: signed }),
+        ]),
+      );
+    });
+
     it('hides customers deleted in Shopify unless includeDeleted=true', async () => {
       await ctx.repo.markDeletedInShopify(1, '2026-10-12T00:00:00.000Z');
       const visible = await get('?q=example.com').expect(200);

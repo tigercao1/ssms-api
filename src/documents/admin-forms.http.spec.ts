@@ -893,6 +893,27 @@ describe('form templates and signature lookups', () => {
       ]);
     });
 
+    it.each([
+      ['a waiver-only signer to a Shopify customer', 'to'],
+      ['a Shopify customer to a waiver-only row', 'from'],
+    ])('links from %s', async (_label, shopifySide) => {
+      const shopifyRow = customers.rows.find(
+        (r) => r.id === (shopifySide === 'to' ? toId : fromId),
+      )!;
+      shopifyRow.shopify_customer_id = 4242;
+
+      const signer = (await link(assignmentId, toId).expect(200))
+        .body as Signer;
+
+      expect(repo.signatureSubjects.get(assignmentId)?.subject_id).toBe(toId);
+      expect(signer).toMatchObject({
+        customerId: toId,
+        waiver: { status: 'signed', signedAt: '2026-11-01T12:00:00Z' },
+        signatures: [expect.objectContaining({ assignmentId })],
+      });
+      expect(audit.entries).toHaveLength(1);
+    });
+
     it('answers the person without writing or auditing when it is already filed there', async () => {
       await link(assignmentId, fromId).expect(200);
       expect(repo.signatureSubjects.get(assignmentId)?.subject_id).toBe(fromId);

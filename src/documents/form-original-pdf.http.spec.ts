@@ -796,6 +796,19 @@ describe('form versions with an original PDF', () => {
       });
     });
 
+    it('answers from the signer email alone, without any customer row for it', async () => {
+      fakeDate('2026-11-09T15:00:00.000Z');
+      adminRepo.checkRows.set('not.a.customer@example.com', [
+        { title_en: 'Lesson waiver', signed_at: '2026-10-01T00:00:00Z' },
+      ]);
+
+      const res = await admin
+        .get('/admin/signatures/check?email=not.a.customer@example.com')
+        .expect(200);
+
+      expect(res.body).toMatchObject({ signed: true, status: 'signed' });
+    });
+
     it('needs one valid email', async () => {
       await admin.get('/admin/signatures/check').expect(400);
       await admin.get('/admin/signatures/check?email=mia').expect(400);

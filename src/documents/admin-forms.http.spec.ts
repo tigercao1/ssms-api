@@ -40,6 +40,7 @@ import { DocumentTemplatesService } from './document-templates.service';
 import { FormAdminRepository } from './form-admin.repository';
 import type {
   FormTemplate,
+  SignatureCheck,
   Signer,
   SignatureLookupRow,
 } from './form-templates.types';
@@ -964,6 +965,187 @@ describe('form templates and signature lookups', () => {
       jest.spyOn(repo, 'relinkCustomerSignature').mockResolvedValueOnce(false);
       await link(assignmentId, toId).expect(409);
       expect(audit.entries).toEqual([]);
+    });
+  });
+
+  describe('one waiver rule for every lookup', () => {
+    const originalId = randomUUID();
+    const linkedId = randomUUID();
+    const staffStudentId = randomUUID();
+    const assignmentId = randomUUID();
+
+    beforeEach(() => {
+      fakeDate('2026-11-09T15:00:00.000Z');
+      subjects.seedInstructor({ auth_user_id: INSTRUCTOR_USER_ID });
+      repo.waiverSource = customers;
+      customers.rows.push(
+        customerRow({ id: originalId, email: 'original.a@example.com' }),
+        customerRow({
+          id: linkedId,
+          first_name: 'Linked',
+          last_name: 'B',
+          email: 'linked.b@example.com',
+        }),
+        customerRow({
+          id: staffStudentId,
+          first_name: 'Staff',
+          last_name: 'Student',
+          email: 'staff@example.com',
+        }),
+      );
+      repo.signatureSubjects.set(assignmentId, {
+        subject_type: 'customer',
+        subject_id: originalId,
+        status: 'completed',
+      });
+      customers.signatures = [
+        {
+          subjectId: originalId,
+          titleEn: 'Lesson waiver',
+          signerEmail: 'original.a@example.com',
+          signedAt: '2026-11-01T12:00:00Z',
+        },
+      ];
+      repo.onRelink = (from, to) => {
+        customers.signatures = customers.signatures.map((sig) =>
+          sig.subjectId === from ? { ...sig, subjectId: to } : sig,
+        );
+      };
+    });
+
+    const check = async (email: string) =>
+      (
+        await admin
+          .get(`/admin/signatures/check?email=${encodeURIComponent(email)}`)
+          .expect(200)
+      ).body as SignatureCheck;
+    const students = async () =>
+      (await as(INSTRUCTOR_AUTH).get('/me/students/signatures').expect(200))
+        .body as { name: string; status: string }[];
+
+    it("answers /check for a different-email customer's email after linking, like the student and signer lookups", async () => {
+      repo.studentIds = [linkedId];
+
+      const signer = (
+        await admin
+          .post(`/admin/signatures/${assignmentId}/link`, {
+            customerId: linkedId,
+          })
+          .expect(200)
+      ).body as Signer;
+
+      expect(signer.waiver).toMatchObject({ status: 'signed' });
+      expect(await students()).toEqual([
+        expect.objectContaining({ name: 'Linked B', status: 'signed' }),
+      ]);
+      expect(await check('linked.b@example.com')).toEqual({
+        signed: true,
+        status: 'signed',
+        year: '2026/27',
+        signedAt: '2026-11-01T12:00:00Z',
+        templateTitles: ['Lesson waiver'],
+      });
+      expect(await check('original.a@example.com')).toMatchObject({
+        status: 'signed',
+      });
+    });
+
+    it('finds a signer email that no customer row has', async () => {
+      customers.signatures.push({
+        subjectId: originalId,
+        titleEn: 'Lesson waiver',
+        signerEmail: 'nobody.listed@example.com',
+        signedAt: '2026-11-03T12:00:00Z',
+      });
+
+      expect(await check('nobody.listed@example.com')).toMatchObject({
+        signed: true,
+        status: 'signed',
+        signedAt: '2026-11-03T12:00:00Z',
+      });
+    });
+
+    it("never counts an instructor's employment agreement for a customer with the same email", async () => {
+      repo.studentIds = [staffStudentId, linkedId];
+      customers.signatures.push(
+        {
+          subjectId: randomUUID(),
+          subjectType: 'instructor',
+          titleEn: 'Employment agreement',
+          signerEmail: 'staff@example.com',
+          signedAt: '2026-11-02T12:00:00Z',
+        },
+        {
+          subjectId: linkedId,
+          titleEn: 'Lesson waiver',
+          signerEmail: 'linked.b@example.com',
+          signedAt: '2026-11-04T12:00:00Z',
+        },
+      );
+
+      expect(await check('staff@example.com')).toEqual({
+        signed: false,
+        status: 'none',
+        year: '2026/27',
+        signedAt: null,
+        templateTitles: [],
+      });
+      expect(await students()).toEqual([
+        {
+          name: 'Staff Student',
+          signed: false,
+          status: 'none',
+          signedAt: null,
+        },
+        {
+          name: 'Linked B',
+          signed: true,
+          status: 'signed',
+          signedAt: '2026-11-04T12:00:00Z',
+        },
+      ]);
+
+      const instructorId = randomUUID();
+      const base = {
+        email: 'staff@example.com',
+        template_id: null,
+        title_en: null,
+        title_zh: null,
+        kind: null,
+        language: null,
+        form_version: null,
+        signed_at: null,
+        has_signed_copy: null,
+        assignment_id: null,
+      };
+      repo.lookupRows = [
+        {
+          ...base,
+          subject_type: 'instructor',
+          subject_id: instructorId,
+          name: 'Staff Instructor',
+          assignment_id: randomUUID(),
+          template_id: 't-employment',
+          title_en: 'Employment agreement',
+          kind: 'sign',
+          signed_at: '2026-11-02T12:00:00Z',
+          has_signed_copy: true,
+        },
+        {
+          ...base,
+          subject_type: 'customer',
+          subject_id: staffStudentId,
+          name: 'Staff Student',
+        },
+      ];
+      const signers = (await admin.get('/admin/signatures?q=staff').expect(200))
+        .body as Signer[];
+      expect(
+        signers.map((p) => [p.subjectType, p.waiver, p.signatures.length]),
+      ).toEqual([
+        ['instructor', null, 1],
+        ['customer', { status: 'none', signedAt: null, year: '2026/27' }, 0],
+      ]);
     });
   });
 });

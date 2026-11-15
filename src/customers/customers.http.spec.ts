@@ -502,6 +502,32 @@ describe('customers admin HTTP', () => {
       });
     });
 
+    it("ignores an instructor's own agreement signed with the customer's email", async () => {
+      const [eric] = ctx.repo.rows.filter(
+        (r) => r.email === 'eric.li@example.com',
+      );
+      ctx.repo.signatures = [
+        {
+          subjectId: 'instructor-eric',
+          subjectType: 'instructor',
+          signerEmail: 'eric.li@example.com',
+          signedAt: '2026-11-02T12:00:00.000Z',
+        },
+      ];
+
+      const [found] = (await search('?q=eric&limit=1')) as unknown as {
+        id: string;
+        waiver: { status: string };
+      }[];
+
+      expect(found.id).toBe(eric.id);
+      expect(found.waiver).toEqual({
+        status: 'none',
+        signedAt: null,
+        year: '2026/27',
+      });
+    });
+
     it('finds a waiver-only customer and later counts its waiver for a Shopify customer with the same email', async () => {
       const [mei] = ctx.repo.rows;
       ctx.repo.rows.push({

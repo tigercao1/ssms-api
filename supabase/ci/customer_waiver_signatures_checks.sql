@@ -95,11 +95,81 @@ begin
 end
 $$;
 
+do $$
+declare
+  v_original uuid := waiver_customer_for_email('original.a@example.com', 'Original', 'A');
+  v_linked uuid := waiver_customer_for_email('linked.b@example.com', 'Linked', 'B');
+  v_assignment uuid;
+begin
+  insert into document_assignments (template_id, subject_type, subject_id, status, form_version, signer_email, completed_at)
+  values ('33333333-3333-4333-8333-333333333a01', 'customer', v_original, 'completed', 1, 'original.a@example.com', '2026-10-05Z')
+  returning id into v_assignment;
+  update document_assignments set subject_id = v_linked
+   where id = v_assignment and subject_type = 'customer' and subject_id = v_original and status = 'completed';
+
+  if (select signed_at from customer_latest_signatures(array[v_linked])) is distinct from '2026-10-05Z' then
+    raise exception 'a signature linked to a different-email customer did not count for it';
+  end if;
+  if (select array_agg((signed_at at time zone 'UTC')::date::text) from admin_signature_check('Linked.B@example.com'))
+     is distinct from array['2026-10-05'] then
+    raise exception 'admin_signature_check missed a signature linked to that email''s customer';
+  end if;
+  if (select array_agg((signed_at at time zone 'UTC')::date::text) from admin_signature_check('original.a@example.com'))
+     is distinct from array['2026-10-05'] then
+    raise exception 'admin_signature_check lost the signer email after linking';
+  end if;
+end
+$$;
+
+insert into customers (id, first_name, last_name, email) values
+  ('77777777-7777-4777-8777-777777777a07', 'Staff', 'Student', 'staff.student@example.com'),
+  ('77777777-7777-4777-8777-777777777a08', 'Real', 'Student', 'real.student@example.com');
+insert into auth.users (id, email) values
+  ('11111111-1111-4111-8111-111111111a01', 'staff.student@example.com'),
+  ('11111111-1111-4111-8111-111111111a02', 'ci.teacher@example.com');
+insert into instructors (id, auth_user_id, email, approval_status, is_active) values
+  ('22222222-2222-4222-8222-222222222a01', '11111111-1111-4111-8111-111111111a01', 'staff.student@example.com', 'approved', true),
+  ('22222222-2222-4222-8222-222222222a02', '11111111-1111-4111-8111-111111111a02', 'ci.teacher@example.com', 'approved', true);
+insert into document_templates (id, kind, audience, title_en, slug) values
+  ('33333333-3333-4333-8333-333333333a04', 'sign', 'instructor', 'CI employment agreement', null);
+insert into document_assignments (template_id, subject_type, subject_id, status, signer_email, completed_at) values
+  ('33333333-3333-4333-8333-333333333a04', 'instructor', '22222222-2222-4222-8222-222222222a01', 'completed', 'staff.student@example.com', '2026-10-06Z');
+insert into document_assignments (template_id, subject_type, subject_id, status, form_version, signer_email, completed_at) values
+  ('33333333-3333-4333-8333-333333333a01', 'customer', '77777777-7777-4777-8777-777777777a08', 'completed', 1, 'real.student@example.com', '2026-10-07Z');
+insert into classes (id, instructor_id, starts_at, ends_at, status) values
+  ('44444444-4444-4444-8444-444444444a01', '22222222-2222-4222-8222-222222222a02', '2026-12-01 10:00Z', '2026-12-01 12:00Z', 'scheduled');
+insert into class_participants (class_id, customer_id) values
+  ('44444444-4444-4444-8444-444444444a01', '77777777-7777-4777-8777-777777777a07'),
+  ('44444444-4444-4444-8444-444444444a01', '77777777-7777-4777-8777-777777777a08');
+
+do $$
+begin
+  if (select signed_at from customer_latest_signatures(array['77777777-7777-4777-8777-777777777a07']::uuid[])) is not null then
+    raise exception 'an instructor agreement counted as a customer waiver';
+  end if;
+  if exists (select 1 from admin_signature_check('staff.student@example.com')) then
+    raise exception 'admin_signature_check counted an instructor agreement';
+  end if;
+  if (select array_agg(name || '=' || coalesce((signed_at at time zone 'UTC')::date::text, '-') order by name)
+        from instructor_student_signatures('22222222-2222-4222-8222-222222222a02', '', 100))
+     is distinct from array['Real Student=2026-10-07', 'Staff Student=-'] then
+    raise exception 'instructor_student_signatures counted an instructor agreement or missed a customer waiver';
+  end if;
+end
+$$;
+
 set local role anon;
 do $$
 begin
   perform customer_latest_signatures(array['77777777-7777-4777-8777-777777777a01']::uuid[]);
   raise exception 'anon could call customer_latest_signatures';
+exception when insufficient_privilege then null;
+end
+$$;
+do $$
+begin
+  perform customer_waiver_signatures('ana@example.com');
+  raise exception 'anon could call customer_waiver_signatures';
 exception when insufficient_privilege then null;
 end
 $$;

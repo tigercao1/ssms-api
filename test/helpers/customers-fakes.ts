@@ -105,6 +105,8 @@ export class InMemoryCustomersRepository extends CustomersRepository {
   reconcileCalls: { ids: number[]; startedAt: string }[] = [];
   signatures: {
     subjectId: string;
+    subjectType?: 'customer' | 'instructor';
+    titleEn?: string;
     signerEmail: string | null;
     signedAt: string;
   }[] = [];
@@ -236,28 +238,33 @@ export class InMemoryCustomersRepository extends CustomersRepository {
 
   latestSignatures(ids: string[]): Promise<Map<string, string | null>> {
     this.latestSignatureCalls.push([...ids]);
-    const lower = (email: string | null) => email?.toLowerCase() ?? null;
     const latest = new Map<string, string | null>();
     for (const customer of this.rows.filter((r) => ids.includes(r.id))) {
-      const email = lower(customer.email);
-      const sameEmail = new Set(
-        this.rows
-          .filter(
-            (r) => r.id === customer.id || (email && lower(r.email) === email),
-          )
-          .map((r) => r.id),
-      );
-      const times = this.signatures
-        .filter(
-          (s) =>
-            sameEmail.has(s.subjectId) ||
-            (email !== null && lower(s.signerEmail) === email),
-        )
+      const times = this.waiverSignatures(customer.email, customer.id)
         .map((s) => s.signedAt)
         .sort();
       latest.set(customer.id, times.at(-1) ?? null);
     }
     return Promise.resolve(latest);
+  }
+
+  waiverSignatures(email: string | null, customerId?: string) {
+    const lower = (value: string | null) => value?.trim().toLowerCase() ?? null;
+    const key = lower(email);
+    const subjects = new Set(
+      this.rows
+        .filter((r) => r.id === customerId || (key && lower(r.email) === key))
+        .map((r) => r.id),
+    );
+    if (customerId) {
+      subjects.add(customerId);
+    }
+    return this.signatures.filter(
+      (s) =>
+        (s.subjectType ?? 'customer') === 'customer' &&
+        (subjects.has(s.subjectId) ||
+          (key !== null && lower(s.signerEmail) === key)),
+    );
   }
 
   private find(shopifyCustomerId: number): CustomerRow | undefined {

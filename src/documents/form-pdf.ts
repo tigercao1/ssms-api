@@ -1,6 +1,7 @@
 import * as fontkit from '@cantoo/fontkit';
 import { PDFDocument, type PDFFont, type PDFPage, rgb } from '@cantoo/pdf-lib';
 import type { FieldType, TemplateFieldRow } from './documents.types';
+import type { FormValue } from './form-answers';
 import type {
   FormField,
   FormFieldType,
@@ -30,8 +31,11 @@ const EMPHASIS = /\*\*|__/g;
 
 const STAMP_FIELD_TYPES: Record<FormFieldType, FieldType> = {
   text: 'text',
+  full_name: 'full_name',
   email: 'text',
   date: 'date',
+  checkbox: 'checkbox',
+  initials: 'initials',
   signature: 'signature',
 };
 
@@ -39,7 +43,7 @@ export interface FormStampInput {
   source: Uint8Array;
   fields: readonly FormField[];
   placements: readonly FormPlacement[];
-  values: Readonly<Record<string, string>>;
+  values: Readonly<Record<string, FormValue>>;
   signatures: Readonly<Record<string, Uint8Array>>;
   audit: StampAudit;
 }
@@ -48,9 +52,10 @@ export interface FormPdfInput {
   title: string;
   bodyMarkdown: string;
   fields: readonly FormField[];
-  values: Readonly<Record<string, string>>;
+  values: Readonly<Record<string, FormValue>>;
   signatures: Readonly<Record<string, Uint8Array>>;
   answersHeading: string;
+  checkedText: string;
   audit: StampAudit;
 }
 
@@ -146,10 +151,13 @@ export async function renderFormPdf(input: FormPdfInput): Promise<StampedPdf> {
     cursor.gap(6);
     cursor.text(field.label, 9, 0, MUTED);
     const png = input.signatures[field.key];
+    const value = input.values[field.key];
     if (png) {
       await cursor.image(png);
+    } else if (value === true) {
+      cursor.text(input.checkedText, 11);
     } else {
-      cursor.text(input.values[field.key] ?? '—', 11);
+      cursor.text(typeof value === 'string' ? value : '—', 11);
     }
   }
   drawAuditPage(doc, font, input.audit);
@@ -160,7 +168,7 @@ export async function renderFormPdf(input: FormPdfInput): Promise<StampedPdf> {
 export function stampFormPdf(input: FormStampInput): Promise<StampedPdf> {
   const fields = new Map(input.fields.map((field) => [field.key, field]));
   const placed: TemplateFieldRow[] = [];
-  const values: Record<string, string> = {};
+  const values: Record<string, FormValue> = {};
   const signatures: Record<string, StampSignature> = {};
   input.placements.forEach(({ key, ...rect }, i) => {
     const field = fields.get(key);

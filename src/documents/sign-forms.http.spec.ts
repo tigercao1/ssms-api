@@ -31,7 +31,7 @@ import { DocumentSubjectsRepository } from './document-subjects.repository';
 import * as formPdf from './form-pdf';
 import { FormSigningRepository } from './form-signing.repository';
 import { FormSigningService } from './form-signing.service';
-import type { PublicForm } from './form-templates.types';
+import type { FormField, PublicForm } from './form-templates.types';
 import { PdfWorkQueue } from './pdf-work-queue';
 import { PrivateStorageClient } from './private-storage.client';
 import { SignFormsController } from './sign-forms.controller';
@@ -170,7 +170,7 @@ describe('public form signing (/sign/forms)', () => {
         expect.arrayContaining([
           {
             key: 'participant_name',
-            type: 'text',
+            type: 'full_name',
             label: 'Participant name',
             required: true,
           },
@@ -704,6 +704,136 @@ describe('public form signing (/sign/forms)', () => {
         await get(`/sign/forms/${SLUG}/original?format=json`, ip).expect(404);
       }
       await get(`/sign/forms/${SLUG}/original?format=json`, ip).expect(429);
+    });
+  });
+
+  describe('a form with its own fields', () => {
+    const RENTAL = 'equipment-rental';
+    const fields: FormField[] = [
+      { key: 'renter', type: 'full_name', label: 'Renter', required: true },
+      { key: 'backup_email', type: 'email', label: 'Backup', required: false },
+      { key: 'contact_email', type: 'email', label: 'Email', required: true },
+      {
+        key: 'helmet_ok',
+        type: 'checkbox',
+        label: 'Helmet OK',
+        required: true,
+      },
+      {
+        key: 'photos_ok',
+        type: 'checkbox',
+        label: 'Photos OK',
+        required: false,
+      },
+      {
+        key: 'renter_initials',
+        type: 'initials',
+        label: 'Initials',
+        required: true,
+      },
+      { key: 'board_size', type: 'text', label: 'Board size', required: false },
+      { key: 'return_on', type: 'date', label: 'Return date', required: true },
+      {
+        key: 'renter_sig',
+        type: 'signature',
+        label: 'Signature',
+        required: true,
+      },
+    ];
+    const body = (overrides: Record<string, unknown> = {}) => ({
+      lang: 'en',
+      version: 1,
+      consent: true,
+      answers: {
+        renter: 'Ana Lima',
+        backup_email: 'Other@Example.com',
+        contact_email: 'Ana@Example.com',
+        helmet_ok: true,
+        board_size: '154',
+        return_on: '2027-01-03',
+      },
+      signatures: { renter_initials: png(), renter_sig: png() },
+      ...overrides,
+    });
+    const sign = (payload: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post(`/sign/forms/${RENTAL}/complete`)
+        .set('fly-client-ip', nextIp())
+        .send(payload);
+
+    beforeEach(() => {
+      forms.seedForm(RENTAL, [
+        formVersion(randomUUID(), 'en', 1, {
+          title: 'Equipment rental',
+          body_markdown: 'Return the board in good shape.',
+          body_sha256: sha256Hex(
+            Buffer.from('Return the board in good shape.', 'utf8'),
+          ),
+          fields,
+        }),
+      ]);
+    });
+
+    it('stores answers under the form keys and takes the signer from the first required name and email', async () => {
+      await sign(body()).expect(201);
+
+      const [signed] = forms.signed;
+      expect(signed).toMatchObject({
+        signer_name: 'Ana Lima',
+        signer_email: 'ana@example.com',
+        field_values: {
+          renter: 'Ana Lima',
+          backup_email: 'other@example.com',
+          contact_email: 'ana@example.com',
+          helmet_ok: true,
+          board_size: '154',
+          return_on: '2027-01-03',
+        },
+      });
+      expect(forms.customers[0]).toMatchObject({
+        email: 'ana@example.com',
+        first_name: 'Ana',
+        last_name: 'Lima',
+      });
+      const text = (
+        await pdftotext(storage.objects.get(signed.signed_key!)!.body)
+      ).replace(/\s+/g, ' ');
+      expect(text).toContain('Helmet OK Yes');
+      expect(text).toContain('Photos OK —');
+      expect(text).toContain('Return date 2027-01-03');
+    });
+
+    it.each([
+      [
+        'a required box left unchecked',
+        { answers: { ...body().answers, helmet_ok: false } },
+        'Field Helmet OK (helmet_ok) must be checked',
+      ],
+      [
+        'a box sent as text',
+        { answers: { ...body().answers, helmet_ok: 'yes' } },
+        'Field Helmet OK (helmet_ok) must be true or false',
+      ],
+      [
+        'initials sent as an answer',
+        { answers: { ...body().answers, renter_initials: 'AL' } },
+        'Unknown answer renter_initials',
+      ],
+      [
+        'missing initials',
+        { signatures: { renter_sig: png() } },
+        'Signature Initials (renter_initials) is required',
+      ],
+      [
+        'a box sent as a signature',
+        { signatures: { ...body().signatures, helmet_ok: png() } },
+        'Unknown signature helmet_ok',
+      ],
+    ])('400s %s', async (_case, overrides, message) => {
+      const res = await sign(body(overrides)).expect(400);
+
+      expect((res.body as { message: string }).message).toBe(message);
+      expect(forms.signed).toHaveLength(0);
     });
   });
 });

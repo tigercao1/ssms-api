@@ -47,7 +47,7 @@ import { SignatureLookupsService } from './signature-lookups.service';
 export const SIGNATURE_CHECK_LIMIT = { limit: 60, ttl: MINUTE_MS };
 export const SIGNATURE_LINK_LIMIT = { limit: 30, ttl: MINUTE_MS };
 
-/** `/admin/documents/forms`: customer waiver forms, one draft and published versions per language. */
+/** `/admin/documents/forms`: public signing forms, one draft and published versions per language. */
 @Controller('admin/documents/forms')
 @UseGuards(SupabaseAuthGuard, RolesGuard)
 @Roles('admin')

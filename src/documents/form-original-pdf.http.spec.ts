@@ -18,6 +18,7 @@ import {
   formVersion,
   InMemoryFormAdminRepository,
   InMemoryFormSigningRepository,
+  waiverFields,
 } from '../../test/helpers/form-signing-fakes';
 import { InMemoryCustomersRepository } from '../../test/helpers/customers-fakes';
 import { fakeDate } from '../../test/helpers/fake-date';
@@ -59,6 +60,7 @@ import { stampFormPdf } from './form-pdf';
 import { FormSigningRepository } from './form-signing.repository';
 import { FormSigningService } from './form-signing.service';
 import type {
+  FormField,
   FormPlacement,
   FormTemplate,
   FormVersionRow,
@@ -198,6 +200,7 @@ describe('form versions with an original PDF', () => {
       .put(`/admin/documents/forms/${id}/versions/en`, {
         title: 'Boat rental agreement',
         bodyMarkdown: 'Read the attached agreement.',
+        fields: waiverFields('en'),
       })
       .expect(200);
     return id;
@@ -284,7 +287,7 @@ describe('form versions with an original PDF', () => {
         .post(`/admin/documents/forms/${id}/versions/en/publish`)
         .expect(400);
       expect((blocked.body as { message: string }).message).toBe(
-        'Place these required fields on the PDF before publishing: participant_name, email, date, participant_signature',
+        'Before publishing, place these required fields on the PDF: participant_name, email, date, participant_signature',
       );
 
       for (const [placement, message] of [
@@ -326,6 +329,72 @@ describe('form versions with an original PDF', () => {
         'document_template.form_placements_update',
         'document_template.publish',
       ]);
+    });
+
+    it('saves fields and their places together in one draft save, checking places against the new fields', async () => {
+      const id = await draftForm();
+      await uploadPdf(id, await pdfFixture('normal'));
+      const fields: FormField[] = [
+        { key: 'renter', type: 'full_name', label: 'Renter', required: true },
+        { key: 'renter_email', type: 'email', label: 'Email', required: true },
+        { key: 'helmet', type: 'checkbox', label: 'Helmet', required: false },
+      ];
+      const placements: FormPlacement[] = [
+        { key: 'renter', page: 1, x: 72, y: 600, w: 220, h: 24 },
+        { key: 'renter_email', page: 1, x: 72, y: 560, w: 220, h: 24 },
+        { key: 'renter', page: 2, x: 72, y: 500, w: 220, h: 24 },
+      ];
+      const save = (body: Record<string, unknown>) =>
+        admin.put(`/admin/documents/forms/${id}/versions/en`, {
+          title: 'Rental',
+          bodyMarkdown: '',
+          fields,
+          ...body,
+        });
+
+      const stale = await save({
+        placements: [{ ...placements[0], key: 'participant_name' }],
+      }).expect(400);
+      expect((stale.body as { message: string }).message).toMatch(
+        /participant_name is not a field/,
+      );
+      await save({ placements: [{ ...placements[0], page: 3 }] }).expect(400);
+
+      const saved = (await save({ placements }).expect(200))
+        .body as FormTemplate;
+      expect(saved.languages.en.draft).toMatchObject({ fields, placements });
+
+      const kept = (
+        await save({ fields: fields.filter((f) => f.key !== 'renter') }).expect(
+          200,
+        )
+      ).body as FormTemplate;
+      expect(kept.languages.en.draft!.placements).toEqual([placements[1]]);
+
+      await save({
+        fields: fields.filter((f) => f.key !== 'renter'),
+        placements,
+      }).expect(400);
+      await save({ placements }).expect(200);
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(200);
+    });
+
+    it('refuses places in a draft save when the version has no PDF', async () => {
+      const id = await draftForm();
+
+      const res = await admin
+        .put(`/admin/documents/forms/${id}/versions/en`, {
+          title: 'Rental',
+          bodyMarkdown: 'Body',
+          placements: [PLACEMENTS[0]],
+        })
+        .expect(400);
+
+      expect((res.body as { message: string }).message).toBe(
+        'This draft has no original PDF',
+      );
     });
 
     it('409s a placements save from a stale revision and chains saves with the returned updatedAt', async () => {
@@ -1008,6 +1077,67 @@ describe('form versions with an original PDF', () => {
       expect(ink(PLACEMENTS[4])).toBe(0);
       const [email] = mailer.sentOf('documents.completed');
       expect(email.attachments![0].content.equals(stored)).toBe(true);
+    });
+
+    it('stamps every field type at its place: names, emails, dates, text, a tick only in a checked box, and drawn initials', async () => {
+      const fields: FormField[] = [
+        { key: 'model', type: 'full_name', label: 'Model', required: true },
+        { key: 'model_email', type: 'email', label: 'Email', required: true },
+        { key: 'shoot_on', type: 'date', label: 'Date', required: true },
+        { key: 'usage', type: 'text', label: 'Usage', required: false },
+        { key: 'web_ok', type: 'checkbox', label: 'Web', required: false },
+        { key: 'print_ok', type: 'checkbox', label: 'Print', required: false },
+        {
+          key: 'model_initials',
+          type: 'initials',
+          label: 'Init',
+          required: true,
+        },
+      ];
+      const placements: FormPlacement[] = [
+        { key: 'model', page: 1, x: 72, y: 600, w: 220, h: 24 },
+        { key: 'model_email', page: 1, x: 72, y: 560, w: 220, h: 24 },
+        { key: 'usage', page: 1, x: 72, y: 520, w: 220, h: 24 },
+        { key: 'shoot_on', page: 2, x: 72, y: 500, w: 120, h: 24 },
+        { key: 'web_ok', page: 2, x: 72, y: 300, w: 20, h: 20 },
+        { key: 'print_ok', page: 2, x: 120, y: 300, w: 20, h: 20 },
+        { key: 'model_initials', page: 2, x: 320, y: 380, w: 80, h: 40 },
+      ];
+      forms.seedForm('media-release', [
+        pdfVersion('en', 1, { fields, placements }),
+      ]);
+
+      await complete('media-release', {
+        answers: {
+          model: 'Ana Lima',
+          model_email: 'ana@example.com',
+          shoot_on: '2027-02-14',
+          usage: 'Brochure',
+          web_ok: true,
+        },
+        signatures: { model_initials: png() },
+      }).expect(201);
+
+      const [signed] = forms.signed;
+      expect(signed.field_values).toEqual({
+        model: 'Ana Lima',
+        model_email: 'ana@example.com',
+        shoot_on: '2027-02-14',
+        usage: 'Brochure',
+        web_ok: true,
+      });
+      const stored = storage.objects.get(signed.signed_key!)!.body;
+      const text = (await pdftotext(stored)).split('\f');
+      expect(text[0]).toContain('Ana Lima');
+      expect(text[0]).toContain('ana@example.com');
+      expect(text[0]).toContain('Brochure');
+      expect(text[1]).toContain('2027-02-14');
+      const page2 = await renderPage(stored, 2);
+      const ink = (key: string) =>
+        inkIn(page2, pixelRect(placements.find((p) => p.key === key)!, LETTER));
+      expect(ink('web_ok')).toBeGreaterThan(10);
+      expect(ink('print_ok')).toBe(0);
+      expect(ink('model_initials')).toBeGreaterThan(50);
     });
 
     it('does not email the copy when the form has it turned off, and still keeps the signature', async () => {

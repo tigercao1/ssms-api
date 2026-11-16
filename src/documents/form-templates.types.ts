@@ -1,7 +1,15 @@
 import type { DocumentLanguage, PageGeometry } from './documents.types';
 import type { Waiver, WaiverStatus } from './waiver-year';
 
-export const FORM_FIELD_TYPES = ['text', 'email', 'date', 'signature'] as const;
+export const FORM_FIELD_TYPES = [
+  'text',
+  'full_name',
+  'email',
+  'date',
+  'checkbox',
+  'initials',
+  'signature',
+] as const;
 export type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
 
 export interface FormField {
@@ -18,55 +26,6 @@ export interface FormPlacement {
   y: number;
   w: number;
   h: number;
-}
-
-export const SIGNER_NAME_KEY = 'participant_name';
-export const SIGNER_EMAIL_KEY = 'email';
-
-const field = (
-  key: string,
-  type: FormFieldType,
-  required: boolean,
-  en: string,
-  zh: string,
-) => ({ key, type, required, label: { en, zh } });
-
-const WAIVER_FIELDS = [
-  field(SIGNER_NAME_KEY, 'text', true, 'Participant name', '参与者姓名'),
-  field(SIGNER_EMAIL_KEY, 'email', true, 'Email', '电子邮箱'),
-  field('date', 'date', true, 'Date', '日期'),
-  field('id_number', 'text', false, 'ID number', '证件号码'),
-  field('initials', 'text', false, 'Initials', '姓名缩写'),
-  field(
-    'participant_signature',
-    'signature',
-    true,
-    'Participant signature',
-    '参与者签名',
-  ),
-  field('guardian_name', 'text', false, 'Guardian name', '监护人姓名'),
-  field(
-    'guardian_signature',
-    'signature',
-    false,
-    'Guardian signature',
-    '监护人签名',
-  ),
-  field('witness_name', 'text', false, 'Witness name', '见证人姓名'),
-  field(
-    'witness_signature',
-    'signature',
-    false,
-    'Witness signature',
-    '见证人签名',
-  ),
-];
-
-export function defaultWaiverFields(language: DocumentLanguage): FormField[] {
-  return WAIVER_FIELDS.map(({ label, ...rest }) => ({
-    ...rest,
-    label: label[language],
-  }));
 }
 
 export interface FormVersionRow {

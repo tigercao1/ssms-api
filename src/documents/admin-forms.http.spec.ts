@@ -17,7 +17,10 @@ import {
 } from '../../test/helpers/documents-fakes';
 import { InMemoryCustomersRepository } from '../../test/helpers/customers-fakes';
 import { fakeDate } from '../../test/helpers/fake-date';
-import { InMemoryFormAdminRepository } from '../../test/helpers/form-signing-fakes';
+import {
+  InMemoryFormAdminRepository,
+  waiverFields,
+} from '../../test/helpers/form-signing-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import {
   seasonsProviders,
@@ -178,7 +181,7 @@ describe('form templates and signature lookups', () => {
         .expect(401);
     });
 
-    it('creates a form with a unique link name and offers the default waiver fields', async () => {
+    it('creates a form with a unique link name and no preset fields', async () => {
       const form = await createForm();
 
       expect(form).toMatchObject({
@@ -189,18 +192,7 @@ describe('form templates and signature lookups', () => {
           zh: { published: null, draft: null },
         },
       });
-      expect(form.defaultFields.zh.map((f) => f.key)).toEqual([
-        'participant_name',
-        'email',
-        'date',
-        'id_number',
-        'initials',
-        'participant_signature',
-        'guardian_name',
-        'guardian_signature',
-        'witness_name',
-        'witness_signature',
-      ]);
+      expect(form.defaultFields).toEqual({ en: [], zh: [] });
       await admin
         .post('/admin/documents/forms', { slug: 'lesson-waiver', titleEn: 'B' })
         .expect(409);
@@ -215,7 +207,11 @@ describe('form templates and signature lookups', () => {
 
     it('saves a draft per language and publishes it, keeping the live version until the next publish', async () => {
       const { id } = await createForm();
-      const draft = { title: 'Lesson waiver', bodyMarkdown: '# Risks v1' };
+      const draft = {
+        title: 'Lesson waiver',
+        bodyMarkdown: '# Risks v1',
+        fields: waiverFields('en'),
+      };
 
       let form = (
         await admin.put(`/admin/documents/forms/${id}/versions/en`, draft)
@@ -279,59 +275,153 @@ describe('form templates and signature lookups', () => {
         .expect(400);
     });
 
+    const NAME = {
+      key: 'renter',
+      type: 'full_name',
+      label: 'Renter',
+      required: true,
+    };
+    const EMAIL = {
+      key: 'renter_email',
+      type: 'email',
+      label: 'Email',
+      required: true,
+    };
+
     it.each([
       [
-        'no email field',
-        [
-          {
-            key: 'participant_name',
-            type: 'text',
-            label: 'Name',
-            required: true,
-          },
-          { key: 'sig', type: 'signature', label: 'Sign', required: true },
-        ],
-      ],
-      [
-        'no required signature',
-        [
-          {
-            key: 'participant_name',
-            type: 'text',
-            label: 'Name',
-            required: true,
-          },
-          { key: 'email', type: 'email', label: 'Email', required: true },
-        ],
-      ],
-      [
         'a duplicate key',
-        [
-          {
-            key: 'participant_name',
-            type: 'text',
-            label: 'Name',
-            required: true,
-          },
-          { key: 'email', type: 'email', label: 'Email', required: true },
-          { key: 'sig', type: 'signature', label: 'Sign', required: true },
-          { key: 'sig', type: 'signature', label: 'Again', required: true },
-        ],
+        [NAME, EMAIL, { ...EMAIL, label: 'Again' }],
+        'each key must be unique, but renter_email appears more than once',
       ],
       [
         'an unknown field type',
         [{ key: 'age', type: 'number', label: 'Age', required: true }],
+        'fields.0.type must be one of the following values',
       ],
-    ])('rejects a field list with %s', async (_case, fields) => {
+      [
+        'a key with spaces and capitals',
+        [{ ...NAME, key: 'Renter Name' }],
+        'fields.0.key must start with a lowercase letter',
+      ],
+      [
+        'a key longer than 40 characters',
+        [{ ...NAME, key: `a${'b'.repeat(40)}` }],
+        'fields.0.key must start with a lowercase letter',
+      ],
+      [
+        'a blank label',
+        [NAME, { ...EMAIL, label: '   ' }],
+        'fields.1.label should not be empty',
+      ],
+      [
+        'more than 50 fields',
+        Array.from({ length: 51 }, (_, i) => ({ ...NAME, key: `f${i}` })),
+        'fields must contain no more than 50 elements',
+      ],
+    ])('rejects a field list with %s', async (_case, fields, message) => {
       const { id } = await createForm();
 
-      await admin
+      const res = await admin
         .put(`/admin/documents/forms/${id}/versions/en`, {
           title: 'T',
           bodyMarkdown: 'Body',
           fields,
         })
         .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain(message);
+    });
+
+    it('saves any field set in progress, with custom keys, labels and types, and an empty body', async () => {
+      const { id } = await createForm();
+      const fields = [
+        {
+          key: 'board_size',
+          type: 'text',
+          label: 'Board size (cm)',
+          required: false,
+        },
+        {
+          key: 'helmet',
+          type: 'checkbox',
+          label: 'Helmet included',
+          required: true,
+        },
+        {
+          key: 'renter_initials',
+          type: 'initials',
+          label: 'Initials',
+          required: true,
+        },
+      ];
+
+      const form = (
+        await admin
+          .put(`/admin/documents/forms/${id}/versions/en`, {
+            title: 'Equipment rental',
+            bodyMarkdown: '',
+            fields,
+          })
+          .expect(200)
+      ).body as FormTemplate;
+
+      expect(form.languages.en.draft).toMatchObject({
+        bodyMarkdown: '',
+        fields,
+      });
+    });
+
+    it.each([
+      [
+        'without a signer name',
+        [EMAIL],
+        'Before publishing, add a required Full name field for the signer',
+      ],
+      [
+        'without a signer email',
+        [NAME, { ...EMAIL, required: false }],
+        'Before publishing, add a required Email field for the signer',
+      ],
+      [
+        'with no text and no PDF',
+        [NAME, EMAIL],
+        'Before publishing, write the form text or upload a PDF',
+        '  ',
+      ],
+    ])(
+      'refuses to publish a draft %s',
+      async (_case, fields, message, bodyMarkdown = 'Body') => {
+        const { id } = await createForm();
+        await admin
+          .put(`/admin/documents/forms/${id}/versions/en`, {
+            title: 'T',
+            bodyMarkdown,
+            fields,
+          })
+          .expect(200);
+
+        const res = await admin
+          .post(`/admin/documents/forms/${id}/versions/en/publish`)
+          .expect(400);
+
+        expect((res.body as { message: string }).message).toBe(message);
+      },
+    );
+
+    it('publishes a form without any signature field once it names the signer', async () => {
+      const { id } = await createForm();
+      await admin
+        .put(`/admin/documents/forms/${id}/versions/en`, {
+          title: 'T',
+          bodyMarkdown: 'Body',
+          fields: [NAME, EMAIL],
+        })
+        .expect(200);
+
+      await admin
+        .post(`/admin/documents/forms/${id}/versions/en/publish`)
+        .expect(200);
     });
 
     it('edits titles, lists forms with their live versions, and 404s an unknown form', async () => {
@@ -339,6 +429,7 @@ describe('form templates and signature lookups', () => {
       await admin.put(`/admin/documents/forms/${id}/versions/zh`, {
         title: '课程免责声明',
         bodyMarkdown: '风险',
+        fields: waiverFields('zh'),
       });
       await admin.post(`/admin/documents/forms/${id}/versions/zh/publish`);
 
@@ -367,6 +458,7 @@ describe('form templates and signature lookups', () => {
     const text = (bodyMarkdown: string, expectedUpdatedAt?: string) => ({
       title: 'Lesson waiver',
       bodyMarkdown,
+      fields: waiverFields('en'),
       ...(expectedUpdatedAt !== undefined && { expectedUpdatedAt }),
     });
     const saveDraft = async (

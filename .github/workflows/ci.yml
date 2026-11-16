@@ -123,6 +123,9 @@ jobs:
       - name: Customer waiver signature checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/customer_waiver_signatures_checks.sql
 
+      - name: Generic form field checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/generic_form_fields_checks.sql
+
       - name: Session revocation checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/session_revocation_checks.sql
 

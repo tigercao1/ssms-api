@@ -28,7 +28,7 @@ import {
   SignFormsThrottlerGuard,
 } from './sign-forms-throttler.guard';
 
-/** `/sign/forms/:slug`: public, no-login form signing (customer waivers), throttled per client IP. */
+/** `/sign/forms/:slug`: public, no-login signing of published forms, throttled per client IP. */
 @Controller('sign/forms')
 @UseGuards(SignFormsThrottlerGuard)
 export class SignFormsController {

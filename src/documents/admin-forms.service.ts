@@ -200,6 +200,7 @@ function toFormTemplate(row: FormTemplateRow, urls: SourceUrls): FormTemplate {
         draft: toVersion(draft, urls),
       };
     }),
+    defaultFields: { en: [], zh: [] },
     insertedAt: row.inserted_at,
     updatedAt: row.updated_at,
   };

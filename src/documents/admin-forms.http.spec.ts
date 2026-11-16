@@ -192,7 +192,7 @@ describe('form templates and signature lookups', () => {
           zh: { published: null, draft: null },
         },
       });
-      expect(form).not.toHaveProperty('defaultFields');
+      expect(form.defaultFields).toEqual({ en: [], zh: [] });
       await admin
         .post('/admin/documents/forms', { slug: 'lesson-waiver', titleEn: 'B' })
         .expect(409);

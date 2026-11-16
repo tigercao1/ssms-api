@@ -131,6 +131,7 @@ export interface FormTemplate {
   titleZh: string | null;
   emailCopy: boolean;
   languages: Record<DocumentLanguage, FormLanguageVersions>;
+  defaultFields: Record<DocumentLanguage, FormField[]>;
   insertedAt: string;
   updatedAt: string;
 }

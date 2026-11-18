@@ -13,7 +13,7 @@ export const MAX_FORM_SIGNATURE_WIDTH = 1200;
 export const MAX_FORM_SIGNATURE_HEIGHT = 600;
 export const MAX_FORM_SIGNATURE_PIXELS = 1000 * 600;
 
-const PNG_SIGNATURE_LENGTH = 8;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const IHDR_LENGTH = 13;
 const MAX_PALETTE_ENTRIES = 256;
 const BIT_DEPTHS_BY_COLOUR_TYPE: Record<number, readonly number[]> = {
@@ -30,7 +30,9 @@ const CHANNELS_BY_COLOUR_TYPE: Record<number, number> = {
   4: 2,
   6: 4,
 };
-const ALLOWED_CHUNK_TYPES = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+const CRITICAL_CHUNK_TYPES = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+const ANIMATION_CHUNK_TYPES = new Set(['acTL', 'fcTL', 'fdAT']);
+const CHUNK_TYPE = /^[A-Za-z]{4}$/;
 const MAX_FILTER_TYPE = 4;
 
 export type FormValue = string | boolean;
@@ -51,7 +53,7 @@ interface PngChunk {
 
 function readPngChunks(png: Buffer): PngChunk[] | null {
   const chunks: PngChunk[] = [];
-  let offset = PNG_SIGNATURE_LENGTH;
+  let offset = PNG_MAGIC.length;
   while (offset < png.length) {
     if (png.length - offset < 12) {
       return null;
@@ -61,16 +63,35 @@ function readPngChunks(png: Buffer): PngChunk[] | null {
       return null;
     }
     const typeAndData = png.subarray(offset + 4, end - 4);
-    if (crc32(typeAndData) !== png.readUInt32BE(end - 4)) {
+    const type = typeAndData.toString('latin1', 0, 4);
+    if (
+      !CHUNK_TYPE.test(type) ||
+      crc32(typeAndData) !== png.readUInt32BE(end - 4)
+    ) {
       return null;
     }
-    chunks.push({
-      type: typeAndData.toString('latin1', 0, 4),
-      data: typeAndData.subarray(4),
-    });
+    chunks.push({ type, data: typeAndData.subarray(4) });
     offset = end;
   }
   return chunks;
+}
+
+function isAncillary(type: string): boolean {
+  return type[0] >= 'a';
+}
+
+function encodePng(chunks: readonly PngChunk[]): Buffer {
+  return Buffer.concat([
+    PNG_MAGIC,
+    ...chunks.map(({ type, data }) => {
+      const typeAndData = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(data.length);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(typeAndData));
+      return Buffer.concat([length, typeAndData, crc]);
+    }),
+  ]);
 }
 
 function inflateExactly(compressed: Buffer, length: number): Buffer | null {
@@ -85,9 +106,9 @@ function inflateExactly(compressed: Buffer, length: number): Buffer | null {
 function readSignaturePng(label: string, raw: unknown): Uint8Array {
   const png = Buffer.from(decodeSignaturePng(label, raw));
   const notPng = () => new SigningInputError(`Signature ${label} is not a PNG`);
-  const unsupported = () =>
+  const unsupported = (reason: string) =>
     new SigningInputError(
-      `Signature ${label} must be an 8-bit, non-interlaced, single-frame PNG without metadata`,
+      `Signature ${label} could not be used because ${reason}. Please clear it and draw it again`,
     );
   const chunks = readPngChunks(png);
   if (
@@ -100,8 +121,15 @@ function readSignaturePng(label: string, raw: unknown): Uint8Array {
   ) {
     throw notPng();
   }
-  if (chunks.some(({ type }) => !ALLOWED_CHUNK_TYPES.has(type))) {
-    throw unsupported();
+  if (chunks.some(({ type }) => ANIMATION_CHUNK_TYPES.has(type))) {
+    throw unsupported('it is animated');
+  }
+  if (
+    chunks.some(
+      ({ type }) => !isAncillary(type) && !CRITICAL_CHUNK_TYPES.has(type),
+    )
+  ) {
+    throw unsupported('it uses an image format we cannot read');
   }
   const types = chunks.map(({ type }) => type);
   const firstIdat = types.indexOf('IDAT');
@@ -133,13 +161,15 @@ function readSignaturePng(label: string, raw: unknown): Uint8Array {
       `Signature ${label} is too large: at most ${MAX_FORM_SIGNATURE_WIDTH} pixels wide, ${MAX_FORM_SIGNATURE_HEIGHT} high and ${MAX_FORM_SIGNATURE_PIXELS} in total`,
     );
   }
-  if (
-    !BIT_DEPTHS_BY_COLOUR_TYPE[colourType]?.includes(bitDepth) ||
-    compression !== 0 ||
-    filter !== 0 ||
-    interlace !== 0
-  ) {
-    throw unsupported();
+  const bitDepths = BIT_DEPTHS_BY_COLOUR_TYPE[colourType];
+  if (bitDepths && !bitDepths.includes(bitDepth)) {
+    throw unsupported(`it uses ${bitDepth}-bit colour, not 8-bit`);
+  }
+  if (interlace !== 0) {
+    throw unsupported('it is interlaced');
+  }
+  if (!bitDepths || compression !== 0 || filter !== 0) {
+    throw unsupported('it uses an image format we cannot read');
   }
   const palette = palettes[0]?.data;
   if (
@@ -166,7 +196,12 @@ function readSignaturePng(label: string, raw: unknown): Uint8Array {
       throw notPng();
     }
   }
-  return png;
+  return encodePng([
+    chunks[0],
+    ...palettes,
+    ...idats,
+    chunks[chunks.length - 1],
+  ]);
 }
 
 function parseChecked(field: FormField, raw: unknown): boolean {

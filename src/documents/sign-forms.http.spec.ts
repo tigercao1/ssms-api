@@ -46,12 +46,18 @@ const SLUG = 'lesson-waiver';
 const TEMPLATE_ID = randomUUID();
 const png = (buffer = signaturePng()) =>
   `data:image/png;base64,${buffer.toString('base64')}`;
-const chromiumSignature = () =>
-  readFileSync(join(__dirname, '../../test/fixtures/chromium-signature.png'));
+const fixture = (name: string) => () =>
+  readFileSync(join(__dirname, `../../test/fixtures/${name}`));
+const chromiumSignature = fixture('chromium-signature.png');
 const [IHDR, IDAT, IEND] = pngChunks(signaturePng());
 const textBomb = (megabytes: number) =>
   deflateSync(Buffer.alloc(megabytes * 1024 * 1024), { level: 9 });
-const TEXT_CHUNKS: [string, () => Buffer][] = [
+const METADATA_CHUNKS: [string, () => Buffer][] = [
+  ['sRGB', () => pngChunk('sRGB', Buffer.from([0]))],
+  ['gAMA', () => pngChunk('gAMA', Buffer.from([0, 0, 0xb1, 0x8f]))],
+  ['pHYs', () => pngChunk('pHYs', Buffer.from('00000b1300000b1301', 'hex'))],
+  ['iCCP', () => pngChunk('iCCP', Buffer.from('ICC Profile\0\0x'))],
+  ['eXIf', () => pngChunk('eXIf', Buffer.from('MM\0*\0\0\0\x08\0\0'))],
   ['tEXt', () => pngChunk('tEXt', Buffer.from('Comment\0signed on an iPad'))],
   [
     'zTXt',
@@ -511,7 +517,7 @@ describe('public form signing (/sign/forms)', () => {
             participant_signature: png(blankPng(300, 100, { interlace: 1 })),
           },
         },
-        /8-bit, non-interlaced, single-frame PNG/,
+        /could not be used because it is interlaced/,
       ],
       [
         'a 16-bit signature',
@@ -522,7 +528,7 @@ describe('public form signing (/sign/forms)', () => {
             ),
           },
         },
-        /8-bit, non-interlaced, single-frame PNG/,
+        /could not be used because it uses 16-bit colour, not 8-bit/,
       ],
       [
         'an animated signature',
@@ -531,7 +537,23 @@ describe('public form signing (/sign/forms)', () => {
             participant_signature: png(blankPng(300, 100, { animated: true })),
           },
         },
-        /8-bit, non-interlaced, single-frame PNG/,
+        /could not be used because it is animated/,
+      ],
+      [
+        'a signature with an unknown critical chunk',
+        {
+          signatures: {
+            participant_signature: png(
+              assemblePng([
+                IHDR,
+                pngChunk('ABCD', Buffer.alloc(4)),
+                IDAT,
+                IEND,
+              ]),
+            ),
+          },
+        },
+        /could not be used because it uses an image format we cannot read/,
       ],
       [
         'a signature with a truncated header',
@@ -566,10 +588,6 @@ describe('public form signing (/sign/forms)', () => {
     it.each<[string, () => Buffer]>([
       ['a 10,000 × 10,000 signature', () => blankPng(10_000, 10_000)],
       ['a 1 × 1 header in front of a 10,000 × 10,000 image', repeatedHeader],
-      [
-        'a signature carrying a compressed text bomb',
-        () => assemblePng([IHDR, TEXT_CHUNKS[1][1](), IDAT, IEND]),
-      ],
     ])('rejects %s without decoding it', async (label, build) => {
       const bomb = png(build());
       global.gc?.();
@@ -638,10 +656,12 @@ describe('public form signing (/sign/forms)', () => {
       expect(storage.objects.size).toBe(0);
     });
 
-    it.each(TEXT_CHUNKS)(
-      '400s for a signature carrying metadata in %s',
+    it.each(METADATA_CHUNKS)(
+      'accepts a signature carrying %s and stamps it without that chunk',
       async (_type, chunk) => {
-        const res = await complete(
+        const render = jest.spyOn(formPdf, 'renderFormPdf');
+
+        await complete(
           validBody({
             signatures: {
               participant_signature: png(
@@ -649,12 +669,57 @@ describe('public form signing (/sign/forms)', () => {
               ),
             },
           }),
-        ).expect(400);
+        ).expect(201);
 
-        expect((res.body as { message: string }).message).toMatch(
-          /single-frame PNG without metadata/,
+        const stamped =
+          render.mock.calls[0][0].signatures.participant_signature;
+        expect(Buffer.from(stamped)).toEqual(signaturePng());
+        expect(forms.signed).toHaveLength(1);
+      },
+    );
+
+    it('accepts a signature carrying a compressed text bomb without decoding it', async () => {
+      const bomb = png(
+        assemblePng([IHDR, METADATA_CHUNKS[6][1](), IDAT, IEND]),
+      );
+      global.gc?.();
+      const before = process.memoryUsage().rss;
+      let peak = before;
+      const sampler = setInterval(() => {
+        peak = Math.max(peak, process.memoryUsage().rss);
+      }, 5);
+
+      await complete(
+        validBody({ signatures: { participant_signature: bomb } }),
+      ).expect(201);
+
+      clearInterval(sampler);
+      peak = Math.max(peak, process.memoryUsage().rss);
+      expect(peak - before).toBeLessThan(50 * 1024 * 1024);
+      expect(forms.signed).toHaveLength(1);
+    });
+
+    it.each([
+      ['Safari on an iPhone', 'webkit-signature.png'],
+      ['Safari on a Display P3 canvas', 'webkit-display-p3-signature.png'],
+    ])(
+      'accepts a signature exported by %s and stamps only its image data',
+      async (_browser, name) => {
+        const render = jest.spyOn(formPdf, 'renderFormPdf');
+        const safari = fixture(name)();
+        expect(pngChunks(safari).length).toBeGreaterThan(3);
+
+        await complete(
+          validBody({ signatures: { participant_signature: png(safari) } }),
+        ).expect(201);
+
+        const stamped = Buffer.from(
+          render.mock.calls[0][0].signatures.participant_signature,
         );
-        expect(forms.signed).toHaveLength(0);
+        expect(
+          pngChunks(stamped).map((c) => c.toString('latin1', 4, 8)),
+        ).toEqual(['IHDR', 'IDAT', 'IEND']);
+        expect(storage.objects.size).toBe(1);
       },
     );
 

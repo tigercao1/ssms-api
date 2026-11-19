@@ -35,6 +35,7 @@ const MINUTE = 60_000;
 const NOW = Date.parse('2026-12-10T17:00:00.000Z');
 const CLASS_A = 'c0000000-0000-4000-8000-0000000000a1';
 const CLASS_B = 'c0000000-0000-4000-8000-0000000000b2';
+const CLASS_C = 'c0000000-0000-4000-8000-0000000000c3';
 const KAI_ID = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
 
 const at = (ms: number) => new Date(ms).toISOString();
@@ -77,6 +78,33 @@ function build() {
       ...overrides,
     });
   return { booking, repo, mailer, clock, env, queue, settings, worker, lesson };
+}
+
+async function tickEveryMinute(
+  ctx: ReturnType<typeof build>,
+  until: number,
+): Promise<[string, number, number][]> {
+  const worker = ctx.worker();
+  const sends: [string, number, number][] = [];
+  for (; ctx.clock.value < until; ctx.clock.value += MINUTE) {
+    const before = ctx.mailer.sent.length;
+    await worker.tick();
+    for (const r of ctx.mailer.sent.slice(before)) {
+      const { classIds, offsetMinutes } = r.metadata as {
+        classIds: string[];
+        offsetMinutes: number;
+      };
+      const start = Date.parse(
+        ctx.booking.classes.find((c) => c.id === classIds[0])!.starts_at,
+      );
+      sends.push([
+        classIds[0],
+        offsetMinutes,
+        (start - ctx.clock.value) / MINUTE,
+      ]);
+    }
+  }
+  return sends;
 }
 
 const recipients = (sent: SendEmailRequest[]) =>
@@ -410,11 +438,13 @@ describe('BookingRemindersWorker', () => {
     ).toEqual([60, 60, 60]);
   });
 
-  it('sends only the shortest reminder when several are due at once', async () => {
-    ctx.lesson(NOW + 30 * MINUTE, {
-      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
-    });
+  it('after an outage covering both reminder times sends only the 1-hour reminder and supersedes the 1-day one', async () => {
+    const start = NOW + 26 * 60 * MINUTE;
+    ctx.lesson(start, { starts_at_set_at: at(NOW - 3 * 1440 * MINUTE) });
     const worker = ctx.worker();
+    await worker.tick();
+    expect(ctx.mailer.sent).toEqual([]);
+    ctx.clock.value = start - 30 * MINUTE;
     await expect(worker.tick()).resolves.toEqual({
       sent: 3,
       skipped: 3,
@@ -456,56 +486,58 @@ describe('BookingRemindersWorker', () => {
     expect(ctx.mailer.sent).toHaveLength(3);
   });
 
-  it('sends nothing on the first run for reminders that fell due before reminders were on', async () => {
+  it('on first enable sends nothing already overdue and later reminders on schedule', async () => {
     ctx.repo.settings.enabled_at = at(NOW);
-    ctx.lesson(NOW + 120 * MINUTE, {
-      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
-    });
-    ctx.lesson(NOW + 30 * MINUTE, {
-      id: CLASS_B,
-      instructor_id: BEN_ID,
-      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
-    });
-    const worker = ctx.worker();
-    await worker.tick();
-    expect(ctx.mailer.sent).toEqual([]);
-    expect(ctx.repo.sends).toEqual([]);
-    ctx.clock.value = NOW + 60 * MINUTE;
-    await worker.tick();
-    expect(
-      ctx.mailer.sent.map(
-        (r) => (r.metadata as { offsetMinutes: number }).offsetMinutes,
-      ),
-    ).toEqual([60, 60, 60]);
+    const bookedLongAgo = { starts_at_set_at: at(NOW - 7 * 1440 * MINUTE) };
+    const lessons = {
+      [CLASS_A]: NOW + 30 * MINUTE,
+      [CLASS_B]: NOW + 5 * 60 * MINUTE,
+      [CLASS_C]: NOW + 23 * 60 * MINUTE,
+    };
+    for (const [id, start] of Object.entries(lessons)) {
+      ctx.lesson(start, { id, customer_ids: [MEI_ID], ...bookedLongAgo });
+    }
+    const sends = await tickEveryMinute(ctx, NOW + 24 * 60 * MINUTE);
+    expect(sends).toEqual([
+      [CLASS_B, 60, 60],
+      [CLASS_B, 60, 60],
+      [CLASS_C, 60, 60],
+      [CLASS_C, 60, 60],
+    ]);
   });
 
-  it('does not catch up on reminders that fell due while reminders were off', async () => {
+  it('sends no backlog when reminders are turned back on after a day off', async () => {
     const admin = { userId: AMY_ID, role: 'admin' } as const;
-    const start = NOW + 1440 * MINUTE + 120 * MINUTE;
-    ctx.lesson(start, { starts_at_set_at: at(NOW - 3 * 1440 * MINUTE) });
-    await ctx.settings.update(
-      { enabled: false, offsetsMinutes: [1440, 60] },
-      admin,
-    );
-    ctx.clock.value = start - 120 * MINUTE;
-    const worker = ctx.worker();
-    await worker.tick();
-    await ctx.settings.update(
-      { enabled: true, offsetsMinutes: [1440, 60] },
-      admin,
-    );
-    expect(ctx.repo.settings.enabled_at).toBe(at(start - 120 * MINUTE));
-    ctx.clock.value += MINUTE;
-    await worker.tick();
-    expect(ctx.mailer.sent).toEqual([]);
-    await ctx.settings.update(
-      { enabled: true, offsetsMinutes: [1440, 60] },
-      admin,
-    );
-    expect(ctx.repo.settings.enabled_at).toBe(at(start - 120 * MINUTE));
-    ctx.clock.value = start - 60 * MINUTE;
-    await worker.tick();
-    expect(ctx.mailer.sent).toHaveLength(3);
+    const settings = { offsetsMinutes: [1440, 60] };
+    const bookedLongAgo = { starts_at_set_at: at(NOW - 7 * 1440 * MINUTE) };
+    ctx.lesson(NOW + 20 * 60 * MINUTE, {
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
+    });
+    ctx.lesson(NOW + 26 * 60 * MINUTE, {
+      id: CLASS_B,
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
+    });
+    ctx.lesson(NOW + 50 * 60 * MINUTE, {
+      id: CLASS_C,
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
+    });
+    await ctx.settings.update({ enabled: false, ...settings }, admin);
+    expect(await tickEveryMinute(ctx, NOW + 1440 * MINUTE)).toEqual([]);
+    await ctx.settings.update({ enabled: true, ...settings }, admin);
+    expect(ctx.repo.settings.enabled_at).toBe(at(NOW + 1440 * MINUTE));
+    expect(await tickEveryMinute(ctx, NOW + 51 * 60 * MINUTE)).toEqual([
+      [CLASS_B, 60, 60],
+      [CLASS_B, 60, 60],
+      [CLASS_C, 1440, 1440],
+      [CLASS_C, 1440, 1440],
+      [CLASS_C, 60, 60],
+      [CLASS_C, 60, 60],
+    ]);
+    await ctx.settings.update({ enabled: true, ...settings }, admin);
+    expect(ctx.repo.settings.enabled_at).toBe(at(NOW + 1440 * MINUTE));
   });
 
   it('does not try to claim reminders it already claimed', async () => {

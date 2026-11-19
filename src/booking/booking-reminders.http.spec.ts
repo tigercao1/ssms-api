@@ -72,7 +72,22 @@ describe('booking reminder settings HTTP', () => {
     expect(res.body).toEqual({
       enabled: true,
       offsetsMinutes: [1440, 60],
+      enabledAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+  });
+
+  it('moves enabledAt only when reminders are turned back on', async () => {
+    const kept = await put({ enabled: true, offsetsMinutes: [60] }).expect(200);
+    expect(kept.body).toMatchObject({ enabledAt: '2026-10-01T00:00:00.000Z' });
+    const off = await put({ enabled: false, offsetsMinutes: [60] }).expect(200);
+    expect(off.body).toMatchObject({ enabledAt: '2026-10-01T00:00:00.000Z' });
+    const on = await put({ enabled: true, offsetsMinutes: [60] }).expect(200);
+    expect(on.body).toMatchObject({ enabledAt: '2026-12-10T17:00:00.000Z' });
+    const res = await http().get(ROUTE).set('Authorization', admin).expect(200);
+    expect(res.body).toMatchObject({
+      enabled: true,
+      enabledAt: '2026-12-10T17:00:00.000Z',
     });
   });
 

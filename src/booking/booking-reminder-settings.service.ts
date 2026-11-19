@@ -20,6 +20,7 @@ export const REMINDER_OFFSET_RANGE = `Each reminder time must be a whole number 
 export interface BookingReminderSettings {
   enabled: boolean;
   offsetsMinutes: number[];
+  enabledAt: string;
   updatedAt: string;
 }
 
@@ -80,6 +81,7 @@ function toSettings(row: ReminderSettingsRow): BookingReminderSettings {
   return {
     enabled: row.enabled,
     offsetsMinutes: sortedOffsets(row.offsets_minutes ?? []),
+    enabledAt: row.enabled_at,
     updatedAt: row.updated_at,
   };
 }

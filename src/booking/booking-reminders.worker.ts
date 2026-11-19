@@ -36,11 +36,6 @@ const MINUTE_MS = 60_000;
 
 export type LessonRemindersRun = Record<ReminderOutcome, number>;
 
-interface InFlight {
-  started: boolean;
-  abandoned: boolean;
-}
-
 export function reminderDue(
   lesson: Pick<ReminderClassRow, 'starts_at' | 'starts_at_set_at'>,
   offsetMinutes: number,
@@ -83,7 +78,6 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BookingRemindersWorker.name);
   private timer?: NodeJS.Timeout;
   private draining?: Promise<LessonRemindersRun>;
-  private inFlight?: InFlight;
   private stopping = false;
 
   constructor(
@@ -122,17 +116,13 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
       return;
     }
     let deadline: ReturnType<typeof setTimeout> | undefined;
-    const finished = await Promise.race([
-      this.draining.then(() => true),
-      new Promise<boolean>((resolve) => {
-        deadline = setTimeout(() => resolve(false), LESSON_REMINDERS_DRAIN_MS);
+    await Promise.race([
+      this.draining,
+      new Promise<void>((resolve) => {
+        deadline = setTimeout(resolve, LESSON_REMINDERS_DRAIN_MS);
       }),
     ]);
     clearTimeout(deadline);
-    const pending = this.inFlight;
-    if (!finished && pending && !pending.started) {
-      pending.abandoned = true;
-    }
   }
 
   tick(): Promise<LessonRemindersRun> {
@@ -214,28 +204,17 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     recipient: Recipient,
     email: string,
   ): Promise<ReminderOutcome | null> {
-    const flight: InFlight = { started: false, abandoned: false };
-    this.inFlight = flight;
-    try {
-      return await new Promise<ReminderOutcome | null>((resolve, reject) => {
-        const queued = this.queue.enqueue(async () => {
-          if (flight.abandoned) {
-            resolve(null);
-            return;
-          }
-          flight.started = true;
-          await this.claimAndSend(lesson, offset, recipient, email).then(
-            resolve,
-            reject,
-          );
-        });
-        if (!queued) {
-          resolve(null);
-        }
-      });
-    } finally {
-      this.inFlight = undefined;
-    }
+    return new Promise<ReminderOutcome | null>((resolve, reject) => {
+      const queued = this.queue.enqueue(() =>
+        this.claimAndSend(lesson, offset, recipient, email).then(
+          resolve,
+          reject,
+        ),
+      );
+      if (!queued) {
+        resolve(null);
+      }
+    });
   }
 
   private async claimAndSend(

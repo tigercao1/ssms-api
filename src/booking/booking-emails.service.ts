@@ -211,7 +211,7 @@ export class BookingEmailsService {
                 end: new Date(notice.ends_at),
                 summary: summaryFor(recipient.audience, notice),
                 location: notice.location?.name ?? null,
-                attendees: attendeesOf(notice),
+                attendees: attendeesOf(notice, recipient),
               })),
             }),
             'utf8',
@@ -262,8 +262,13 @@ function recipientsOf(notice: ClassNoticeRow): Recipient[] {
   ];
 }
 
-function attendeesOf(notice: ClassNoticeRow): IcsPerson[] {
-  return recipientsOf(notice)
+function attendeesOf(
+  notice: ClassNoticeRow,
+  recipient: Recipient,
+): IcsPerson[] {
+  const attendees =
+    recipient.audience === 'instructor' ? recipientsOf(notice) : [recipient];
+  return attendees
     .filter((r): r is Recipient & { email: string } => Boolean(r.email))
     .map((r) => ({ email: r.email, name: r.fullName }));
 }
@@ -279,7 +284,8 @@ function emailVars(
     lessonNameZh: first.lesson_type?.name_zh ?? null,
     instructorNameEn: first.instructor?.display_name_en ?? '',
     instructorNameZh: first.instructor?.display_name_zh ?? null,
-    customerNames: customerNames(first),
+    customerNames:
+      recipient.audience === 'instructor' ? customerNames(first) : [],
     location: first.location?.name ?? null,
     lessons: delivery.notices.map(timeOf),
     ...(delivery.previous ? { previous: [timeOf(delivery.previous)] } : {}),

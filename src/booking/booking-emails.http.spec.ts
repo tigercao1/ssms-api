@@ -216,7 +216,7 @@ describe('booking emails HTTP', () => {
       expect(calendar).toContain(`:mailto:${FAKE_SENDER_ADDRESS}`);
       expect(calendar).toContain('CN="Mei Wang"');
       expect(calendar).toContain('mailto:mei@example.com');
-      expect(calendar).toContain('mailto:amy@example.com');
+      expect(calendar).not.toContain('mailto:amy@example.com');
       expect(ics(instructor)).toContain('SUMMARY:Private 1h · Mei Wang');
       expect(customer.idempotencyKey).not.toBe(instructor.idempotencyKey);
     });
@@ -345,6 +345,93 @@ describe('booking emails HTTP', () => {
       expect(sent(ctx.mailer)).toEqual([
         ['booking.confirmed.instructor', 'amy@example.com', 'zh-CN'],
       ]);
+    });
+  });
+
+  describe('attendee privacy in a class with two customers', () => {
+    const attendees = (mail: SendEmailRequest) =>
+      ics(mail).match(/^ATTENDEE.*$/gm) ?? [];
+    const byRecipient = (mailer: RecordingMailer) =>
+      Object.fromEntries(mailer.sent.map((m) => [m.to, m]));
+
+    beforeEach(() => {
+      ctx.repo.customers.find((c) => c.id === LEO_ID)!.email =
+        'leo@example.com';
+    });
+
+    const expectPrivate = (mails: Record<string, SendEmailRequest>) => {
+      const mei = mails['mei@example.com'];
+      const leo = mails['leo@example.com'];
+      const amy = mails['amy@example.com'];
+      for (const [own, other] of [
+        [mei, { name: 'Leo', email: 'leo@example.com' }],
+        [leo, { name: 'Mei', email: 'mei@example.com' }],
+      ] as const) {
+        expect(attendees(own).length).toBeGreaterThan(0);
+        expect(
+          attendees(own).every((line) => line.endsWith(`mailto:${own.to}`)),
+        ).toBe(true);
+        expect(ics(own)).not.toContain(other.name);
+        expect(ics(own)).not.toContain(other.email);
+        expect(ics(own)).not.toContain('amy@example.com');
+        expect(JSON.stringify(own.vars)).not.toContain(other.name);
+        expect(JSON.stringify(own.vars)).not.toContain(other.email);
+      }
+      for (const email of [
+        'mei@example.com',
+        'leo@example.com',
+        'amy@example.com',
+      ]) {
+        expect(ics(amy)).toContain(`mailto:${email}`);
+      }
+      expect(ics(amy)).toContain('CN="Mei Wang"');
+      expect(ics(amy)).toContain('CN="Leo Chen"');
+    };
+
+    it("lists only the customer in their own ICS and everyone in the instructor's", async () => {
+      await post(booking({ customerIds: [MEI_ID, LEO_ID] })).expect(201);
+      expect(ctx.mailer.sent).toHaveLength(3);
+      expectPrivate(byRecipient(ctx.mailer));
+    });
+
+    it('keeps a weekly series ICS private to each customer', async () => {
+      await post(
+        booking({
+          customerIds: [MEI_ID, LEO_ID],
+          repeat: { weekly: true, count: 3 },
+        }),
+      ).expect(201);
+      const mails = byRecipient(ctx.mailer);
+      expect(ics(mails['mei@example.com']).match(/BEGIN:VEVENT/g)).toHaveLength(
+        3,
+      );
+      expect(attendees(mails['mei@example.com'])).toHaveLength(3);
+      expectPrivate(mails);
+    });
+
+    it('keeps a cancellation ICS private to each customer', async () => {
+      const [lesson] = created(
+        await post(booking({ customerIds: [MEI_ID, LEO_ID] })).expect(201),
+      );
+      ctx.mailer.sent.length = 0;
+      await cancel(lesson.id).expect(200);
+      const mails = byRecipient(ctx.mailer);
+      expect(ics(mails['leo@example.com'])).toContain('METHOD:CANCEL');
+      expectPrivate(mails);
+    });
+
+    it('sends a removed customer a cancellation naming only them', async () => {
+      const [lesson] = created(
+        await post(booking({ customerIds: [MEI_ID, LEO_ID] })).expect(201),
+      );
+      ctx.mailer.sent.length = 0;
+      await patch(lesson.id, { customerIds: [MEI_ID] }).expect(200);
+      const leo = byRecipient(ctx.mailer)['leo@example.com'];
+      expect(leo.template).toBe('booking.cancelled.customer');
+      expect(attendees(leo)).toEqual([
+        expect.stringMatching(/CN="Leo Chen".*:mailto:leo@example\.com$/),
+      ]);
+      expect(ics(leo)).not.toContain('mei@example.com');
     });
   });
 

@@ -11,7 +11,11 @@ import {
 } from '../../test/helpers/booking-fakes';
 import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import type { AuditService } from '../audit/audit.service';
-import { PROCESS_GROUP_KEY } from '../config/process-group';
+import {
+  FLY_APP_NAME_KEY,
+  PROCESS_GROUP_KEY,
+  PRODUCTION_FLY_APP,
+} from '../config/process-group';
 import type {
   BookingEmailVars,
   SendEmailRequest,
@@ -20,7 +24,7 @@ import { BookingEmailQueue } from './booking-email-queue';
 import { BookingReminderSettingsService } from './booking-reminder-settings.service';
 import {
   BookingRemindersWorker,
-  LESSON_REMINDER_GRACE_MS,
+  LESSON_REMINDER_STALE_CLAIM_MS,
   LESSON_REMINDERS_DRAIN_MS,
   LESSON_REMINDERS_FLAG,
   LESSON_REMINDERS_INTERVAL_MS,
@@ -76,6 +80,7 @@ function build() {
       ends_at: at(startsAt + 60 * MINUTE),
       location_id: BLUE_ID,
       customer_ids: [MEI_ID, KAI_ID],
+      starts_at_set_at: at(NOW),
       ...overrides,
     });
   return { booking, repo, mailer, clock, env, queue, worker, lesson };
@@ -85,29 +90,38 @@ const recipients = (sent: SendEmailRequest[]) =>
   sent.map((r) => `${r.template} ${r.to}`).sort();
 
 describe('reminderDue', () => {
-  const start = NOW + 60 * MINUTE;
+  const DAY = 1440 * MINUTE;
+  const longAgo = NOW - 7 * DAY;
 
   it.each([
-    ['exactly at start minus the offset', start, 60, true],
-    ['a minute before it is due', start + MINUTE, 60, false],
-    ['within the grace window', start - 4 * MINUTE, 60, true],
+    ['exactly at start minus the offset', NOW + 60 * MINUTE, longAgo, 60, true],
+    ['a minute before it is due', NOW + 61 * MINUTE, longAgo, 60, false],
     [
-      'just inside the grace window',
-      start - LESSON_REMINDER_GRACE_MS + 1,
+      'late, while the lesson is still ahead',
+      NOW + 2 * MINUTE,
+      longAgo,
       60,
       true,
     ],
+    ['a lesson starting right now', NOW, longAgo, 15, false],
+    ['a lesson that already started', NOW - MINUTE, longAgo, 15, false],
+    ['booked exactly when it fell due', NOW + 60 * MINUTE, NOW, 60, true],
+    ['booked after it fell due', NOW + 30 * MINUTE, NOW - MINUTE, 60, false],
     [
-      'once the grace window has passed',
-      start - LESSON_REMINDER_GRACE_MS,
-      60,
+      'a day-before reminder for a lesson booked an hour ahead',
+      NOW + 60 * MINUTE,
+      NOW,
+      1440,
       false,
     ],
-    ['a day-before reminder for a lesson an hour away', start, 1440, false],
-    ['a lesson that already started', NOW - MINUTE, 15, false],
-    ['a lesson starting right now', NOW, 15, false],
-  ])('%s → %s', (_name, startsAt, offset, due) => {
-    expect(reminderDue(at(startsAt), offset, NOW)).toBe(due);
+  ])('%s → %s', (_name, startsAt, setAt, offset, due) => {
+    expect(
+      reminderDue(
+        { starts_at: at(startsAt), starts_at_set_at: at(setAt) },
+        offset,
+        NOW,
+      ),
+    ).toBe(due);
   });
 });
 
@@ -258,9 +272,21 @@ describe('BookingRemindersWorker', () => {
   });
 
   it.each([
-    [{ [LESSON_REMINDERS_FLAG]: 'false', NODE_ENV: 'production' }, 0],
+    [
+      {
+        [LESSON_REMINDERS_FLAG]: 'false',
+        [FLY_APP_NAME_KEY]: PRODUCTION_FLY_APP,
+      },
+      0,
+    ],
+    [{ [FLY_APP_NAME_KEY]: PRODUCTION_FLY_APP }, 3],
+    [{ [FLY_APP_NAME_KEY]: 'ssms-api-dev', NODE_ENV: 'production' }, 0],
+    [{ NODE_ENV: 'production' }, 0],
     [{ NODE_ENV: 'development' }, 0],
-    [{ NODE_ENV: 'production' }, 3],
+    [
+      { [LESSON_REMINDERS_FLAG]: 'true', [FLY_APP_NAME_KEY]: 'ssms-api-dev' },
+      3,
+    ],
   ])('follows the %j environment', async (env, count) => {
     delete ctx.env[LESSON_REMINDERS_FLAG];
     Object.assign(ctx.env, env);
@@ -288,12 +314,18 @@ describe('BookingRemindersWorker', () => {
     );
     ctx.clock.value = moved - 60 * MINUTE;
     await ctx.worker().tick();
-    expect(ctx.mailer.sent).toHaveLength(6);
+    expect(ctx.mailer.sent).toHaveLength(9);
     expect(
       ctx.mailer.sent
         .slice(3)
-        .map((r) => (r.vars as BookingEmailVars).lessons[0].startsAt),
-    ).toEqual([at(moved), at(moved), at(moved)]);
+        .map((r) => [
+          (r.metadata as { offsetMinutes: number }).offsetMinutes,
+          (r.vars as BookingEmailVars).lessons[0].startsAt,
+        ]),
+    ).toEqual([
+      ...Array<[number, string]>(3).fill([1440, at(moved)]),
+      ...Array<[number, string]>(3).fill([60, at(moved)]),
+    ]);
   });
 
   it('skips cancelled lessons', async () => {
@@ -309,14 +341,111 @@ describe('BookingRemindersWorker', () => {
     expect(ctx.mailer.sent).toEqual([]);
   });
 
-  it('skips reminders that were already overdue, not sending them late', async () => {
-    ctx.lesson(NOW + 30 * MINUTE);
-    const worker = ctx.worker();
-    await worker.tick();
-    ctx.clock.value += MINUTE;
-    await worker.tick();
+  it.each([
+    ['imported', 'app_import'],
+    ['webhook-created', 'app_webhook'],
+  ] as const)('skips %s lessons', async (_name, source) => {
+    ctx.lesson(NOW + 60 * MINUTE, { source });
+    await ctx.worker().tick();
     expect(ctx.mailer.sent).toEqual([]);
     expect(ctx.repo.sends).toEqual([]);
+  });
+
+  it('sends no reminder whose time had passed when the lesson was booked', async () => {
+    ctx.lesson(NOW + 30 * MINUTE);
+    const worker = ctx.worker();
+    for (let i = 0; i < 30; i += 1) {
+      await worker.tick();
+      ctx.clock.value += MINUTE;
+    }
+    expect(ctx.mailer.sent).toEqual([]);
+    expect(ctx.repo.sends).toEqual([]);
+  });
+
+  it('sends a day-before reminder late after the worker was down', async () => {
+    const start = NOW + 120 * MINUTE;
+    ctx.lesson(start, { starts_at_set_at: at(NOW - 3 * 1440 * MINUTE) });
+    await expect(ctx.worker().tick()).resolves.toEqual({
+      sent: 3,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(
+      ctx.mailer.sent.map(
+        (r) => (r.metadata as { offsetMinutes: number }).offsetMinutes,
+      ),
+    ).toEqual([1440, 1440, 1440]);
+  });
+
+  it('sends only the reminders still ahead after a reschedule to three hours away', async () => {
+    const original = NOW + 5 * 1440 * MINUTE;
+    ctx.lesson(original);
+    const moved = NOW + 180 * MINUTE;
+    await ctx.booking.rebookClass(
+      CLASS_A,
+      {
+        instructor_id: AMY_ID,
+        lesson_type_id: null,
+        starts_at: at(moved),
+        ends_at: at(moved + 60 * MINUTE),
+        google_calendar_id: null,
+        notes: null,
+      },
+      null,
+    );
+    const worker = ctx.worker();
+    for (let t = NOW; t < moved; t += MINUTE) {
+      ctx.clock.value = t;
+      await worker.tick();
+    }
+    expect(
+      ctx.mailer.sent.map(
+        (r) => (r.metadata as { offsetMinutes: number }).offsetMinutes,
+      ),
+    ).toEqual([60, 60, 60]);
+  });
+
+  it('does not try to claim reminders it already claimed', async () => {
+    ctx.lesson(NOW + 60 * MINUTE);
+    const worker = ctx.worker();
+    await worker.tick();
+    const claim = jest.spyOn(ctx.repo, 'claim');
+    ctx.clock.value += MINUTE;
+    await worker.tick();
+    expect(claim).not.toHaveBeenCalled();
+    expect(ctx.mailer.sent).toHaveLength(3);
+  });
+
+  it('marks a claim left behind for 15 minutes failed and warns without addresses', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    ctx.lesson(NOW + 1440 * MINUTE);
+    await ctx.repo.claim({
+      class_id: CLASS_A,
+      starts_at: at(NOW + 1440 * MINUTE),
+      offset_minutes: 1440,
+      audience: 'customer',
+      recipient_id: MEI_ID,
+    });
+    const worker = ctx.worker();
+    ctx.clock.value += LESSON_REMINDER_STALE_CLAIM_MS;
+    await worker.tick();
+    expect(warn).not.toHaveBeenCalled();
+    ctx.clock.value += 1;
+    await worker.tick();
+    const stale = ctx.repo.sends.find((s) => s.recipient_id === MEI_ID);
+    expect(stale).toMatchObject({ status: 'failed', reason: 'stale_claim' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [message] = warn.mock.calls[0] as [string];
+    expect(message).toContain(stale!.id);
+    expect(message).toContain(CLASS_A);
+    expect(message).toContain('stale_claim');
+    expect(message).not.toMatch(/@|mei/i);
+    expect(
+      ctx.mailer.sentOf('booking.reminder.customer').map((r) => r.to),
+    ).toEqual(['kai@example.com']);
+    ctx.clock.value += MINUTE;
+    await worker.tick();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('sends a reminder that falls due shortly after booking', async () => {
@@ -357,7 +486,8 @@ describe('BookingRemindersWorker', () => {
 
   it('logs and stops the tick when the database fails', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
-    ctx.repo.classesStartingBetween = () => Promise.reject(new Error('down'));
+    ctx.repo.remindableClassesStartingBetween = () =>
+      Promise.reject(new Error('down'));
     await expect(ctx.worker().tick()).resolves.toEqual({
       sent: 0,
       skipped: 0,

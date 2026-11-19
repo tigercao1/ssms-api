@@ -54,6 +54,7 @@ declare
   quiet constant uuid := '55555555-5555-4555-8555-555555555581';
   loud constant uuid := '55555555-5555-4555-8555-555555555582';
   v_count int;
+  v_set_at timestamptz;
 begin
   perform book_classes(null, jsonb_build_array(
     jsonb_build_object('id', quiet, 'instructor_id', i, 'lesson_type_id', lt,
@@ -101,6 +102,47 @@ begin
     insert into booking_reminder_sends (class_id, starts_at, offset_minutes, audience, recipient_id)
     values (loud, '2030-02-02T15:00:00Z', 60, 'admin', i);
     raise exception 'an unknown reminder audience was accepted';
+  exception when check_violation then null;
+  end;
+
+  if (select starts_at_set_at from classes where id = loud) <> now() then
+    raise exception 'a booked class must record when it got its start time';
+  end if;
+
+  alter table classes disable trigger classes_stamp_starts_at_set_at;
+  update classes set starts_at_set_at = '2000-01-01T00:00:00Z' where id = loud;
+  alter table classes enable trigger classes_stamp_starts_at_set_at;
+  update classes set notes = 'moved room' where id = loud;
+  update classes set starts_at_set_at = '2001-01-01T00:00:00Z' where id = loud;
+  if (select starts_at_set_at from classes where id = loud) <> '2000-01-01T00:00:00Z' then
+    raise exception 'starts_at_set_at changed without a new start time';
+  end if;
+  update classes
+     set starts_at = '2030-02-02T17:00:00Z', ends_at = '2030-02-02T18:00:00Z'
+   where id = loud;
+  if (select starts_at_set_at from classes where id = loud) <> now() then
+    raise exception 'a reschedule must record when the class got its new start time';
+  end if;
+
+  insert into classes (instructor_id, lesson_type_id, starts_at, ends_at, source, starts_at_set_at)
+  values (i, lt, '2030-03-01T15:00:00Z', '2030-03-01T16:00:00Z', 'app_import', '2000-01-01T00:00:00Z')
+  returning starts_at_set_at into v_set_at;
+  if v_set_at <> now() then
+    raise exception 'an insert must not choose its own starts_at_set_at';
+  end if;
+
+  update booking_reminder_sends set status = 'failed', reason = 'stale_claim'
+   where class_id = loud and offset_minutes = 1440;
+  begin
+    update booking_reminder_sends set reason = 'stale_claim'
+     where class_id = loud and status = 'claimed';
+    raise exception 'a stale_claim reason was accepted on a claimed reminder';
+  exception when check_violation then null;
+  end;
+  begin
+    update booking_reminder_sends set reason = 'boom'
+     where class_id = loud and offset_minutes = 1440;
+    raise exception 'an unknown reminder failure reason was accepted';
   exception when check_violation then null;
   end;
 

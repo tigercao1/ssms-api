@@ -6,7 +6,10 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { runsBackgroundWorkers } from '../config/process-group';
+import {
+  runsBackgroundWorkers,
+  runsOnProductionApp,
+} from '../config/process-group';
 import { MailerService } from '../mailer/mailer.service';
 import type { SendEmailRequest, SendOutcome } from '../mailer/mailer.types';
 import { BOOKING_CLOCK, type BookingClock } from './booking-calendars.service';
@@ -20,13 +23,14 @@ import {
 import { BookingReminderSettingsService } from './booking-reminder-settings.service';
 import {
   BookingRemindersRepository,
+  type ReminderClaim,
   type ReminderClassRow,
   type ReminderOutcome,
 } from './booking-reminders.repository';
 
 export const LESSON_REMINDERS_FLAG = 'BOOKING_REMINDERS_ENABLED';
 export const LESSON_REMINDERS_INTERVAL_MS = 60_000;
-export const LESSON_REMINDER_GRACE_MS = 5 * 60_000;
+export const LESSON_REMINDER_STALE_CLAIM_MS = 15 * 60_000;
 export const LESSON_REMINDERS_DRAIN_MS = BOOKING_EMAIL_DRAIN_MS + 1_000;
 const MINUTE_MS = 60_000;
 
@@ -39,19 +43,21 @@ interface InFlight {
 }
 
 export function reminderDue(
-  startsAt: string,
+  lesson: Pick<ReminderClassRow, 'starts_at' | 'starts_at_set_at'>,
   offsetMinutes: number,
   now: number,
 ): boolean {
-  const start = Date.parse(startsAt);
+  const start = Date.parse(lesson.starts_at);
   const dueAt = start - offsetMinutes * MINUTE_MS;
-  return start > now && dueAt <= now && now - dueAt < LESSON_REMINDER_GRACE_MS;
+  return (
+    dueAt <= now && now < start && dueAt >= Date.parse(lesson.starts_at_set_at)
+  );
 }
 
 export function lessonRemindersEnabled(config: ConfigService): boolean {
   const raw = config.get<string>(LESSON_REMINDERS_FLAG)?.trim().toLowerCase();
   if (!raw) {
-    return config.get<string>('NODE_ENV') === 'production';
+    return runsOnProductionApp(config);
   }
   return raw === 'true';
 }
@@ -80,7 +86,7 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     }
     if (!lessonRemindersEnabled(this.config)) {
       this.logger.log(
-        `Lesson reminders disabled: ${LESSON_REMINDERS_FLAG} is not "true"`,
+        `Lesson reminders disabled: ${LESSON_REMINDERS_FLAG} is not "true" and this is not the production app`,
       );
       return;
     }
@@ -138,24 +144,34 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
       return result;
     }
     try {
+      const now = this.clock.now();
+      await this.failStaleClaims(now);
       const settings = await this.settings.get();
       if (!settings.enabled) {
         return result;
       }
-      const now = this.clock.now();
       for (const offset of settings.offsetsMinutes) {
-        const lead = offset * MINUTE_MS;
-        const lessons = await this.repo.classesStartingBetween(
-          new Date(now + lead - LESSON_REMINDER_GRACE_MS).toISOString(),
-          new Date(now + lead).toISOString(),
+        const lessons = (
+          await this.repo.remindableClassesStartingBetween(
+            new Date(now).toISOString(),
+            new Date(now + offset * MINUTE_MS).toISOString(),
+          )
+        ).filter((lesson) => reminderDue(lesson, offset, now));
+        const claimed = new Set(
+          (
+            await this.repo.claimed(
+              lessons.map((l) => l.id),
+              offset,
+            )
+          ).map(claimKey),
         );
         for (const lesson of lessons) {
-          if (!remindable(lesson, offset, now)) {
-            continue;
-          }
           for (const recipient of recipientsOf(lesson)) {
             if (this.stopping) {
               return result;
+            }
+            if (claimed.has(claimKey(claimOf(lesson, offset, recipient)))) {
+              continue;
             }
             const outcome = await this.remind(lesson, offset, recipient);
             if (outcome) {
@@ -178,13 +194,7 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     if (!recipient.email) {
       return null;
     }
-    const id = await this.repo.claim({
-      class_id: lesson.id,
-      starts_at: lesson.starts_at,
-      offset_minutes: offset,
-      audience: recipient.audience,
-      recipient_id: recipient.id,
-    });
+    const id = await this.repo.claim(claimOf(lesson, offset, recipient));
     if (!id) {
       return null;
     }
@@ -205,6 +215,17 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
       return outcome;
     } finally {
       this.inFlight = undefined;
+    }
+  }
+
+  private async failStaleClaims(now: number): Promise<void> {
+    const stale = await this.repo.failStaleClaims(
+      new Date(now - LESSON_REMINDER_STALE_CLAIM_MS).toISOString(),
+    );
+    for (const claim of stale) {
+      this.logger.warn(
+        `Lesson reminder ${claim.id} (class ${claim.class_id}, ${claim.offset_minutes} min, ${claim.audience}) was still claimed after ${LESSON_REMINDER_STALE_CLAIM_MS / MINUTE_MS} minutes; marked failed: stale_claim`,
+      );
     }
   }
 
@@ -233,16 +254,28 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-function remindable(
+function claimOf(
   lesson: ReminderClassRow,
   offset: number,
-  now: number,
-): boolean {
-  return (
-    lesson.status === 'scheduled' &&
-    lesson.send_emails &&
-    reminderDue(lesson.starts_at, offset, now)
-  );
+  recipient: Recipient,
+): ReminderClaim {
+  return {
+    class_id: lesson.id,
+    starts_at: lesson.starts_at,
+    offset_minutes: offset,
+    audience: recipient.audience,
+    recipient_id: recipient.id,
+  };
+}
+
+function claimKey(claim: ReminderClaim): string {
+  return [
+    claim.class_id,
+    Date.parse(claim.starts_at),
+    claim.offset_minutes,
+    claim.audience,
+    claim.recipient_id,
+  ].join(':');
 }
 
 function reminderRequest(

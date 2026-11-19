@@ -26,7 +26,38 @@ alter table booking_reminder_settings force row level security;
 revoke all on booking_reminder_settings from public, anon, authenticated;
 
 alter table classes
-  add column if not exists send_emails boolean not null default true;
+  add column if not exists send_emails boolean not null default true,
+  add column if not exists starts_at_set_at timestamptz not null default now();
+
+alter table classes disable trigger classes_set_updated_at;
+
+update classes
+   set send_emails = send_emails and source = 'ssms',
+       starts_at_set_at = created_at;
+
+alter table classes enable trigger classes_set_updated_at;
+
+create or replace function public.stamp_class_starts_at_set_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' or new.starts_at is distinct from old.starts_at then
+    new.starts_at_set_at := now();
+  else
+    new.starts_at_set_at := old.starts_at_set_at;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.stamp_class_starts_at_set_at()
+  from public, anon, authenticated;
+
+create or replace trigger classes_stamp_starts_at_set_at
+  before insert or update on classes
+  for each row execute function public.stamp_class_starts_at_set_at();
 
 create table if not exists booking_reminder_sends (
   id              uuid primary key default gen_random_uuid(),
@@ -42,11 +73,18 @@ create table if not exists booking_reminder_sends (
   status          text not null default 'claimed'
                     constraint booking_reminder_sends_status_check
                     check (status in ('claimed', 'sent', 'skipped', 'failed')),
+  reason          text
+                    constraint booking_reminder_sends_reason_check
+                    check (reason is null or (status = 'failed' and reason = 'stale_claim')),
   claimed_at      timestamptz not null default now(),
   finished_at     timestamptz,
   constraint booking_reminder_sends_key
     unique (class_id, starts_at, offset_minutes, audience, recipient_id)
 );
+
+create index if not exists booking_reminder_sends_claimed_at_idx
+  on booking_reminder_sends (claimed_at)
+  where status = 'claimed';
 
 alter table booking_reminder_sends enable row level security;
 alter table booking_reminder_sends force row level security;

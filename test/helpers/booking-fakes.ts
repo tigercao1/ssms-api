@@ -31,6 +31,7 @@ import {
   type ReminderOutcome,
   type ReminderSettingsRow,
   type ReminderSettingsWrite,
+  type StaleReminderClaim,
 } from '../../src/booking/booking-reminders.repository';
 import { classEventId } from '../../src/booking/calendar-sync.service';
 import { DatabaseError } from '../../src/database/db-result';
@@ -238,6 +239,7 @@ type FakeClass = ClassRow & {
   customer_ids: string[];
   ics_sequence: number;
   send_emails: boolean;
+  starts_at_set_at: string;
 };
 
 const instructor = (
@@ -490,6 +492,7 @@ export class InMemoryBookingRepository extends BookingRepository {
           series_id: series?.id ?? null,
           customer_ids: c.customer_ids,
           send_emails: c.send_emails,
+          starts_at_set_at: new Date(this.now()).toISOString(),
           updated_at: this.stamp(),
         }),
       );
@@ -569,6 +572,9 @@ export class InMemoryBookingRepository extends BookingRepository {
       row.google_event_seq += 1;
     }
     Object.assign(row, rebooking);
+    if (row.starts_at !== before.starts_at) {
+      row.starts_at_set_at = new Date(this.now()).toISOString();
+    }
     if (calendar !== null || drop) {
       this.markPending(row);
     }
@@ -832,6 +838,7 @@ export class InMemoryBookingRepository extends BookingRepository {
       customer_ids?: string[];
       ics_sequence?: number;
       send_emails?: boolean;
+      starts_at_set_at?: string;
     },
   ): FakeClass {
     return {
@@ -858,6 +865,7 @@ export class InMemoryBookingRepository extends BookingRepository {
       customer_ids: [],
       ics_sequence: 0,
       send_emails: true,
+      starts_at_set_at: '2026-10-01T00:00:00.000Z',
       ...overrides,
     };
   }
@@ -946,6 +954,8 @@ export class InMemoryBookingRepository extends BookingRepository {
 export type FakeReminderSend = ReminderClaim & {
   id: string;
   status: 'claimed' | ReminderOutcome;
+  reason?: 'stale_claim';
+  claimed_at: string;
 };
 
 export class InMemoryBookingRemindersRepository extends BookingRemindersRepository {
@@ -978,7 +988,7 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
     return this.getSettings();
   }
 
-  classesStartingBetween(
+  remindableClassesStartingBetween(
     after: string,
     until: string,
   ): Promise<ReminderClassRow[]> {
@@ -986,15 +996,62 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
       this.booking.classes
         .filter(
           (c) =>
+            c.status === 'scheduled' &&
+            c.source === 'ssms' &&
+            c.send_emails &&
             Date.parse(c.starts_at) > Date.parse(after) &&
             Date.parse(c.starts_at) <= Date.parse(until),
         )
         .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
         .map((c) => ({
           ...this.booking.notice(c),
-          status: c.status,
-          send_emails: c.send_emails,
+          starts_at_set_at: c.starts_at_set_at,
         })),
+    );
+  }
+
+  claimed(classIds: string[], offsetMinutes: number): Promise<ReminderClaim[]> {
+    return Promise.resolve(
+      this.sends
+        .filter(
+          (s) =>
+            classIds.includes(s.class_id) && s.offset_minutes === offsetMinutes,
+        )
+        .map(
+          ({
+            class_id,
+            starts_at,
+            offset_minutes,
+            audience,
+            recipient_id,
+          }) => ({
+            class_id,
+            starts_at,
+            offset_minutes,
+            audience,
+            recipient_id,
+          }),
+        ),
+    );
+  }
+
+  failStaleClaims(claimedBefore: string): Promise<StaleReminderClaim[]> {
+    const stale = this.sends.filter(
+      (s) =>
+        s.status === 'claimed' &&
+        Date.parse(s.claimed_at) < Date.parse(claimedBefore),
+    );
+    for (const row of stale) {
+      row.status = 'failed';
+      row.reason = 'stale_claim';
+    }
+    return Promise.resolve(
+      stale.map(({ id, class_id, offset_minutes, audience }) => ({
+        id,
+        class_id,
+        offset_minutes,
+        audience,
+      })),
     );
   }
 
@@ -1012,7 +1069,12 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
       return null;
     }
     const id = `send-${++this.nextId}`;
-    this.sends.push({ ...claim, id, status: 'claimed' });
+    this.sends.push({
+      ...claim,
+      id,
+      status: 'claimed',
+      claimed_at: new Date(this.booking.now()).toISOString(),
+    });
     return id;
   }
 

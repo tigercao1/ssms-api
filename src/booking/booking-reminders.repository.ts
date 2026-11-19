@@ -4,7 +4,7 @@ import { check, type DbResult } from '../database/db-result';
 import { fetchAllPages } from '../database/pagination';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { CLASSES_TABLE } from '../lessons/classes.repository';
-import type { ClassStatus } from '../lessons/lessons.types';
+import type { ClassSource } from '../lessons/lessons.types';
 import type { Audience } from './booking-emails.service';
 import {
   CLASS_NOTICE_COLUMNS,
@@ -14,9 +14,12 @@ import {
 export const REMINDER_SETTINGS_TABLE = 'booking_reminder_settings';
 export const REMINDER_SENDS_TABLE = 'booking_reminder_sends';
 const REMINDER_SETTINGS_COLUMNS = 'enabled, offsets_minutes, updated_at';
-const REMINDER_CLASS_COLUMNS = `${CLASS_NOTICE_COLUMNS}, status, send_emails`;
+const REMINDER_CLASS_COLUMNS = `${CLASS_NOTICE_COLUMNS}, starts_at_set_at`;
 const REMINDER_KEY_COLUMNS =
   'class_id,starts_at,offset_minutes,audience,recipient_id';
+const STALE_CLAIM_COLUMNS = 'id, class_id, offset_minutes, audience';
+const CLAIM_LOOKUP_CHUNK = 100;
+const BOOKED_IN_SSMS: ClassSource = 'ssms';
 
 export interface ReminderSettingsRow {
   enabled: boolean;
@@ -30,8 +33,7 @@ export interface ReminderSettingsWrite {
 }
 
 export interface ReminderClassRow extends ClassNoticeRow {
-  status: ClassStatus;
-  send_emails: boolean;
+  starts_at_set_at: string;
 }
 
 export interface ReminderClaim {
@@ -44,16 +46,28 @@ export interface ReminderClaim {
 
 export type ReminderOutcome = 'sent' | 'skipped' | 'failed';
 
+export type StaleReminderClaim = Pick<
+  ReminderClaim,
+  'class_id' | 'offset_minutes' | 'audience'
+> & { id: string };
+
 export abstract class BookingRemindersRepository {
   abstract getSettings(): Promise<ReminderSettingsRow>;
   abstract saveSettings(
     write: ReminderSettingsWrite,
     userId: string | null,
   ): Promise<ReminderSettingsRow>;
-  abstract classesStartingBetween(
+  abstract remindableClassesStartingBetween(
     after: string,
     until: string,
   ): Promise<ReminderClassRow[]>;
+  abstract claimed(
+    classIds: string[],
+    offsetMinutes: number,
+  ): Promise<ReminderClaim[]>;
+  abstract failStaleClaims(
+    claimedBefore: string,
+  ): Promise<StaleReminderClaim[]>;
   abstract claim(claim: ReminderClaim): Promise<string | null>;
   abstract finish(id: string, outcome: ReminderOutcome): Promise<void>;
   abstract release(id: string): Promise<void>;
@@ -97,7 +111,7 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
     return data;
   }
 
-  classesStartingBetween(
+  remindableClassesStartingBetween(
     after: string,
     until: string,
   ): Promise<ReminderClassRow[]> {
@@ -106,6 +120,9 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
         this.supabase
           .from(CLASSES_TABLE)
           .select(REMINDER_CLASS_COLUMNS)
+          .eq('status', 'scheduled')
+          .eq('source', BOOKED_IN_SSMS)
+          .eq('send_emails', true)
           .gt('starts_at', after)
           .lte('starts_at', until)
           .order('starts_at', { ascending: true })
@@ -113,6 +130,45 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
           .range(from, to),
       'list classes due for reminders',
     );
+  }
+
+  async claimed(
+    classIds: string[],
+    offsetMinutes: number,
+  ): Promise<ReminderClaim[]> {
+    const out: ReminderClaim[] = [];
+    for (let i = 0; i < classIds.length; i += CLAIM_LOOKUP_CHUNK) {
+      const chunk = classIds.slice(i, i + CLAIM_LOOKUP_CHUNK);
+      out.push(
+        ...(await fetchAllPages<ReminderClaim>(
+          (from, to) =>
+            this.supabase
+              .from(REMINDER_SENDS_TABLE)
+              .select(REMINDER_KEY_COLUMNS)
+              .in('class_id', chunk)
+              .eq('offset_minutes', offsetMinutes)
+              .order('id', { ascending: true })
+              .range(from, to),
+          'list claimed booking reminders',
+        )),
+      );
+    }
+    return out;
+  }
+
+  async failStaleClaims(claimedBefore: string): Promise<StaleReminderClaim[]> {
+    const { data, error } = (await this.supabase
+      .from(REMINDER_SENDS_TABLE)
+      .update({
+        status: 'failed',
+        reason: 'stale_claim',
+        finished_at: new Date().toISOString(),
+      })
+      .eq('status', 'claimed')
+      .lt('claimed_at', claimedBefore)
+      .select(STALE_CLAIM_COLUMNS)) as DbResult<StaleReminderClaim[]>;
+    check(error, 'fail stale booking reminder claims');
+    return data ?? [];
   }
 
   async claim(claim: ReminderClaim): Promise<string | null> {

@@ -1,3 +1,4 @@
+import { SCHOOL_TIME_ZONE } from '../../booking/booking-time';
 import {
   interpolate,
   type EmailButtonCopy,
@@ -198,7 +199,6 @@ function certificationRejectedBlocks(
   };
 }
 
-const BOOKING_TIME_ZONE = 'America/Toronto';
 const BOOKING_FORMATS: Record<
   SupportedLanguage,
   [string, Intl.DateTimeFormatOptions]
@@ -236,7 +236,7 @@ export function bookingTime(
   const [locale, options] = BOOKING_FORMATS[language];
   const format = new Intl.DateTimeFormat(locale, {
     ...options,
-    timeZone: BOOKING_TIME_ZONE,
+    timeZone: SCHOOL_TIME_ZONE,
   });
   return format.formatRange(new Date(lesson.startsAt), new Date(lesson.endsAt));
 }

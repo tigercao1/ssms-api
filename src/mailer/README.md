@@ -87,7 +87,7 @@ All optional at boot; with no Resend key the mailer logs a warning and records
 | Var              | Default                                                                           | Notes                                                                                    |
 | ---------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `RESEND_API_KEY` | —                                                                                 | Resend API secret. Required to send.                                                     |
-| `MAIL_FROM`      | —                                                                                 | Verified sender, e.g. `Serendipity Snow <noreply@contact.ssnow.club>`. Required to send. |
+| `MAIL_FROM`      | —                                                                                 | Verified sender, e.g. `Serendipity Snow <noreply@contact.ssnow.club>`. Required to send. Its address is the organizer in booking ICS files. |
 | `MAIL_REPLY_TO`  | `info@ssnow.club`                                                                 | Reply-To on every email.                                                                 |
 | `EMAIL_LOGO_URL` | `https://app.ssnow.club/email-logo.png`                                           | PNG logo in the header (served by the portal).                                           |
 | `PORTAL_URL`     | `https://app.ssnow.club` when `NODE_ENV=production`, else `http://localhost:5173` | Base for every portal link in emails.                                                    |

@@ -110,6 +110,10 @@ export class BookingRowDto {
   @IsOptional()
   @IsBoolean()
   addToCalendar?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  sendEmails?: boolean;
 }
 
 export class CreateBookingDto extends BookingRowDto {
@@ -158,6 +162,16 @@ export class UpdateBookingDto {
   @IsString()
   @MaxLength(MAX_NOTES_LENGTH)
   notes?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  sendEmails?: boolean;
+}
+
+export class CancelBookingDto {
+  @IsOptional()
+  @IsBoolean()
+  sendEmails?: boolean;
 }
 
 export class SetClassStatusDto {

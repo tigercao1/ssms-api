@@ -11,6 +11,8 @@ export const DEV_PORTAL_URL = 'http://localhost:5173';
  *   - `PORTAL_URL`     — portal base for links in emails. Defaults to
  *     `https://app.ssnow.club` when `NODE_ENV=production`, else `http://localhost:5173`.
  *   - `MAIL_REPLY_TO`  — Reply-To address (default `info@ssnow.club`).
+ *   - `MAIL_FROM`      — its address is the calendar organizer in ICS
+ *     attachments (falls back to the Reply-To address).
  *   - `EMAIL_LOGO_URL` — PNG logo in the email header.
  */
 @Injectable()
@@ -18,6 +20,7 @@ export class MailerConfig {
   readonly portalUrl: string;
   readonly replyTo: string;
   readonly logoUrl: string;
+  readonly senderAddress: string;
 
   constructor(config: ConfigService) {
     const fallbackPortal =
@@ -30,12 +33,19 @@ export class MailerConfig {
     this.replyTo = readOptional(config, 'MAIL_REPLY_TO') ?? DEFAULT_REPLY_TO;
     this.logoUrl =
       readOptional(config, 'EMAIL_LOGO_URL') ?? DEFAULT_EMAIL_LOGO_URL;
+    this.senderAddress =
+      addressOf(readOptional(config, 'MAIL_FROM')) ?? addressOf(this.replyTo)!;
   }
 
   /** Absolute portal URL for `path` (e.g. `/login`). */
   portalLink(path: string): string {
     return `${this.portalUrl}${path.startsWith('/') ? path : `/${path}`}`;
   }
+}
+
+export function addressOf(mailbox: string | undefined): string | undefined {
+  const value = mailbox?.match(/<([^<>]+)>/)?.[1] ?? mailbox;
+  return value?.trim() || undefined;
 }
 
 export function isLocalUrl(url: string): boolean {

@@ -66,6 +66,10 @@ export class MailerService {
     return this.config.portalLink(path);
   }
 
+  senderAddress(): string {
+    return this.config.senderAddress;
+  }
+
   /**
    * Renders and sends one email. Resolves to the {@link SendOutcome}; in
    * `sync` mode a `skipped` or `failed` outcome throws

@@ -44,6 +44,12 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'documents.assigned',
   'documents.reminder',
   'documents.completed',
+  'booking.confirmed.customer',
+  'booking.confirmed.instructor',
+  'booking.rescheduled.customer',
+  'booking.rescheduled.instructor',
+  'booking.cancelled.customer',
+  'booking.cancelled.instructor',
 ];
 
 describe('EmailRenderer', () => {

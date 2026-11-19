@@ -14,6 +14,7 @@ import {
   PRIVATE_1H,
   RETIRED_TYPE,
 } from '../../test/helpers/booking-fakes';
+import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseError } from '../database/db-result';
@@ -23,6 +24,7 @@ import {
   GoogleNotConnectedError,
 } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
+import { MailerService } from '../mailer/mailer.service';
 import {
   BATCH_ROW_CONFLICT,
   BATCH_ROW_CONFLICT_MESSAGE,
@@ -35,6 +37,7 @@ import {
   BOOKING_CLOCK,
   BookingCalendarsService,
 } from './booking-calendars.service';
+import { BookingEmailsService } from './booking-emails.service';
 import { BookingRepository } from './booking.repository';
 import {
   BookingService,
@@ -55,6 +58,7 @@ const ACTOR = { userId: '7d0f8a1e-5b2c-4e3d-9a8b-1c2d3e4f5a6b', role: 'admin' };
 async function build(google = fakeBookingGoogle()) {
   const repo = new InMemoryBookingRepository();
   const audit = recordingAudit();
+  const mailer = new RecordingMailer();
   const clock = { now: () => NOW };
   repo.now = clock.now;
   const moduleRef = await Test.createTestingModule({
@@ -67,10 +71,18 @@ async function build(google = fakeBookingGoogle()) {
       { provide: BOOKING_CLOCK, useValue: clock },
       { provide: GoogleCalendarClient, useValue: google.client },
       { provide: AuditService, useValue: audit },
+      BookingEmailsService,
+      { provide: MailerService, useValue: mailer.asService() },
       { provide: ConfigService, useValue: { get: () => undefined } },
     ],
   }).compile();
-  return { batch: moduleRef.get(BookingBatchService), repo, audit, google };
+  return {
+    batch: moduleRef.get(BookingBatchService),
+    repo,
+    audit,
+    mailer,
+    google,
+  };
 }
 
 const row = (overrides: Partial<BookingRowDto> = {}): BookingRowDto => ({
@@ -126,6 +138,7 @@ describe('BookingBatchService', () => {
             calendarSync: 'ok',
           }),
         ],
+        warnings: [],
       },
       {
         index: 1,
@@ -145,6 +158,7 @@ describe('BookingBatchService', () => {
         classes: [
           expect.objectContaining({ endsAt: '2026-12-12T16:30:00.000Z' }),
         ],
+        warnings: [],
       },
     ]);
     expect(ctx.repo.classes).toHaveLength(2);

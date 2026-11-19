@@ -28,6 +28,7 @@ import {
   START_NOT_ALIGNED,
   START_NOT_ALIGNED_MESSAGE,
 } from './booking.service';
+import type { BookingWarning } from './booking-emails.service';
 import { type BookedClass, toBookedClass } from './calendar-sync.service';
 import type { BatchBookingDto, BookingRowDto } from './dto/booking.dto';
 
@@ -57,6 +58,7 @@ export interface BatchRowCreated {
   index: number;
   status: 'created';
   classes: BookedClass[];
+  warnings: BookingWarning[];
 }
 
 export interface BatchRowFailed {
@@ -120,7 +122,12 @@ export class BookingBatchService {
         payload_hash: payloadHash,
       });
       return 'created' in outcome
-        ? { index, status: 'created', classes: outcome.created }
+        ? {
+            index,
+            status: 'created',
+            classes: outcome.created,
+            warnings: outcome.warnings,
+          }
         : await this.replay(index, outcome.existing, payloadHash);
     } catch (err) {
       const late = (await this.recordedRows(batchId)).get(index);
@@ -145,7 +152,12 @@ export class BookingBatchService {
       };
     }
     const classes = await this.repo.findClasses([recorded.class_id]);
-    return { index, status: 'created', classes: classes.map(toBookedClass) };
+    return {
+      index,
+      status: 'created',
+      classes: classes.map(toBookedClass),
+      warnings: [],
+    };
   }
 
   private failed(index: number, err: unknown): BatchRowFailed {

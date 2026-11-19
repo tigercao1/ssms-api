@@ -77,6 +77,7 @@ describe('SupabaseBookingRepository', () => {
     await expect(repo.listCalendarLinks([])).resolves.toEqual([]);
     await expect(repo.findCustomers([])).resolves.toEqual([]);
     await expect(repo.findClasses([])).resolves.toEqual([]);
+    await expect(repo.findClassNotices([])).resolves.toEqual([]);
     await expect(repo.busyClasses([], 'a', 'b')).resolves.toEqual([]);
     expect(queries).toEqual([]);
   });
@@ -97,6 +98,19 @@ describe('SupabaseBookingRepository', () => {
       'classes',
     ]);
     expect(queries[4].ops).toContainEqual(['select', CLASS_COLUMNS]);
+  });
+
+  it('loads class notices with instructor and customer emails', async () => {
+    const { client, queries } = bookingSupabase();
+    await new SupabaseBookingRepository(client).findClassNotices([ID]);
+    expect(queries[0].table).toBe('classes');
+    const select = queries[0].ops.find((op) => op[0] === 'select')?.[1];
+    expect(select).toContain('ics_sequence');
+    expect(select).toContain(
+      'instructors(display_name_en, display_name_zh, email, preferred_language)',
+    );
+    expect(select).toContain('customers(first_name, last_name, email)');
+    expect(queries[0].ops).toContainEqual(['in', 'id', [ID]]);
   });
 
   it('finds non-cancelled classes overlapping a range', async () => {

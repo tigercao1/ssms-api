@@ -478,6 +478,87 @@ export const en: MessageCatalog = {
       listItem: '{title} ({kind})',
       kinds: { sign: 'Sign', read: 'Read' },
     },
+    booking: {
+      labels: {
+        when: '{time} (Toronto time)',
+        instructor: 'Instructor:',
+        students: 'Students:',
+        location: 'Location:',
+        previously: 'Previously:',
+      },
+      confirmed: {
+        customer: {
+          subject: 'Your lesson is booked: {lesson}',
+          preheader: 'Your {lesson} with {instructor} is confirmed.',
+          heading: 'Your lesson is booked',
+          paragraphs: [
+            'Your {lesson} with {instructor} is booked for:',
+            'To change or cancel, just reply to this email.',
+          ],
+          finePrint:
+            "The attached calendar file adds the lesson to your calendar. You're receiving this because a lesson was booked for you with Serendipity Snow Club.",
+        },
+        instructor: {
+          subject: 'New lesson booked: {lesson}',
+          preheader: 'A new {lesson} was added to your schedule.',
+          heading: 'New lesson booked',
+          paragraphs: [
+            'A {lesson} was booked for you:',
+            'The lesson is on your schedule in the instructor portal.',
+          ],
+          finePrint:
+            "The attached calendar file adds the lesson to your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+        },
+      },
+      rescheduled: {
+        customer: {
+          subject: 'Your lesson was rescheduled: {lesson}',
+          preheader: 'New details for your {lesson} with {instructor}.',
+          heading: 'Your lesson was rescheduled',
+          paragraphs: [
+            'Here are the new details for your {lesson} with {instructor}:',
+            'If the new details do not work for you, just reply to this email.',
+          ],
+          finePrint:
+            "The attached calendar file updates the lesson in your calendar. You're receiving this because a lesson was booked for you with Serendipity Snow Club.",
+        },
+        instructor: {
+          subject: 'Lesson rescheduled: {lesson}',
+          preheader: 'One of your lessons was rescheduled.',
+          heading: 'Lesson rescheduled',
+          paragraphs: [
+            'Here are the new details for your {lesson}:',
+            'Your schedule in the instructor portal is up to date.',
+          ],
+          finePrint:
+            "The attached calendar file updates the lesson in your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+        },
+      },
+      cancelled: {
+        customer: {
+          subject: 'Your lesson is cancelled: {lesson}',
+          preheader: 'Your {lesson} with {instructor} was cancelled.',
+          heading: 'Your lesson was cancelled',
+          paragraphs: [
+            'Your {lesson} with {instructor} at this time was cancelled:',
+            'If this is unexpected or you would like to book another time, just reply to this email.',
+          ],
+          finePrint:
+            "The attached calendar file removes the lesson from your calendar. You're receiving this because a lesson was booked for you with Serendipity Snow Club.",
+        },
+        instructor: {
+          subject: 'Lesson cancelled: {lesson}',
+          preheader: 'One of your lessons was cancelled.',
+          heading: 'Lesson cancelled',
+          paragraphs: [
+            'Your {lesson} at this time was cancelled:',
+            'The lesson has been removed from your schedule in the instructor portal.',
+          ],
+          finePrint:
+            "The attached calendar file removes the lesson from your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+        },
+      },
+    },
   },
 };
 

@@ -27,7 +27,6 @@ export const LESSON_TYPE_NOT_FOUND = 'Lesson type not found';
 
 export type UnavailableReason =
   | 'inactive'
-  | 'no_calendar'
   | 'calendar_not_writable'
   | 'calendar_error'
   | 'google_not_connected'
@@ -43,7 +42,7 @@ export interface InstructorAvailability {
   instructorId: string;
   displayNameEn: string;
   displayNameZh: string | null;
-  googleCalendarId: string;
+  googleCalendarId: string | null;
   busy: BusyBlock[];
   freeSlots: string[];
 }
@@ -76,7 +75,7 @@ export interface AvailabilityQuery {
 
 interface Candidate {
   instructor: BookingInstructorRow;
-  calendarId: string;
+  calendarId: string | null;
 }
 
 export interface Interval {
@@ -130,34 +129,41 @@ export class AvailabilityService {
       links,
     );
     base.unavailable = unavailable;
-    if (candidates.length === 0) {
-      return base;
+    const linked = candidates.flatMap((c) => c.calendarId ?? []);
+    let available = candidates;
+    let calendars = new Map<string, CalendarFreeBusy>();
+    if (linked.length > 0) {
+      try {
+        const result = await this.calendars.cachedFreeBusy(
+          linked,
+          from.toISOString(),
+          to.toISOString(),
+        );
+        calendars = new Map(result.calendars.map((c) => [c.id, c]));
+      } catch (err) {
+        this.logGoogle(err);
+        base.unavailable.push(
+          ...candidates
+            .filter((c) => c.calendarId)
+            .map((c) => unavailableFor(googleReason(err))(c.instructor)),
+        );
+        available = candidates.filter((c) => !c.calendarId);
+      }
     }
-    let calendars: Map<string, CalendarFreeBusy>;
-    try {
-      const result = await this.calendars.cachedFreeBusy(
-        candidates.map((c) => c.calendarId),
-        from.toISOString(),
-        to.toISOString(),
-      );
-      calendars = new Map(result.calendars.map((c) => [c.id, c]));
-    } catch (err) {
-      this.logGoogle(err);
-      base.unavailable.push(
-        ...candidates.map((c) =>
-          unavailableFor(googleReason(err))(c.instructor),
-        ),
-      );
+    if (available.length === 0) {
       return base;
     }
     const classes = await this.repo.busyClasses(
-      candidates.map((c) => c.instructor.id),
+      available.map((c) => c.instructor.id),
       from.toISOString(),
       to.toISOString(),
     );
     const now = this.clock.now();
-    for (const candidate of candidates) {
-      const freeBusy = calendars.get(candidate.calendarId);
+    for (const candidate of available) {
+      const freeBusy: Pick<CalendarFreeBusy, 'busy' | 'errors'> | undefined =
+        candidate.calendarId
+          ? calendars.get(candidate.calendarId)
+          : { busy: [], errors: [] };
       if (!freeBusy || freeBusy.errors.length > 0) {
         base.unavailable.push(
           unavailableFor('calendar_error')(candidate.instructor),
@@ -203,19 +209,20 @@ export class AvailabilityService {
     unavailable: UnavailableInstructor[];
   }> {
     const unavailable: UnavailableInstructor[] = [];
-    const linked: Candidate[] = [];
+    const bookable: Candidate[] = [];
     for (const instructor of instructors) {
-      const link = links.get(instructor.id);
       if (!instructor.is_active || instructor.approval_status !== 'approved') {
         unavailable.push(unavailableFor('inactive')(instructor));
-      } else if (!link) {
-        unavailable.push(unavailableFor('no_calendar')(instructor));
       } else {
-        linked.push({ instructor, calendarId: link.google_calendar_id });
+        bookable.push({
+          instructor,
+          calendarId: links.get(instructor.id)?.google_calendar_id ?? null,
+        });
       }
     }
+    const linked = bookable.filter((c) => c.calendarId);
     if (linked.length === 0) {
-      return { candidates: [], unavailable };
+      return { candidates: bookable, unavailable };
     }
     let writable: Set<string>;
     try {
@@ -226,24 +233,26 @@ export class AvailabilityService {
     } catch (err) {
       this.logGoogle(err);
       return {
-        candidates: [],
+        candidates: bookable.filter((c) => !c.calendarId),
         unavailable: [
           ...unavailable,
           ...linked.map((c) => unavailableFor(googleReason(err))(c.instructor)),
         ],
       };
     }
-    const candidates: Candidate[] = [];
     for (const entry of linked) {
-      if (writable.has(entry.calendarId)) {
-        candidates.push(entry);
-      } else {
+      if (!writable.has(entry.calendarId!)) {
         unavailable.push(
           unavailableFor('calendar_not_writable')(entry.instructor),
         );
       }
     }
-    return { candidates, unavailable };
+    return {
+      candidates: bookable.filter(
+        (c) => !c.calendarId || writable.has(c.calendarId),
+      ),
+      unavailable,
+    };
   }
 
   private logGoogle(err: unknown): void {

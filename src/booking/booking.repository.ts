@@ -16,6 +16,13 @@ const DELETION_COLUMNS =
   'id, google_calendar_id, google_event_id, class_id, attempts, last_error, last_attempt_at, created_at';
 const SETTINGS_COLUMNS =
   'day_start_time, day_end_time, slot_minutes, weekday_overrides, updated_at';
+const CLASS_NOTICE_COLUMNS = [
+  'id, instructor_id, starts_at, ends_at, status, ics_sequence',
+  'instructor:instructors(display_name_en, display_name_zh, email, preferred_language)',
+  'location:teaching_locations(name)',
+  'lesson_type:lesson_types(name_en, name_zh)',
+  'participants:class_participants(customer_id, customer:customers(first_name, last_name, email))',
+].join(', ');
 const INSTRUCTOR_COLUMNS =
   'id, display_name_en, display_name_zh, approval_status, is_active';
 
@@ -72,6 +79,33 @@ export interface BusyClassRow {
   instructor_id: string;
   starts_at: string;
   ends_at: string;
+}
+
+export interface ClassNoticeRow {
+  id: string;
+  instructor_id: string;
+  starts_at: string;
+  ends_at: string;
+  status: ClassStatus;
+  ics_sequence: number;
+  instructor: {
+    display_name_en: string;
+    display_name_zh: string | null;
+    email: string | null;
+    preferred_language: string | null;
+  } | null;
+  location: { name: string } | null;
+  lesson_type: { name_en: string; name_zh: string | null } | null;
+  participants:
+    | {
+        customer_id: string;
+        customer: {
+          first_name: string | null;
+          last_name: string | null;
+          email: string | null;
+        } | null;
+      }[]
+    | null;
 }
 
 export interface ClassBooking {
@@ -159,6 +193,7 @@ export abstract class BookingRepository {
   abstract findCustomers(ids: string[]): Promise<BookingCustomerRow[]>;
   abstract findLocation(id: string): Promise<BookingLocationRow | null>;
   abstract findClasses(ids: string[]): Promise<ClassRow[]>;
+  abstract findClassNotices(ids: string[]): Promise<ClassNoticeRow[]>;
   abstract busyClasses(
     instructorIds: string[],
     from: string,
@@ -312,6 +347,21 @@ export class SupabaseBookingRepository extends BookingRepository {
       ClassRow[]
     >;
     check(error, 'load classes');
+    return data ?? [];
+  }
+
+  async findClassNotices(ids: string[]): Promise<ClassNoticeRow[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const { data, error } = (await this.supabase
+      .from(CLASSES_TABLE)
+      .select(CLASS_NOTICE_COLUMNS)
+      .in('id', ids)
+      .order('starts_at', { ascending: true })) as unknown as DbResult<
+      ClassNoticeRow[]
+    >;
+    check(error, 'load class notices');
     return data ?? [];
   }
 

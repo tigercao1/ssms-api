@@ -7,6 +7,8 @@ import {
 } from '../../i18n';
 import type { Vars } from '../../i18n';
 import type {
+  BookingEmailVars,
+  BookingLessonTime,
   EmailDocumentTitle,
   EmailTemplate,
   EmailTemplateVars,
@@ -193,6 +195,151 @@ function certificationRejectedBlocks(
       ...rest,
     ],
     button: { label: copy.button, url: vars.uploadUrl },
+  };
+}
+
+const BOOKING_TIME_ZONE = 'America/Toronto';
+const BOOKING_FORMATS: Record<
+  SupportedLanguage,
+  [string, Intl.DateTimeFormatOptions]
+> = {
+  en: [
+    'en-US',
+    {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    },
+  ],
+  'zh-CN': ['zh-CN', { dateStyle: 'full', timeStyle: 'short' }],
+};
+
+type BookingKind = 'confirmed' | 'rescheduled' | 'cancelled';
+type BookingAudience = 'customer' | 'instructor';
+
+function localized(
+  en: string,
+  zh: string | null | undefined,
+  language: SupportedLanguage,
+): string {
+  const trimmed = zh?.trim();
+  return language === 'zh-CN' && trimmed ? trimmed : en;
+}
+
+export function bookingTime(
+  lesson: BookingLessonTime,
+  language: SupportedLanguage,
+): string {
+  const [locale, options] = BOOKING_FORMATS[language];
+  const format = new Intl.DateTimeFormat(locale, {
+    ...options,
+    timeZone: BOOKING_TIME_ZONE,
+  });
+  return format.formatRange(new Date(lesson.startsAt), new Date(lesson.endsAt));
+}
+
+function bookingBlocks(
+  catalog: MessageCatalog,
+  kind: BookingKind,
+  audience: BookingAudience,
+  vars: BookingEmailVars & { previous?: BookingLessonTime[] },
+  language: SupportedLanguage,
+): EmailBlocks {
+  const labels = catalog.email.booking.labels;
+  const blocks = fill(catalog.email.booking[kind][audience], {
+    lesson: localized(vars.lessonNameEn, vars.lessonNameZh, language),
+    instructor: localized(
+      vars.instructorNameEn,
+      vars.instructorNameZh,
+      language,
+    ),
+  });
+  const line = (lesson: BookingLessonTime) =>
+    `• ${interpolate(labels.when, { time: bookingTime(lesson, language) })}`;
+  const location = vars.location?.trim();
+  const students = vars.customerNames.filter((n) => n.trim()).join(', ');
+  const [intro, ...rest] = blocks.paragraphs;
+  return {
+    ...blocks,
+    greeting: greet(catalog, vars.displayName),
+    paragraphs: [
+      intro,
+      ...vars.lessons.map(line),
+      ...(vars.previous?.length
+        ? [labels.previously, ...vars.previous.map(line)]
+        : []),
+      ...(audience === 'instructor' && students
+        ? [`${labels.students} ${students}`]
+        : []),
+      ...(audience === 'customer'
+        ? [
+            `${labels.instructor} ${localized(vars.instructorNameEn, vars.instructorNameZh, language)}`,
+          ]
+        : []),
+      ...(location ? [`${labels.location} ${location}`] : []),
+      ...rest,
+    ],
+  };
+}
+
+function bookingTemplate<T extends EmailTemplate>(
+  kind: BookingKind,
+  audience: BookingAudience,
+  sample: () => EmailTemplateVars[T],
+): TemplateDefinition<T> {
+  return {
+    build: (catalog, vars, language) =>
+      bookingBlocks(
+        catalog,
+        kind,
+        audience,
+        vars as BookingEmailVars & { previous?: BookingLessonTime[] },
+        language,
+      ),
+    sample,
+  };
+}
+
+function sampleBooking(audience: BookingAudience): BookingEmailVars {
+  return {
+    displayName: audience === 'customer' ? 'Mei' : SAMPLE_NAME,
+    lessonNameEn: 'Private lesson (1 hour)',
+    lessonNameZh: '私教课（1小时）',
+    instructorNameEn: SAMPLE_NAME,
+    instructorNameZh: '林伟',
+    customerNames: ['Mei Wang', 'Leo Chen'],
+    location: 'Blue Mountain',
+    lessons: [
+      {
+        startsAt: '2026-12-12T15:00:00.000Z',
+        endsAt: '2026-12-12T16:00:00.000Z',
+      },
+      {
+        startsAt: '2026-12-19T15:00:00.000Z',
+        endsAt: '2026-12-19T16:00:00.000Z',
+      },
+    ],
+  };
+}
+
+function sampleReschedule(audience: BookingAudience) {
+  return {
+    ...sampleBooking(audience),
+    lessons: [
+      {
+        startsAt: '2026-12-13T18:00:00.000Z',
+        endsAt: '2026-12-13T19:00:00.000Z',
+      },
+    ],
+    previous: [
+      {
+        startsAt: '2026-12-12T15:00:00.000Z',
+        endsAt: '2026-12-12T16:00:00.000Z',
+      },
+    ],
   };
 }
 
@@ -558,6 +705,32 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
       onboardingUrl: `${portalUrl}/onboarding`,
     }),
   },
+  'booking.confirmed.customer': bookingTemplate('confirmed', 'customer', () =>
+    sampleBooking('customer'),
+  ),
+  'booking.confirmed.instructor': bookingTemplate(
+    'confirmed',
+    'instructor',
+    () => sampleBooking('instructor'),
+  ),
+  'booking.rescheduled.customer': bookingTemplate(
+    'rescheduled',
+    'customer',
+    () => sampleReschedule('customer'),
+  ),
+  'booking.rescheduled.instructor': bookingTemplate(
+    'rescheduled',
+    'instructor',
+    () => sampleReschedule('instructor'),
+  ),
+  'booking.cancelled.customer': bookingTemplate('cancelled', 'customer', () =>
+    sampleBooking('customer'),
+  ),
+  'booking.cancelled.instructor': bookingTemplate(
+    'cancelled',
+    'instructor',
+    () => sampleBooking('instructor'),
+  ),
 };
 
 /** Every template name, in registry order. */

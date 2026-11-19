@@ -19,6 +19,10 @@ import {
   type BookingClock,
   BookingCalendarsService,
 } from './booking-calendars.service';
+import {
+  BookingEmailsService,
+  type BookingWarning,
+} from './booking-emails.service';
 import { BOOKING_START_STEP_MINUTES } from './booking-settings.service';
 import { addDays, isOnStep, localParts, zonedInstant } from './booking-time';
 import {
@@ -41,6 +45,7 @@ import {
 import type {
   BookableStatus,
   BookingRowDto,
+  CancelBookingDto,
   CreateBookingDto,
   UpdateBookingDto,
 } from './dto/booking.dto';
@@ -109,8 +114,12 @@ export interface SyncIssues {
   deletions: EventDeletionIssue[];
 }
 
+export interface NotifiedClass extends BookedClass {
+  warnings: BookingWarning[];
+}
+
 export type BatchRowBooking =
-  | { created: BookedClass[] }
+  | { created: BookedClass[]; warnings: BookingWarning[] }
   | { existing: BatchRowRecord };
 
 interface BookingPlan {
@@ -131,20 +140,23 @@ export class BookingService {
     private readonly calendars: BookingCalendarsService,
     private readonly sync: CalendarSyncService,
     private readonly audit: AuditService,
+    private readonly emails: BookingEmailsService,
     @Inject(BOOKING_CLOCK) private readonly clock: BookingClock,
   ) {}
 
   async create(
     dto: CreateBookingDto,
     actor: AuditActor,
-  ): Promise<BookedClass[]> {
+  ): Promise<NotifiedClass[]> {
     const plan = await this.plan(dto, actor);
     try {
       await this.repo.bookClasses(plan.series, plan.bookings);
     } catch (err) {
       throw databaseHttp(err);
     }
-    return this.finish(plan, actor);
+    const classes = await this.finish(plan, actor);
+    const warnings = await this.notifyBooked(dto, classes);
+    return classes.map((c) => ({ ...c, warnings }));
   }
 
   async createBatchRow(
@@ -162,12 +174,20 @@ export class BookingService {
     if (commit.outcome === 'existing') {
       return { existing: commit.row };
     }
-    return {
-      created: await this.finish(plan, actor, {
-        batchId: key.batch_id,
-        index: key.row_index,
-      }),
-    };
+    const created = await this.finish(plan, actor, {
+      batchId: key.batch_id,
+      index: key.row_index,
+    });
+    return { created, warnings: await this.notifyBooked(dto, created) };
+  }
+
+  private notifyBooked(
+    dto: BookingRowDto,
+    classes: BookedClass[],
+  ): Promise<BookingWarning[]> {
+    return dto.sendEmails === false
+      ? Promise.resolve([])
+      : this.emails.booked(classes.map((c) => c.id));
   }
 
   private async plan(
@@ -212,7 +232,7 @@ export class BookingService {
       lessonType.duration_min,
     );
     const calendarId = await this.linkedCalendar(instructor.id);
-    if (addToCalendar) {
+    if (addToCalendar && calendarId) {
       await this.requireWritable(calendarId);
     }
     const conflicts = await this.conflicts(
@@ -283,8 +303,9 @@ export class BookingService {
     id: string,
     dto: UpdateBookingDto,
     actor: AuditActor,
-  ): Promise<BookedClass> {
-    if (Object.values(dto).every((v) => v === undefined)) {
+  ): Promise<NotifiedClass> {
+    const { sendEmails, ...changes } = dto;
+    if (Object.values(changes).every((v) => v === undefined)) {
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
     if (
@@ -327,7 +348,7 @@ export class BookingService {
     const past = next.start.getTime() < this.clock.now();
     const currentCalendar = current.google_calendar_id;
     const calendarId = await this.linkedCalendar(instructorId);
-    if (currentCalendar && instructorChanged) {
+    if (currentCalendar && instructorChanged && calendarId) {
       await this.requireWritable(calendarId);
     }
     const targetCalendar =
@@ -348,6 +369,7 @@ export class BookingService {
 
     const notes =
       dto.notes === undefined ? current.notes : dto.notes?.trim() || null;
+    const before = sendEmails === false ? null : await this.emails.snapshot(id);
     try {
       await this.repo.rebookClass(
         id,
@@ -394,13 +416,19 @@ export class BookingService {
             : 'moved',
       },
     });
-    return this.synced(id);
+    const updated = await this.synced(id);
+    const warnings = before ? await this.emails.rescheduled(before, id) : [];
+    return { ...updated, warnings };
   }
 
-  async cancel(id: string, actor: AuditActor): Promise<BookedClass> {
+  async cancel(
+    id: string,
+    dto: CancelBookingDto,
+    actor: AuditActor,
+  ): Promise<NotifiedClass> {
     const current = await this.loadClass(id);
     if (current.status === 'cancelled') {
-      return toBookedClass(current);
+      return { ...toBookedClass(current), warnings: [] };
     }
     try {
       await this.repo.setClassStatus(id, 'cancelled');
@@ -419,7 +447,10 @@ export class BookingService {
         googleEventDeleted: Boolean(current.google_calendar_id),
       },
     });
-    return this.synced(id);
+    const cancelled = await this.synced(id);
+    const warnings =
+      dto.sendEmails === false ? [] : await this.emails.cancelled(id);
+    return { ...cancelled, warnings };
   }
 
   async setStatus(

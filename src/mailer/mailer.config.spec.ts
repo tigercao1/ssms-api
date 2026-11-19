@@ -42,4 +42,16 @@ describe('MailerConfig', () => {
     expect(config.portalUrl).toBe('http://localhost:5173');
     expect(config.replyTo).toBe('info@ssnow.club');
   });
+
+  it.each([
+    [
+      'Serendipity Snow <noreply@contact.ssnow.club>',
+      'noreply@contact.ssnow.club',
+    ],
+    ['noreply@contact.ssnow.club', 'noreply@contact.ssnow.club'],
+    [undefined, 'info@ssnow.club'],
+  ])('takes the sender address from MAIL_FROM %p', (from, address) => {
+    const config = new MailerConfig(configWith({ MAIL_FROM: from }));
+    expect(config.senderAddress).toBe(address);
+  });
 });

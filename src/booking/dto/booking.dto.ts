@@ -20,6 +20,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { SLOT_MINUTES } from '../booking-settings.service';
 
 export const MAX_CUSTOMERS_PER_CLASS = 20;
 export const MAX_NOTES_LENGTH = 2000;
@@ -55,6 +56,12 @@ export class AvailabilityQueryDto {
   @ArrayMaxSize(MAX_AVAILABILITY_INSTRUCTORS)
   @IsUUID('all', { each: true })
   instructorIds?: string[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsIn(SLOT_MINUTES)
+  slotMinutes?: number;
 }
 
 export class RepeatDto {
@@ -166,7 +173,7 @@ export class BookingSettingsDto {
   dayEndTime!: string;
 
   @IsInt()
-  @IsIn([15, 30, 60])
+  @IsIn(SLOT_MINUTES)
   slotMinutes!: number;
 
   @IsOptional()

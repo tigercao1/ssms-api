@@ -13,7 +13,8 @@ import {
   type BookingSettingsRow,
 } from './booking.repository';
 
-export const SLOT_MINUTES = [15, 30, 60] as const;
+export const SLOT_MINUTES = [5, 15, 30, 60] as const;
+export const BOOKING_START_STEP_MINUTES = 5;
 export const SETTINGS_RANGE_INVALID = 'The day must end after it starts';
 export const SETTINGS_OVERRIDE_INVALID =
   'Each weekday override must be { start, end } in HH:MM with end after start, or { closed: true }';

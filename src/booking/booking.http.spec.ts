@@ -59,6 +59,8 @@ import {
   LOCATION_NOT_FOUND,
   NOTHING_TO_UPDATE,
   PAST_REPEAT,
+  START_NOT_ALIGNED,
+  START_NOT_ALIGNED_MESSAGE,
   type BookingConflict,
   BookingService,
   type SyncIssues,
@@ -292,6 +294,8 @@ describe('booking admin HTTP', () => {
     it.each([
       { dayStartTime: '8:00', dayEndTime: '18:00', slotMinutes: 30 },
       { dayStartTime: '08:00', dayEndTime: '18:00', slotMinutes: 20 },
+      { dayStartTime: '08:00', dayEndTime: '18:00', slotMinutes: 10 },
+      { dayStartTime: '08:00', dayEndTime: '18:00', slotMinutes: 1 },
       { dayStartTime: '08:00', dayEndTime: '24:00', slotMinutes: 30 },
     ])('rejects malformed settings %j', async (body) => {
       await http()
@@ -301,6 +305,19 @@ describe('booking admin HTTP', () => {
         .expect(400);
     });
   });
+
+  it.each([5, 15, 30, 60])(
+    'accepts a %i-minute slot grid in settings',
+    async (slotMinutes) => {
+      ctx = await build();
+      const res = await http()
+        .put('/admin/booking/settings')
+        .set('Authorization', admin)
+        .send({ dayStartTime: '08:00', dayEndTime: '18:00', slotMinutes })
+        .expect(200);
+      expect(res.body).toMatchObject({ slotMinutes });
+    },
+  );
 
   describe('availability', () => {
     beforeEach(async () => {
@@ -570,6 +587,62 @@ describe('booking admin HTTP', () => {
         expect.objectContaining({ reason: 'google_unavailable' }),
       ]);
     });
+
+    it.each([
+      [5, '2026-12-12T14:10:00.000Z', '2026-12-12T14:15:00.000Z', 22],
+      [15, '2026-12-12T14:15:00.000Z', '2026-12-12T14:30:00.000Z', 7],
+      [30, '2026-12-12T14:30:00.000Z', '2026-12-12T15:00:00.000Z', 3],
+      [60, '2026-12-12T15:00:00.000Z', '2026-12-12T16:00:00.000Z', 1],
+    ])(
+      'steps by the requested %i minutes on the Toronto wall clock',
+      async (slotMinutes, first, second, count) => {
+        ctx.repo.settings = {
+          ...ctx.repo.settings,
+          weekday_overrides: { sat: { start: '09:10', end: '11:00' } },
+        };
+        const res = await get(
+          `date=2026-12-12&lessonTypeId=${PRIVATE_1H}&instructorIds=${AMY_ID}&slotMinutes=${slotMinutes}`,
+        ).expect(200);
+        expect(avail(res).slotMinutes).toBe(slotMinutes);
+        expect(avail(res).slots.slice(0, 2)).toEqual(
+          count > 1 ? [first, second] : [first],
+        );
+        expect(avail(res).slots).toHaveLength(count);
+        expect(avail(res).instructors[0].freeSlots).toHaveLength(
+          count - 60 / slotMinutes + 1,
+        );
+      },
+    );
+
+    it('defaults to a 5-minute grid from settings and keeps a full day small', async () => {
+      ctx.repo.settings = { ...ctx.repo.settings, slot_minutes: 5 };
+      const res = await get(
+        `date=2026-12-12&lessonTypeId=${PRIVATE_1H}`,
+      ).expect(200);
+      expect(avail(res).slotMinutes).toBe(5);
+      expect(avail(res).slots).toHaveLength(120);
+      expect(avail(res).slots[1]).toBe('2026-12-12T13:05:00.000Z');
+      expect(avail(res).instructors[0].freeSlots).toHaveLength(109);
+      expect(JSON.stringify(res.body).length).toBeLessThan(16_000);
+    });
+
+    it('lets a coarser step override the settings grid', async () => {
+      ctx.repo.settings = { ...ctx.repo.settings, slot_minutes: 5 };
+      const res = await get(
+        `date=2026-12-12&lessonTypeId=${PRIVATE_1H}&slotMinutes=60`,
+      ).expect(200);
+      expect(avail(res).slotMinutes).toBe(60);
+      expect(avail(res).slots).toHaveLength(10);
+    });
+
+    it.each(['10', '0', 'abc'])(
+      'rejects slotMinutes=%s',
+      async (slotMinutes) => {
+        await get(
+          `date=2026-12-12&lessonTypeId=${PRIVATE_1H}&slotMinutes=${slotMinutes}`,
+        ).expect(400);
+      },
+    );
 
     it('validates the query', async () => {
       await get(`date=2026-13-01&lessonTypeId=${PRIVATE_1H}`).expect(400);
@@ -896,6 +969,31 @@ describe('booking admin HTTP', () => {
       expect(res.body).toMatchObject({ googleReason: 'notFound' });
     });
 
+    it('books a start on any 5-minute boundary', async () => {
+      const res = await post(
+        booking({ startsAt: '2026-12-12T15:05:00.000Z' }),
+      ).expect(201);
+      expect(many(res)[0]).toMatchObject({
+        startsAt: '2026-12-12T15:05:00.000Z',
+        endsAt: '2026-12-12T16:05:00.000Z',
+      });
+    });
+
+    it.each([
+      '2026-12-12T15:07:00.000Z',
+      '2026-12-12T15:05:30.000Z',
+      '2026-12-12T15:05:00.001Z',
+      '2026-12-01T15:02:00.000Z',
+    ])('rejects a start off the 5-minute grid: %s', async (startsAt) => {
+      const res = await post(booking({ startsAt })).expect(400);
+      expect(res.body).toMatchObject({
+        code: START_NOT_ALIGNED,
+        message: START_NOT_ALIGNED_MESSAGE,
+      });
+      expect(ctx.repo.classes).toEqual([]);
+      expect(ctx.google.insertEvent).not.toHaveBeenCalled();
+    });
+
     describe('past lessons', () => {
       const past = { startsAt: '2026-12-01T15:00:00.000Z' };
 
@@ -1147,6 +1245,31 @@ describe('booking admin HTTP', () => {
     ])('rejects %s with 400 and books nothing', async (_name, body) => {
       await post(body).expect(400);
       expect(ctx.repo.classes).toEqual([]);
+    });
+
+    it('fails a row whose start is off the 5-minute grid', async () => {
+      const res = await post({
+        batchId: BATCH,
+        bookings: [
+          booking({ startsAt: '2026-12-12T15:03:00.000Z' }),
+          booking({ startsAt: '2026-12-12T17:55:00.000Z' }),
+        ],
+      }).expect(200);
+      expect(results(res).results).toEqual([
+        {
+          index: 0,
+          status: 'failed',
+          code: START_NOT_ALIGNED,
+          message: START_NOT_ALIGNED_MESSAGE,
+        },
+        {
+          index: 1,
+          status: 'created',
+          classes: [
+            expect.objectContaining({ startsAt: '2026-12-12T17:55:00.000Z' }),
+          ],
+        },
+      ]);
     });
   });
 

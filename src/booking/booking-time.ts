@@ -104,3 +104,14 @@ export function zonedInstant(date: string, time: string): Date {
 export function addMinutes(instant: Date, minutes: number): Date {
   return new Date(instant.getTime() + minutes * MINUTE_MS);
 }
+
+export function ceilToStep(instant: Date, minutes: number): Date {
+  const ms = instant.getTime();
+  const step = minutes * MINUTE_MS;
+  const remainder = (((ms + offsetAt(ms)) % step) + step) % step;
+  return remainder === 0 ? instant : new Date(ms + step - remainder);
+}
+
+export function isOnStep(instant: Date, minutes: number): boolean {
+  return ceilToStep(instant, minutes).getTime() === instant.getTime();
+}

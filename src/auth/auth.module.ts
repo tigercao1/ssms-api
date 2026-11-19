@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
+import { AuthFailureLimitModule } from './auth-failure-limit.module';
 import { SupabaseJwtStrategy } from './supabase-jwt.strategy';
 import { EmailVerifiedGuard } from './email-verified.guard';
 import {
@@ -14,7 +15,7 @@ import {
  * and expose guards + the @CurrentUser decorator.
  */
 @Module({
-  imports: [PassportModule],
+  imports: [PassportModule, AuthFailureLimitModule],
   providers: [
     SupabaseJwtStrategy,
     SessionLivenessService,

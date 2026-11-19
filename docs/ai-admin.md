@@ -110,10 +110,16 @@ from the `@SessionOnly()` decorator, which also sets `x-session-only` in the Ope
 | --- | --- |
 | 401 | No token, or the token is unknown, revoked or expired, its rotation grace period is over, or its owner is no longer an active admin. |
 | 403 | The route is session-only, the route is not an admin route (tokens only work on admin routes), or a session caller is not an admin. |
-| 429 | More than 120 requests in a minute with one token. Wait and retry. |
+| 429 | More than 120 requests in a minute with one token, or too many failed authentications from your IP (below). Wait for `Retry-After` and retry. |
 | 503 | The token or its owner could not be checked. Retry later. |
 
 Errors use the usual Nest shape: `{ "statusCode": 403, "message": "...", "error": "Forbidden" }`.
+
+After 60 failed authentications (401) from one client IP within a minute, further requests from that IP with no
+`Authorization` header, or one that is neither a Bearer JWT nor a well-formed `ssms_pat_` token, get 429 with a
+`Retry-After` header until the minute is over. A well-formed JWT or token from that IP is still checked, so valid
+callers behind the same address keep working. Failures are counted per machine, keyed on `Fly-Client-IP`.
+`ADMIN_AUTH_FAIL_LIMIT` and `ADMIN_AUTH_FAIL_WINDOW_SECONDS` change the limit and window.
 
 ## Rotate or revoke
 

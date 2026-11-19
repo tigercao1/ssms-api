@@ -2,7 +2,6 @@ import { createHash, randomBytes } from 'crypto';
 import { API_TOKEN_PREFIX } from '../auth/api-token-authenticator';
 
 const SECRET_BYTES = 32;
-const WELL_FORMED = /^ssms_pat_[A-Za-z0-9_-]{43}$/;
 
 export interface AdminApiTokenSecret {
   token: string;
@@ -13,10 +12,6 @@ export interface AdminApiTokenSecret {
 
 export function hashAdminApiToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
-}
-
-export function isWellFormedAdminApiToken(token: string): boolean {
-  return WELL_FORMED.test(token);
 }
 
 export function newAdminApiTokenSecret(): AdminApiTokenSecret {

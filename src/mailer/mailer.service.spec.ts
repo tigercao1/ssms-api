@@ -6,6 +6,7 @@ import type { EmailSender } from './email-sender.interface';
 import { createHash } from 'node:crypto';
 import {
   EmailDeliveryError,
+  EmailRateLimitError,
   MAX_ATTACHMENT_BYTES,
   type SendEmailRequest,
 } from './mailer.types';
@@ -225,6 +226,62 @@ describe('MailerService', () => {
     expect(inserts.email_log[0]).toMatchObject({
       status: 'sent',
       metadata: { attempts: 2 },
+    });
+  });
+
+  describe('on a 429', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const rateLimited = (retryAfterMs: number | null) =>
+      new EmailRateLimitError('Resend send failed (429)', retryAfterMs);
+
+    it('waits for Retry-After before retrying', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest
+        .fn()
+        .mockRejectedValueOnce(rateLimited(2_000))
+        .mockResolvedValueOnce({ id: 'msg-429' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      const outcome = mailer.send(request());
+      await jest.advanceTimersByTimeAsync(1_999);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(send).toHaveBeenCalledTimes(2);
+
+      expect(await outcome).toBe('sent');
+      expect(inserts.email_log[0]).toMatchObject({
+        status: 'sent',
+        metadata: { attempts: 2 },
+      });
+    });
+
+    it('waits a second when Retry-After is missing, and caps it in sync mode', async () => {
+      const { client } = makeSupabase();
+      const send = jest
+        .fn()
+        .mockRejectedValueOnce(rateLimited(null))
+        .mockRejectedValueOnce(rateLimited(60_000))
+        .mockResolvedValue({ id: 'msg-429' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      const background = mailer.send(request());
+      await jest.advanceTimersByTimeAsync(999);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(send).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(await background).toBe('sent');
+
+      send.mockReset();
+      send
+        .mockRejectedValueOnce(rateLimited(60_000))
+        .mockResolvedValue({ id: 'msg-sync' });
+      const sync = mailer.send(request({ mode: 'sync' }));
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(await sync).toBe('sent');
     });
   });
 

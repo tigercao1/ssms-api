@@ -9,6 +9,7 @@ import { EMAIL_SENDER, type EmailSender } from './email-sender.interface';
 import { MailerConfig } from './mailer.config';
 import {
   EmailDeliveryError,
+  EmailRateLimitError,
   type EmailTemplate,
   type RenderedEmail,
   type SendEmailRequest,
@@ -20,16 +21,20 @@ import { EmailRenderer } from './templates/email-renderer';
 const AUDIT_TABLE = 'audit_log';
 const EMAIL_LOG_TABLE = 'email_log';
 const BACKOFF_BASE_MS = 250;
+const RATE_LIMIT_WAIT_MS = 1_000;
 
 /**
  * Per-mode retry budget. `sync` serves the Supabase send-email hook, which has
- * a 5s budget for the whole call: 2 x 1.5s + 250ms backoff stays under it.
+ * a 5s budget for the whole call: 2 x 1.5s + at most 1s of backoff (a 429's
+ * Retry-After is capped by `maxWaitMs`) stays under it.
  */
-const RETRY_POLICY: Record<SendMode, { attempts: number; timeoutMs: number }> =
-  {
-    sync: { attempts: 2, timeoutMs: 1_500 },
-    background: { attempts: 3, timeoutMs: 10_000 },
-  };
+const RETRY_POLICY: Record<
+  SendMode,
+  { attempts: number; timeoutMs: number; maxWaitMs: number }
+> = {
+  sync: { attempts: 2, timeoutMs: 1_500, maxWaitMs: 1_000 },
+  background: { attempts: 3, timeoutMs: 10_000, maxWaitMs: 10_000 },
+};
 
 interface AttemptResult {
   outcome: SendOutcome;
@@ -42,7 +47,8 @@ interface AttemptResult {
  * Transactional email: renders an {@link EmailTemplate} through the shared
  * branded layout and hands it to the {@link EMAIL_SENDER} binding (Resend).
  *
- * Every send retries up to 3 times and writes one `email_log` row with the
+ * Every send retries up to 3 times, waiting out a 429's Retry-After, and
+ * writes one `email_log` row with the
  * final outcome (`sent`, `skipped` when the sender is not configured, or
  * `failed`). A failure also writes a `notification.failure` row to
  * `audit_log`. Attachments over 30 MB in total fail without a send attempt;
@@ -139,7 +145,7 @@ export class MailerService {
     request: SendEmailRequest,
     rendered: RenderedEmail,
   ): Promise<AttemptResult> {
-    const { attempts, timeoutMs } = RETRY_POLICY[request.mode];
+    const { attempts, timeoutMs, maxWaitMs } = RETRY_POLICY[request.mode];
     let lastError = 'unknown send failure';
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
@@ -167,7 +173,7 @@ export class MailerService {
             `failed: ${lastError}`,
         );
         if (attempt < attempts) {
-          await delay(BACKOFF_BASE_MS * 2 ** (attempt - 1));
+          await delay(retryWaitMs(err, attempt, maxWaitMs));
         }
       }
     }
@@ -245,6 +251,15 @@ export class MailerService {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function retryWaitMs(err: unknown, attempt: number, maxWaitMs: number): number {
+  const backoff = BACKOFF_BASE_MS * 2 ** (attempt - 1);
+  if (!(err instanceof EmailRateLimitError)) {
+    return backoff;
+  }
+  const retryAfter = err.retryAfterMs ?? RATE_LIMIT_WAIT_MS;
+  return Math.max(backoff, Math.min(retryAfter, maxWaitMs));
 }
 
 function delay(ms: number): Promise<void> {

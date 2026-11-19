@@ -3,10 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { assertAttachmentsWithinLimit } from './email-attachments';
 import type { EmailSender } from './email-sender.interface';
 import { DEFAULT_REPLY_TO, readOptional } from './mailer.config';
-import type { EmailMessage } from './mailer.types';
+import { type EmailMessage, EmailRateLimitError } from './mailer.types';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+const TOO_MANY_REQUESTS = 429;
 
 /**
  * {@link EmailSender} backed by Resend's REST API.
@@ -86,9 +87,14 @@ export class ResendEmailSender implements EmailSender {
 
     if (!response.ok) {
       const detail = await this.safeReadBody(response);
-      throw new Error(
-        `Resend send failed (${response.status} ${response.statusText}): ${detail}`,
-      );
+      const message = `Resend send failed (${response.status} ${response.statusText}): ${detail}`;
+      if (response.status === TOO_MANY_REQUESTS) {
+        throw new EmailRateLimitError(
+          message,
+          retryAfterMs(response.headers.get('retry-after')),
+        );
+      }
+      throw new Error(message);
     }
 
     const body = (await this.safeReadJson(response)) as { id?: string } | null;
@@ -110,4 +116,19 @@ export class ResendEmailSender implements EmailSender {
       return null;
     }
   }
+}
+
+export function retryAfterMs(
+  value: string | null,
+  now: number = Date.now(),
+): number | null {
+  if (!value?.trim()) {
+    return null;
+  }
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1_000);
+  }
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
 }

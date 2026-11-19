@@ -219,6 +219,16 @@ export class EmailDeliveryError extends Error {
   }
 }
 
+export class EmailRateLimitError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message);
+    this.name = 'EmailRateLimitError';
+  }
+}
+
 /** A fully-rendered email ready to hand to the {@link EmailSender}. */
 export interface EmailMessage {
   to: string;

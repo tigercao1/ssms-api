@@ -11,6 +11,8 @@ export const NEEDS_RATE = 'needs_rate';
 export const ALREADY_PAID = 'already_paid';
 export const LATE = 'late';
 export const LATE_CANCEL = 'late_cancel';
+export const CORRECTION = 'correction';
+export const REASSIGNED = 'reassigned';
 export const DEFAULT_CURRENCY = 'CAD';
 
 export interface PayableClass {
@@ -109,14 +111,77 @@ export function classLine(
   };
 }
 
-export function markAlreadyPaid(
+function isPayingLine(line: ClassLine): boolean {
+  return (
+    !line.flags.includes(ALREADY_PAID) && !line.flags.includes(LATE_CANCEL)
+  );
+}
+
+function groupBy<T>(items: readonly T[], key: (item: T) => string) {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    groups.set(key(item), [...(groups.get(key(item)) ?? []), item]);
+  }
+  return groups;
+}
+
+function netCents(lines: readonly ClassLine[]): number {
+  return lines.reduce((sum, line) => sum + toCents(line.amount), 0);
+}
+
+function owedFrom(
   lines: readonly ClassLine[],
-  paidClassIds: ReadonlySet<string>,
+): { line: ClassLine; cents: number } | null {
+  let running = 0;
+  for (const line of lines) {
+    running += toCents(line.amount);
+    if (isPayingLine(line)) {
+      return { line, cents: running };
+    }
+  }
+  return null;
+}
+
+function alreadyPaid(line: ClassLine): ClassLine {
+  return { ...line, amount: 0, flags: [ALREADY_PAID] };
+}
+
+export function settledLine(
+  line: ClassLine,
+  elsewhere: readonly ClassLine[],
+): ClassLine {
+  const mine = elsewhere.filter((l) => l.instructorId === line.instructorId);
+  if (mine.length === 0) {
+    return line;
+  }
+  if (netCents(mine) !== 0) {
+    return alreadyPaid(line);
+  }
+  const owed = owedFrom(mine);
+  if (!owed) {
+    return line;
+  }
+  if (owed.cents === 0) {
+    return alreadyPaid(line);
+  }
+  return {
+    ...line,
+    minutes: owed.line.minutes,
+    hourlyRate: owed.line.hourlyRate,
+    rateUnit: owed.line.rateUnit,
+    currency: owed.line.currency,
+    amount: fromCents(owed.cents),
+    flags: [],
+  };
+}
+
+export function settleLines(
+  lines: readonly ClassLine[],
+  elsewhere: readonly ClassLine[],
 ): ClassLine[] {
+  const byClass = groupBy(elsewhere, (line) => line.classId);
   return lines.map((line) =>
-    paidClassIds.has(line.classId)
-      ? { ...line, amount: 0, flags: [ALREADY_PAID] }
-      : line,
+    settledLine(line, byClass.get(line.classId) ?? []),
   );
 }
 
@@ -140,31 +205,15 @@ export function classLinesFor(
     );
 }
 
-function isPayingLine(line: ClassLine): boolean {
-  return (
-    !line.flags.includes(ALREADY_PAID) && !line.flags.includes(LATE_CANCEL)
-  );
-}
-
-export function lateLine(
+function settlementLine(
   cls: PayableClass,
-  paid: readonly ClassLine[],
-  rates: readonly PayableRate[],
-): ClassLine | null {
-  const netCents = paid.reduce((sum, line) => sum + toCents(line.amount), 0);
-  const firstPaid = paid.find(isPayingLine);
-  const owed = isPaid(cls.status) ? (firstPaid ?? classLine(cls, rates)) : null;
-  const needsRate =
-    !firstPaid && owed !== null && owed.flags.includes(NEEDS_RATE);
-  const diffCents = (owed ? toCents(owed.amount) : 0) - netCents;
-  if (diffCents === 0 && !needsRate) {
-    return null;
-  }
-  const reference =
-    owed ?? [...paid].reverse().find(isPayingLine) ?? paid[paid.length - 1];
+  reference: ClassLine,
+  cents: number,
+  flags: string[],
+): ClassLine {
   return {
     classId: cls.id,
-    instructorId: owed ? cls.instructorId : reference.instructorId,
+    instructorId: reference.instructorId,
     lessonTypeId: cls.lessonTypeId,
     description: cls.lessonTypeName,
     classStatus: cls.status,
@@ -175,12 +224,72 @@ export function lateLine(
     hourlyRate: reference.hourlyRate,
     rateUnit: reference.rateUnit,
     currency: reference.currency,
-    amount: fromCents(diffCents),
-    flags: [
-      diffCents < 0 ? LATE_CANCEL : LATE,
+    amount: fromCents(cents),
+    flags,
+  };
+}
+
+function reversalLine(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  extraFlags: string[],
+): ClassLine | null {
+  const net = netCents(paid);
+  if (net === 0) {
+    return null;
+  }
+  const reference =
+    [...paid].reverse().find(isPayingLine) ?? paid[paid.length - 1];
+  return settlementLine(cls, reference, -net, [
+    LATE_CANCEL,
+    ...(net < 0 ? [CORRECTION] : []),
+    ...extraFlags,
+  ]);
+}
+
+function owedLine(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  rates: readonly PayableRate[],
+  reassigned: boolean,
+): ClassLine | null {
+  const owed = owedFrom(paid);
+  const reference = owed?.line ?? classLine(cls, rates);
+  const needsRate = !owed && reference.flags.includes(NEEDS_RATE);
+  const diff = (owed?.cents ?? toCents(reference.amount)) - netCents(paid);
+  if (diff === 0 && !needsRate) {
+    return null;
+  }
+  return settlementLine(
+    cls,
+    { ...reference, instructorId: cls.instructorId },
+    diff,
+    [
+      LATE,
+      ...(diff < 0 ? [CORRECTION] : []),
+      ...(reassigned ? [REASSIGNED] : []),
       ...(needsRate ? [NEEDS_RATE] : []),
     ],
-  };
+  );
+}
+
+export function lateLines(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  rates: readonly PayableRate[],
+): ClassLine[] {
+  const byInstructor = groupBy(paid, (line) => line.instructorId);
+  const mine = byInstructor.get(cls.instructorId) ?? [];
+  byInstructor.delete(cls.instructorId);
+  const lines = [
+    isPaid(cls.status)
+      ? owedLine(cls, mine, rates, byInstructor.size > 0)
+      : reversalLine(cls, mine, []),
+    ...[...byInstructor.values()].map((theirs) =>
+      reversalLine(cls, theirs, [REASSIGNED]),
+    ),
+  ];
+  return lines.filter((line): line is ClassLine => line !== null);
 }
 
 export interface AmountLine {
@@ -233,7 +342,11 @@ export function instructorTotals(
     if (line.flags.includes(ALREADY_PAID)) {
       continue;
     }
-    const sign = line.flags.includes(LATE_CANCEL) ? -1 : 1;
+    const sign = line.flags.includes(CORRECTION)
+      ? 0
+      : line.flags.includes(LATE_CANCEL)
+        ? -1
+        : 1;
     total.lessons += sign;
     total.minutes += sign * line.minutes;
     total.lessonCents += toCents(line.amount);

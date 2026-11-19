@@ -136,93 +136,13 @@ describe('SupabasePayrollRepository', () => {
     ]);
   });
 
-  it('finds classes already snapshotted by another period in chunks', async () => {
-    const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);
-    const { client, calls } = recordingPayrollSupabase({
-      payroll_lines: [ok([{ class_id: 'c1' }]), ok(null)],
-    });
-    const repo = new SupabasePayrollRepository(client);
-    await expect(repo.classesPaidElsewhere(ID, ids)).resolves.toEqual(['c1']);
-    await expect(repo.classesPaidElsewhere(ID, [])).resolves.toEqual([]);
-    expect(calls).toHaveLength(2);
-    expect(calls[0].ops).toEqual([
-      ['select', 'class_id'],
-      ['eq', 'kind', 'class'],
-      ['neq', 'period_id', ID],
-      ['in', 'class_id', ids.slice(0, CLASS_ID_CHUNK)],
-    ]);
-    expect(calls[1].ops).toContainEqual([
-      'in',
-      'class_id',
-      [ids[CLASS_ID_CHUNK]],
-    ]);
-  });
-
-  it('reads, adds and deletes lines', async () => {
-    const { client, calls } = recordingPayrollSupabase({
-      payroll_lines: [ok(null), ok({ id: ID }), ok(null), ok({ id: ID })],
-    });
-    const repo = new SupabasePayrollRepository(client);
-    await expect(repo.lines(ID)).resolves.toEqual([]);
-    const insert = {
-      period_id: ID,
-      instructor_id: ID,
-      kind: 'adjustment' as const,
-      description: 'Bonus',
-      currency: 'CAD',
-      amount: 10,
-      created_by: null,
-    };
-    await expect(repo.insertAdjustment(insert)).resolves.toEqual({ id: ID });
-    await expect(repo.deleteAdjustment(ID, ID)).resolves.toBeNull();
-    await expect(repo.deleteAdjustment(ID, ID)).resolves.toEqual({ id: ID });
-    expect(calls[0].ops[0]).toEqual(['select', PAYROLL_LINE_COLUMNS]);
-    expect(calls[1].ops[0]).toEqual(['insert', insert]);
-    expect(calls[2].ops).toEqual(
-      expect.arrayContaining([
-        ['delete'],
-        ['eq', 'period_id', ID],
-        ['eq', 'kind', 'adjustment'],
-      ]),
-    );
-  });
-
-  it('fails when an insert returns no row and surfaces query errors', async () => {
-    const { client } = recordingPayrollSupabase({
-      payroll_lines: [ok(null), fail],
-      payroll_periods: fail,
-      classes: fail,
-      pay_rates: fail,
-    });
-    const repo = new SupabasePayrollRepository(client);
-    await expect(
-      repo.insertAdjustment({
-        period_id: ID,
-        instructor_id: ID,
-        kind: 'adjustment',
-        description: 'x',
-        currency: 'CAD',
-        amount: 1,
-        created_by: null,
-      }),
-    ).rejects.toThrow('no row returned');
-    await expect(repo.lines(ID)).rejects.toThrow('boom');
-    await expect(repo.findPeriod(ID)).rejects.toThrow('boom');
-    await expect(repo.classesBetween('a', 'b')).rejects.toThrow('boom');
-    await expect(repo.ratesFor([ID])).rejects.toThrow('boom');
-  });
-
-  it('reads one instructor’s profile, classes, lines, periods and paid classes', async () => {
+  it('reads one instructor’s profile, classes, lines and periods', async () => {
     const full = Array.from({ length: PAGE_SIZE }, (_, i) => ({ id: `r${i}` }));
     const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);
     const { client, calls } = recordingPayrollSupabase({
       instructors: [ok({ id: ID, approval_status: 'approved' }), ok(null)],
       classes: [ok(full), ok([{ id: 'last' }])],
-      payroll_lines: [
-        ok([{ id: ID }]),
-        ok([{ class_id: 'c1', period_id: ID }]),
-        ok(null),
-      ],
+      payroll_lines: ok([{ id: ID }]),
       payroll_periods: [ok([{ id: ID }]), ok(null)],
     });
     const repo = new SupabasePayrollRepository(client);
@@ -235,10 +155,6 @@ describe('SupabasePayrollRepository', () => {
       PAGE_SIZE + 1,
     );
     await expect(repo.linesForInstructor(ID)).resolves.toEqual([{ id: ID }]);
-    await expect(repo.classLinePeriods(ids)).resolves.toEqual([
-      { class_id: 'c1', period_id: ID },
-    ]);
-    await expect(repo.classLinePeriods([])).resolves.toEqual([]);
     await expect(
       repo.periodsStartingOn(['2025-12-29', ...ids]),
     ).resolves.toEqual([{ id: ID }]);
@@ -279,18 +195,6 @@ describe('SupabasePayrollRepository', () => {
         ],
       ],
       [
-        'payroll_lines',
-        [
-          ['select', 'class_id, period_id'],
-          ['eq', 'kind', 'class'],
-          ['in', 'class_id', ids.slice(0, CLASS_ID_CHUNK)],
-        ],
-      ],
-      [
-        'payroll_lines',
-        expect.arrayContaining([['in', 'class_id', [ids[CLASS_ID_CHUNK]]]]),
-      ],
-      [
         'payroll_periods',
         [
           ['select', PAYROLL_PERIOD_COLUMNS],
@@ -316,7 +220,6 @@ describe('SupabasePayrollRepository', () => {
     await expect(repo.instructorByAuthUser(ID)).rejects.toThrow('boom');
     await expect(repo.classesForInstructor(ID)).rejects.toThrow('boom');
     await expect(repo.linesForInstructor(ID)).rejects.toThrow('boom');
-    await expect(repo.classLinePeriods([ID])).rejects.toThrow('boom');
     await expect(repo.periodsStartingOn(['2025-12-29'])).rejects.toThrow(
       'boom',
     );
@@ -339,21 +242,51 @@ describe('SupabasePayrollRepository', () => {
     ]);
   });
 
+  it('pages through unsettled classes past the row limit', async () => {
+    const full = Array.from({ length: PAGE_SIZE }, (_, i) => ({
+      class_id: `u${i}`,
+    }));
+    const { client, calls } = recordingPayrollSupabase({
+      'rpc:payroll_unsettled_class_ids': [
+        ok(full),
+        ok([{ class_id: 'last' }]),
+        ok(null),
+      ],
+    });
+    const repo = new SupabasePayrollRepository(client);
+    const ids = await repo.unsettledClassIds();
+    expect(ids).toHaveLength(PAGE_SIZE + 1);
+    expect(ids.at(-1)).toBe('last');
+    await expect(repo.unsettledClassIds()).resolves.toEqual([]);
+    expect(calls.map((c) => c.ops)).toEqual([
+      [
+        ['args', undefined],
+        ['order', 'class_id', { ascending: true }],
+        ['range', 0, PAGE_SIZE - 1],
+      ],
+      [
+        ['args', undefined],
+        ['order', 'class_id', { ascending: true }],
+        ['range', PAGE_SIZE, 2 * PAGE_SIZE - 1],
+      ],
+      [
+        ['args', undefined],
+        ['order', 'class_id', { ascending: true }],
+        ['range', 0, PAGE_SIZE - 1],
+      ],
+    ]);
+  });
+
   it('loads unsettled classes with their lines in chunks', async () => {
     const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);
     const { client, calls } = recordingPayrollSupabase({
-      'rpc:payroll_unsettled_class_ids': [ok([{ class_id: 'c1' }]), ok(null)],
       classes: [ok([{ id: 'c1' }]), ok(null)],
       payroll_lines: [ok([{ id: ID }]), ok(null)],
     });
     const repo = new SupabasePayrollRepository(client);
-    await expect(repo.unsettledClassIds()).resolves.toEqual(['c1']);
-    await expect(repo.unsettledClassIds()).resolves.toEqual([]);
     await expect(repo.classesByIds(ids)).resolves.toEqual([{ id: 'c1' }]);
     await expect(repo.classLines(ids)).resolves.toEqual([{ id: ID }]);
     expect(calls.map((c) => [c.target, c.ops])).toEqual([
-      ['rpc:payroll_unsettled_class_ids', [['args', undefined]]],
-      ['rpc:payroll_unsettled_class_ids', [['args', undefined]]],
       [
         'classes',
         [

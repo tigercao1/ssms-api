@@ -27,10 +27,10 @@ import {
   DEFAULT_CURRENCY,
   type InstructorTotal,
   instructorTotals,
-  lateLine,
-  markAlreadyPaid,
+  lateLines,
   NEEDS_RATE,
   type PayableClass,
+  settleLines,
 } from './payroll-lines';
 import {
   addDays,
@@ -206,14 +206,14 @@ export async function lateClassLines(
   const late: LateClassLine[] = [];
   for (const row of rows) {
     const paid = paidByClass.get(row.id) ?? [];
-    const line = lateLine(toPayable(row), paid.map(storedLine), rates);
-    if (!line) continue;
-    const instructor =
-      line.instructorId === row.instructor_id
-        ? row.instructor
-        : (paid.find((p) => p.instructor_id === line.instructorId)
-            ?.instructor ?? null);
-    late.push({ line, row, instructor });
+    for (const line of lateLines(toPayable(row), paid.map(storedLine), rates)) {
+      const instructor =
+        line.instructorId === row.instructor_id
+          ? row.instructor
+          : (paid.find((p) => p.instructor_id === line.instructorId)
+              ?.instructor ?? null);
+      late.push({ line, row, instructor });
+    }
   }
   return late.sort((a, b) => byLessonStart(a.line, b.line));
 }
@@ -350,11 +350,10 @@ export class PayrollService {
         period.starts_on,
         period.ends_on,
       );
-      const paidElsewhere = await this.repo.classesPaidElsewhere(
-        period.id,
-        live.map((line) => line.classId),
-      );
-      classLines = markAlreadyPaid(live, new Set(paidElsewhere));
+      const elsewhere = (
+        await this.repo.classLines(live.map((line) => line.classId))
+      ).filter((row) => row.period_id !== period.id);
+      classLines = settleLines(live, elsewhere.map(storedLine));
       const current = await this.repo.currentPeriod(this.today());
       if (current?.id === period.id) {
         const late = await lateClassLines(this.repo);

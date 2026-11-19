@@ -9,7 +9,6 @@ import { daysBetween, localDate } from '../../src/payroll/payroll-time';
 import {
   type AdjustmentInsert,
   type ApprovalStatus,
-  type ClassLinePeriod,
   type InstructorApprovalRow,
   type InstructorClassRow,
   type InstructorLineRow,
@@ -227,23 +226,6 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     );
   }
 
-  classesPaidElsewhere(
-    periodId: string,
-    classIds: string[],
-  ): Promise<string[]> {
-    return Promise.resolve(
-      this.lineRows
-        .filter(
-          (l) =>
-            l.kind === 'class' &&
-            l.period_id !== periodId &&
-            l.class_id !== null &&
-            classIds.includes(l.class_id),
-        )
-        .map((l) => l.class_id as string),
-    );
-  }
-
   currentPeriod(today: string): Promise<PayrollPeriodRow | null> {
     const period = this.periods
       .filter((p) => p.status === 'open' && p.ends_on >= today)
@@ -252,23 +234,22 @@ export class InMemoryPayrollRepository extends PayrollRepository {
   }
 
   unsettledClassIds(): Promise<string[]> {
+    const cents = (amount: string | number) => Math.round(Number(amount) * 100);
+    const net = (lines: PayrollLineRow[]) =>
+      lines.reduce((sum, l) => sum + cents(l.amount), 0);
     const ids = this.classes
       .filter((c) => {
-        const lines = this.lineRows.filter(
-          (l) => l.kind === 'class' && l.class_id === c.id,
-        );
-        const net = lines.reduce(
-          (sum, l) => sum + Math.round(Number(l.amount) * 100),
-          0,
-        );
-        if (c.status === 'cancelled') {
-          return net !== 0;
+        const byInstructor = new Map<string, PayrollLineRow[]>();
+        for (const l of this.lineRows) {
+          if (l.kind !== 'class' || l.class_id !== c.id) continue;
+          byInstructor.set(l.instructor_id, [
+            ...(byInstructor.get(l.instructor_id) ?? []),
+            l,
+          ]);
         }
-        const firstPaid = lines.find(
-          (l) =>
-            !l.flags.includes('already_paid') &&
-            !l.flags.includes('late_cancel'),
-        );
+        if (c.status === 'cancelled') {
+          return [...byInstructor.values()].some((lines) => net(lines) !== 0);
+        }
         const date = localDate(c.starts_at);
         const ownFinalized = this.periods.some(
           (p) =>
@@ -276,10 +257,24 @@ export class InMemoryPayrollRepository extends PayrollRepository {
             p.starts_on <= date &&
             date <= p.ends_on,
         );
-        return (
-          ownFinalized &&
-          (!firstPaid || net !== Math.round(Number(firstPaid.amount) * 100))
+        if (!ownFinalized) return false;
+        const othersPaid = [...byInstructor].some(
+          ([id, lines]) => id !== c.instructor_id && net(lines) !== 0,
         );
+        const mine = byInstructor.get(c.instructor_id) ?? [];
+        let running = 0;
+        let owed: number | null = null;
+        for (const l of mine) {
+          running += cents(l.amount);
+          if (
+            !l.flags.includes('already_paid') &&
+            !l.flags.includes('late_cancel')
+          ) {
+            owed = running;
+            break;
+          }
+        }
+        return othersPaid || owed === null || net(mine) !== owed;
       })
       .map((c) => c.id);
     return Promise.resolve(ids);
@@ -370,6 +365,14 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     if (period.status !== 'open') {
       throw prerequisite('payroll period is finalized');
     }
+    const keys = lines.map((l) => `${l.class_id}|${l.instructor_id}`);
+    if (new Set(keys).size !== keys.length) {
+      throw new DatabaseError(
+        'finalize',
+        '23505',
+        'duplicate payroll line for a class and instructor',
+      );
+    }
     this.lineRows = this.lineRows.filter(
       (l) => !(l.period_id === periodId && l.kind === 'class'),
     );
@@ -459,22 +462,6 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       this.periods
         .filter((p) => startsOn.includes(p.starts_on))
         .map((p) => ({ ...p })),
-    );
-  }
-
-  classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]> {
-    return Promise.resolve(
-      this.lineRows
-        .filter(
-          (l) =>
-            l.kind === 'class' &&
-            l.class_id !== null &&
-            classIds.includes(l.class_id),
-        )
-        .map((l) => ({
-          class_id: l.class_id as string,
-          period_id: l.period_id,
-        })),
     );
   }
 }

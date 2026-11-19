@@ -1,4 +1,10 @@
-import { ALREADY_PAID, LATE, LATE_CANCEL } from './payroll-lines';
+import {
+  ALREADY_PAID,
+  CORRECTION,
+  LATE,
+  LATE_CANCEL,
+  REASSIGNED,
+} from './payroll-lines';
 import type { PayrollPeriodDetail } from './payroll.service';
 
 export const CSV_BOM = '\uFEFF';
@@ -94,9 +100,16 @@ export function payrollSheetCsv(detail: PayrollPeriodDetail): string {
 }
 
 function lineType(flags: readonly string[]): string {
-  if (flags.includes(LATE_CANCEL)) return 'late cancel';
-  if (flags.includes(LATE)) return 'late lesson';
-  return 'lesson';
+  const base = flags.includes(LATE_CANCEL)
+    ? 'late cancel'
+    : flags.includes(LATE)
+      ? 'late lesson'
+      : 'lesson';
+  return [
+    base,
+    ...(flags.includes(CORRECTION) ? ['correction'] : []),
+    ...(flags.includes(REASSIGNED) ? ['(reassigned)'] : []),
+  ].join(' ');
 }
 
 export function payrollDetailCsv(detail: PayrollPeriodDetail): string {

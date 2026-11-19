@@ -145,11 +145,6 @@ export interface InstructorLineRow extends Omit<PayrollLineRow, 'instructor'> {
   } | null;
 }
 
-export interface ClassLinePeriod {
-  class_id: string;
-  period_id: string;
-}
-
 export interface AdjustmentInsert {
   period_id: string;
   instructor_id: string;
@@ -188,10 +183,6 @@ export abstract class PayrollRepository {
   abstract classesBetween(from: string, to: string): Promise<PayrollClassRow[]>;
   abstract ratesFor(lessonTypeIds: string[]): Promise<PayRateRow[]>;
   abstract lines(periodId: string): Promise<PayrollLineRow[]>;
-  abstract classesPaidElsewhere(
-    periodId: string,
-    classIds: string[],
-  ): Promise<string[]>;
   abstract currentPeriod(today: string): Promise<PayrollPeriodRow | null>;
   abstract unsettledClassIds(): Promise<string[]>;
   abstract classesByIds(ids: string[]): Promise<LateClassRow[]>;
@@ -217,7 +208,6 @@ export abstract class PayrollRepository {
     instructorId: string,
   ): Promise<InstructorLineRow[]>;
   abstract periodsStartingOn(startsOn: string[]): Promise<PayrollPeriodRow[]>;
-  abstract classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]>;
 }
 
 @Injectable()
@@ -344,26 +334,6 @@ export class SupabasePayrollRepository extends PayrollRepository {
     }
   }
 
-  async classesPaidElsewhere(
-    periodId: string,
-    classIds: string[],
-  ): Promise<string[]> {
-    const paid: string[] = [];
-    for (let i = 0; i < classIds.length; i += CLASS_ID_CHUNK) {
-      const { data, error } = (await this.supabase
-        .from(PAYROLL_LINES_TABLE)
-        .select('class_id')
-        .eq('kind', 'class')
-        .neq('period_id', periodId)
-        .in('class_id', classIds.slice(i, i + CLASS_ID_CHUNK))) as DbResult<
-        { class_id: string }[]
-      >;
-      check(error, 'load paid payroll classes');
-      paid.push(...(data ?? []).map((row) => row.class_id));
-    }
-    return paid;
-  }
-
   async currentPeriod(today: string): Promise<PayrollPeriodRow | null> {
     const { data, error } = (await this.supabase
       .from(PAYROLL_PERIODS_TABLE)
@@ -377,11 +347,21 @@ export class SupabasePayrollRepository extends PayrollRepository {
   }
 
   async unsettledClassIds(): Promise<string[]> {
-    const { data, error } = (await this.supabase.rpc(
-      'payroll_unsettled_class_ids',
-    )) as DbResult<{ class_id: string }[]>;
-    check(error, 'load unsettled payroll classes');
-    return (data ?? []).map((row) => row.class_id);
+    const ids: string[] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = (await this.supabase
+        .rpc('payroll_unsettled_class_ids')
+        .order('class_id', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1)) as DbResult<
+        { class_id: string }[]
+      >;
+      check(error, 'load unsettled payroll classes');
+      const page = data ?? [];
+      ids.push(...page.map((row) => row.class_id));
+      if (page.length < PAGE_SIZE) {
+        return ids;
+      }
+    }
   }
 
   async classesByIds(ids: string[]): Promise<LateClassRow[]> {
@@ -533,22 +513,6 @@ export class SupabasePayrollRepository extends PayrollRepository {
         PayrollPeriodRow[]
       >;
       check(error, 'load payroll periods');
-      rows.push(...(data ?? []));
-    }
-    return rows;
-  }
-
-  async classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]> {
-    const rows: ClassLinePeriod[] = [];
-    for (let i = 0; i < classIds.length; i += CLASS_ID_CHUNK) {
-      const { data, error } = (await this.supabase
-        .from(PAYROLL_LINES_TABLE)
-        .select('class_id, period_id')
-        .eq('kind', 'class')
-        .in('class_id', classIds.slice(i, i + CLASS_ID_CHUNK))) as DbResult<
-        ClassLinePeriod[]
-      >;
-      check(error, 'load paid payroll classes');
       rows.push(...(data ?? []));
     }
     return rows;

@@ -940,6 +940,185 @@ describe('payroll admin HTTP', () => {
       expect((await detailOf(next)).lines).toEqual([]);
     });
 
+    const netByInstructor = (classId: string) => {
+      const net: Record<string, number> = {};
+      for (const l of ctx.repo.lineRows.filter((r) => r.class_id === classId)) {
+        net[l.instructor_id] =
+          ((net[l.instructor_id] ?? 0) * 100 +
+            Math.round(Number(l.amount) * 100)) /
+          100;
+      }
+      return net;
+    };
+    const reassign = (cls: { instructor_id: string }, instructorId: string) =>
+      Object.assign(cls, {
+        instructor_id: instructorId,
+        instructor: ctx.repo.instructorNames.get(instructorId) ?? null,
+      });
+    const reopen = (period: PayrollPeriod) =>
+      post(`/admin/payroll/periods/${period.id}/reopen`).expect(200);
+    const byInstructor = (detail: PayrollPeriodDetail) =>
+      detail.lines.map((l) => [l.instructorName, l.amount, l.flags]);
+
+    it('labels a refund on a cancelled lesson as a late cancel correction that adds no lesson (S3a)', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.status = 'cancelled';
+      await finalize(current);
+      await reopen(previous);
+      await finalize(previous);
+      const live = await detailOf(next);
+      expect(summary(live)).toEqual([
+        ['2025-12-20', 60, 'cancelled', ['late_cancel', 'correction']],
+      ]);
+      expect(live.instructors[0]).toMatchObject({
+        lessons: 0,
+        minutes: 0,
+        total: 60,
+      });
+      const csv = await get(
+        `/admin/payroll/periods/${next.id}/export.csv?detail=1`,
+      ).expect(200);
+      expect(csv.text.split('\r\n')[1].split(',')[3]).toBe(
+        'late cancel correction',
+      );
+      await finalize(next);
+      expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 0 });
+      expect((await detailOf(later)).lines).toEqual([]);
+    });
+
+    it('labels a take-back on a lesson that still stands as a late correction that removes no lesson (S9)', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.status = 'cancelled';
+      await finalize(current);
+      cls.status = 'completed';
+      await finalize(next);
+      expect(netPaid(cls.id)).toBe(60);
+      await reopen(current);
+      const live = await detailOf(current);
+      expect(summary(live)).toEqual([
+        ['2025-12-20', -60, 'completed', ['late', 'correction']],
+      ]);
+      expect(live.instructors[0]).toMatchObject({
+        lessons: 0,
+        minutes: 0,
+        total: -60,
+      });
+      await finalize(current);
+      expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60 });
+      expect((await detailOf(later)).lines).toEqual([]);
+    });
+
+    describe('when a paid lesson changes instructor', () => {
+      beforeEach(() => {
+        ctx.repo.addRate({
+          instructorId: BO_ID,
+          hourlyRate: 80,
+          from: '2025-01-01',
+        });
+      });
+
+      it('takes the pay back from the old instructor and pays the new one at their own rate', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        reassign(cls, BO_ID);
+        const live = await detailOf(current);
+        expect(byInstructor(live)).toEqual([
+          ['Bo Chen', 120, ['late', 'reassigned']],
+          ['Ada Lin', -60, ['late_cancel', 'reassigned']],
+        ]);
+        expect(
+          live.instructors.map((i) => [
+            i.instructorName,
+            i.lessons,
+            i.minutes,
+            i.total,
+          ]),
+        ).toEqual([
+          ['Ada Lin', -1, -90, -60],
+          ['Bo Chen', 1, 90, 120],
+        ]);
+        const csv = await get(
+          `/admin/payroll/periods/${current.id}/export.csv?detail=1`,
+        ).expect(200);
+        expect(
+          csv.text
+            .split('\r\n')
+            .slice(1, 3)
+            .map((row) => row.split(',').slice(0, 4)),
+        ).toEqual([
+          ['Bo Chen', '2025-12-20', '10:00', 'late lesson (reassigned)'],
+          ['Ada Lin', '2025-12-20', '10:00', 'late cancel (reassigned)'],
+        ]);
+        await finalize(current);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 0, [BO_ID]: 120 });
+        expect((await detailOf(next)).lines).toEqual([]);
+      });
+
+      it('reverses only what each instructor still holds when the lesson is then cancelled', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        reassign(cls, BO_ID);
+        cls.status = 'cancelled';
+        expect(byInstructor(await detailOf(current))).toEqual([
+          ['Ada Lin', -60, ['late_cancel', 'reassigned']],
+        ]);
+        cls.status = 'completed';
+        await finalize(current);
+        cls.status = 'cancelled';
+        expect(byInstructor(await detailOf(next))).toEqual([
+          ['Bo Chen', -120, ['late_cancel']],
+        ]);
+        await finalize(next);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 0, [BO_ID]: 0 });
+        expect((await detailOf(later)).lines).toEqual([]);
+      });
+
+      it('pays the new instructor at their own rate after a cancel and restore', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        cls.status = 'cancelled';
+        await finalize(current);
+        cls.status = 'completed';
+        reassign(cls, BO_ID);
+        expect(byInstructor(await detailOf(next))).toEqual([
+          ['Bo Chen', 120, ['late', 'reassigned']],
+        ]);
+        await finalize(next);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 0, [BO_ID]: 120 });
+        expect((await detailOf(later)).lines).toEqual([]);
+      });
+
+      it('pays only the new instructor for a lesson reassigned in an open period that was never paid', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-02T15:00:00Z' });
+        reassign(cls, BO_ID);
+        expect(byInstructor(await detailOf(current))).toEqual([
+          ['Bo Chen', 120, []],
+        ]);
+        await finalize(current);
+        expect(netByInstructor(cls.id)).toEqual({ [BO_ID]: 120 });
+        expect((await detailOf(next)).lines).toEqual([]);
+      });
+    });
+
+    it('pays a restored lesson moved into an open period in that period at what it was first paid (S12)', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.status = 'cancelled';
+      await finalize(current);
+      cls.status = 'completed';
+      cls.starts_at = '2026-01-13T15:00:00.000Z';
+      cls.ends_at = '2026-01-13T16:30:00.000Z';
+      ctx.repo.rates[0].hourly_rate = 50;
+      const live = await detailOf(next);
+      expect(summary(live)).toEqual([['2026-01-13', 60, 'completed', []]]);
+      expect(live.lines[0]).toMatchObject({ hourlyRate: 40, minutes: 90 });
+      await finalize(next);
+      expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60 });
+      expect((await detailOf(later)).lines).toEqual([]);
+    });
+
     it('labels late lessons and late cancels in both exports', async () => {
       const cancelled = ctx.repo.addClass({
         startsAt: '2025-12-20T15:00:00Z',

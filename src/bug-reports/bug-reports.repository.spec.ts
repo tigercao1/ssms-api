@@ -36,7 +36,10 @@ class RecordingSupabase {
 
   rpc(name: string, args: unknown) {
     this.rpcs.push({ name, args });
-    return { single: () => this.next() };
+    return {
+      single: () => this.next(),
+      then: (resolve: (r: Result) => unknown) => this.next().then(resolve),
+    };
   }
 }
 
@@ -111,6 +114,34 @@ describe('SupabaseBugReportsRepository', () => {
     await expect(repo.submit(REPORT, LIMITS)).rejects.toBeInstanceOf(
       DatabaseError,
     );
+  });
+
+  it('records a screenshot key through the limiting function', async () => {
+    const { db, repo } = setup();
+    db.results = [
+      { data: null, error: null },
+      { data: 'global', error: null },
+      { data: null, error: { message: 'boom' } },
+    ];
+
+    await expect(
+      repo.issueScreenshot('user-1', 'bug-reports/k.png', LIMITS),
+    ).resolves.toBeNull();
+    await expect(
+      repo.issueScreenshot('user-1', 'bug-reports/k.png', LIMITS),
+    ).resolves.toBe('global');
+    await expect(
+      repo.issueScreenshot('user-1', 'bug-reports/k.png', LIMITS),
+    ).rejects.toBeInstanceOf(DatabaseError);
+    expect(db.rpcs[0]).toEqual({
+      name: 'issue_bug_report_screenshot',
+      args: {
+        p_reporter: 'user-1',
+        p_key: 'bug-reports/k.png',
+        p_hourly_limit_per_reporter: 10,
+        p_minute_limit: 30,
+      },
+    });
   });
 
   it('lists one status newest first within the page', async () => {

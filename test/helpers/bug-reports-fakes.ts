@@ -7,6 +7,7 @@ import {
 import type {
   BugReportRow,
   BugReportStatus,
+  LimitedBy,
   NewBugReport,
   SubmitOutcome,
 } from '../../src/bug-reports/bug-reports.types';
@@ -18,6 +19,11 @@ const MINUTE_MS = 60 * 1000;
 export class InMemoryBugReports extends BugReportsRepository {
   readonly rows: BugReportRow[] = [];
   readonly instructorNames = new Map<string, string>();
+  readonly screenshots: {
+    key: string;
+    reporterId: string;
+    createdAt: number;
+  }[] = [];
   now = Date.parse('2026-11-19T12:00:00Z');
 
   seed(overrides: Partial<BugReportRow> = {}): BugReportRow {
@@ -64,6 +70,26 @@ export class InMemoryBugReports extends BugReportsRepository {
     }
     const row = this.seed(report);
     return Promise.resolve({ id: row.id, createdAt: row.created_at });
+  }
+
+  issueScreenshot(
+    authUserId: string,
+    key: string,
+    limits: SubmitLimits,
+  ): Promise<LimitedBy | null> {
+    const since = (ms: number) =>
+      this.screenshots.filter((s) => s.createdAt > this.now - ms);
+    if (
+      since(HOUR_MS).filter((s) => s.reporterId === authUserId).length >=
+      limits.hourlyPerReporter
+    ) {
+      return Promise.resolve('reporter');
+    }
+    if (since(MINUTE_MS).length >= limits.perMinute) {
+      return Promise.resolve('global');
+    }
+    this.screenshots.push({ key, reporterId: authUserId, createdAt: this.now });
+    return Promise.resolve(null);
   }
 
   list(

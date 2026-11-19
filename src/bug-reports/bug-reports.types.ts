@@ -27,6 +27,11 @@ export const BUG_REPORT_LIMITS = {
   perMinute: 30,
 } as const;
 
+export const SCREENSHOT_LIMITS = {
+  hourlyPerReporter: 20,
+  perMinute: 90,
+} as const;
+
 export interface BugReportRow {
   id: string;
   created_at: string;
@@ -52,9 +57,11 @@ export type NewBugReport = Omit<
   'id' | 'created_at' | 'updated_at' | 'status' | 'admin_note'
 >;
 
+export type LimitedBy = 'reporter' | 'global';
+
 export type SubmitOutcome =
   | { id: string; createdAt: string }
-  | { limited: 'reporter' | 'global' };
+  | { limited: LimitedBy };
 
 export interface BugReportItem {
   id: string;

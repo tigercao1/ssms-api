@@ -71,3 +71,52 @@ revoke all on function public.submit_bug_report(jsonb, int, int)
   from public, anon, authenticated;
 grant execute on function public.submit_bug_report(jsonb, int, int)
   to service_role;
+
+create table if not exists bug_report_screenshots (
+  key          text primary key check (key ~ '^bug-reports/[0-9a-f-]{36}/[0-9a-f-]{36}\.(png|jpg|webp)$'),
+  reporter_id  uuid not null,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists bug_report_screenshots_reporter_created_idx
+  on bug_report_screenshots (reporter_id, created_at desc);
+create index if not exists bug_report_screenshots_created_idx
+  on bug_report_screenshots (created_at desc);
+
+alter table bug_report_screenshots enable row level security;
+alter table bug_report_screenshots force row level security;
+revoke all on bug_report_screenshots from public, anon, authenticated;
+
+create or replace function public.issue_bug_report_screenshot(
+  p_reporter uuid,
+  p_key text,
+  p_hourly_limit_per_reporter int,
+  p_minute_limit int
+) returns text
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtext('bug_report_screenshots'));
+
+  if (select count(*) from bug_report_screenshots s
+       where s.reporter_id = p_reporter
+         and s.created_at > now() - interval '1 hour') >= p_hourly_limit_per_reporter then
+    return 'reporter';
+  end if;
+
+  if (select count(*) from bug_report_screenshots s
+       where s.created_at > now() - interval '1 minute') >= p_minute_limit then
+    return 'global';
+  end if;
+
+  insert into bug_report_screenshots (key, reporter_id) values (p_key, p_reporter);
+  return null;
+end;
+$$;
+
+revoke all on function public.issue_bug_report_screenshot(uuid, text, int, int)
+  from public, anon, authenticated;
+grant execute on function public.issue_bug_report_screenshot(uuid, text, int, int)
+  to service_role;

@@ -26,6 +26,7 @@ import {
   type NewBugReport,
   SCREENSHOT_CONTENT_TYPES,
   SCREENSHOT_EXTENSIONS,
+  SCREENSHOT_LIMITS,
   type ScreenshotUploadUrl,
 } from './bug-reports.types';
 import {
@@ -47,6 +48,8 @@ export const BUG_REPORT_EMPTY_UPDATE = 'Send status or adminNote';
 export const BUG_REPORT_CHANGED =
   'The bug report changed meanwhile; reload it and try again';
 export const BUG_REPORT_LIMITED = 'Too many bug reports; try again later';
+export const SCREENSHOT_LIMITED =
+  'Too many screenshot uploads; try again later or send the report without a screenshot';
 
 const SCREENSHOT_FILE = /^[0-9a-f-]{36}\.(png|jpg|webp)$/;
 
@@ -69,6 +72,11 @@ export class BugReportsService {
       randomUUID(),
       SCREENSHOT_EXTENSIONS[dto.contentType],
     );
+    if (
+      await this.reports.issueScreenshot(authUserId, key, SCREENSHOT_LIMITS)
+    ) {
+      throw new HttpException(SCREENSHOT_LIMITED, HttpStatus.TOO_MANY_REQUESTS);
+    }
     const { url, expiresAt } = await this.storage.presignPut(key, {
       contentType: dto.contentType,
       contentLength: dto.contentLength,

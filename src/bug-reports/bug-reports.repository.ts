@@ -12,6 +12,7 @@ import {
   BUG_REPORT_STATUSES,
   type BugReportRow,
   type BugReportStatus,
+  type LimitedBy,
   type NewBugReport,
   type SubmitOutcome,
 } from './bug-reports.types';
@@ -30,7 +31,7 @@ export type BugReportPatch = Partial<
 interface SubmitRow {
   id: string | null;
   created_at: string | null;
-  limited: 'reporter' | 'global' | null;
+  limited: LimitedBy | null;
 }
 
 function statusFilter(status: BugReportStatus | undefined): readonly string[] {
@@ -43,6 +44,11 @@ export abstract class BugReportsRepository {
     report: NewBugReport,
     limits: SubmitLimits,
   ): Promise<SubmitOutcome>;
+  abstract issueScreenshot(
+    authUserId: string,
+    key: string,
+    limits: SubmitLimits,
+  ): Promise<LimitedBy | null>;
   abstract list(
     status: BugReportStatus | undefined,
     page: PageRequest,
@@ -96,6 +102,24 @@ export class SupabaseBugReportsRepository extends BugReportsRepository {
       return { limited: data?.limited ?? 'global' };
     }
     return { id: data.id, createdAt: data.created_at };
+  }
+
+  async issueScreenshot(
+    authUserId: string,
+    key: string,
+    limits: SubmitLimits,
+  ): Promise<LimitedBy | null> {
+    const { data, error } = (await this.supabase.rpc(
+      'issue_bug_report_screenshot',
+      {
+        p_reporter: authUserId,
+        p_key: key,
+        p_hourly_limit_per_reporter: limits.hourlyPerReporter,
+        p_minute_limit: limits.perMinute,
+      },
+    )) as DbResult<LimitedBy | null>;
+    check(error, 'issue bug report screenshot');
+    return data;
   }
 
   async list(

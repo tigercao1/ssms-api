@@ -99,6 +99,52 @@ $$;
 
 do $$
 declare
+  a constant uuid := '11111111-1111-4111-8111-1111111111d1';
+  b constant uuid := '11111111-1111-4111-8111-1111111111d2';
+  c constant uuid := '11111111-1111-4111-8111-1111111111d3';
+  r text;
+  report record;
+begin
+  if issue_bug_report_screenshot(a, 'bug-reports/' || a || '/' || gen_random_uuid() || '.png', 2, 3) is not null
+     or issue_bug_report_screenshot(a, 'bug-reports/' || a || '/' || gen_random_uuid() || '.png', 2, 3) is not null then
+    raise exception 'the first screenshots were limited';
+  end if;
+  r := issue_bug_report_screenshot(a, 'bug-reports/' || a || '/' || gen_random_uuid() || '.png', 2, 3);
+  if r is distinct from 'reporter' then
+    raise exception 'a third screenshot in the hour was not limited per reporter: %', r;
+  end if;
+  if (select count(*) from bug_report_screenshots where reporter_id = a) <> 2 then
+    raise exception 'a limited screenshot was recorded';
+  end if;
+
+  select * into report from submit_bug_report(pg_temp.report(a), 99, 99);
+  if report.id is null then
+    raise exception 'a reporter limited on screenshots could not submit: %', report;
+  end if;
+
+  if issue_bug_report_screenshot(b, 'bug-reports/' || b || '/' || gen_random_uuid() || '.png', 2, 3) is not null then
+    raise exception 'another reporter was limited by the first one';
+  end if;
+  r := issue_bug_report_screenshot(c, 'bug-reports/' || c || '/' || gen_random_uuid() || '.png', 2, 3);
+  if r is distinct from 'global' then
+    raise exception 'the per-minute screenshot ceiling did not apply: %', r;
+  end if;
+
+  update bug_report_screenshots set created_at = now() - interval '2 hours' where reporter_id = a;
+  if issue_bug_report_screenshot(a, 'bug-reports/' || a || '/' || gen_random_uuid() || '.png', 2, 10) is not null then
+    raise exception 'screenshots older than an hour still counted';
+  end if;
+
+  begin
+    perform issue_bug_report_screenshot(a, 'documents/secret.pdf', 99, 99);
+    raise exception 'a screenshot key outside bug-reports/ was recorded';
+  exception when check_violation then null;
+  end;
+end
+$$;
+
+do $$
+declare
   f constant text := 'public.submit_bug_report(jsonb, int, int)';
   r text;
 begin
@@ -122,6 +168,41 @@ begin
   foreach r in array array['anon', 'authenticated'] loop
     if has_table_privilege(r, 'public.bug_reports', 'select, insert, update, delete') then
       raise exception '% has privileges on bug_reports', r;
+    end if;
+    if has_function_privilege(r, f, 'execute') then
+      raise exception '% can execute %', r, f;
+    end if;
+  end loop;
+  if exists (
+    select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+     where p.oid = f::regprocedure and a.grantee = 0
+  ) then
+    raise exception 'PUBLIC can execute %', f;
+  end if;
+  if not has_function_privilege('service_role', f, 'execute') then
+    raise exception 'service_role cannot execute %', f;
+  end if;
+end
+$$;
+
+do $$
+declare
+  f constant text := 'public.issue_bug_report_screenshot(uuid, text, int, int)';
+  r text;
+begin
+  if not exists (
+    select 1 from pg_class
+     where oid = 'public.bug_report_screenshots'::regclass
+       and relrowsecurity and relforcerowsecurity
+  ) then
+    raise exception 'bug_report_screenshots does not have forced row level security';
+  end if;
+  if exists (select 1 from pg_policies where tablename = 'bug_report_screenshots') then
+    raise exception 'bug_report_screenshots has a row level security policy';
+  end if;
+  foreach r in array array['anon', 'authenticated'] loop
+    if has_table_privilege(r, 'public.bug_report_screenshots', 'select, insert, update, delete') then
+      raise exception '% has privileges on bug_report_screenshots', r;
     end if;
     if has_function_privilege(r, f, 'execute') then
       raise exception '% can execute %', r, f;

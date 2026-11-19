@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -28,6 +29,7 @@ import {
   BUG_REPORT_CHANGED,
   BugReportsService,
   SCREENSHOT_INVALID,
+  SCREENSHOT_LIMITED,
   SCREENSHOT_MISSING,
   SCREENSHOT_NOT_YOURS,
 } from './bug-reports.service';
@@ -271,6 +273,69 @@ describe('bug reports', () => {
       }
 
       await submit(minimal).expect(429);
+    });
+
+    const pngUrl = (auth = INSTRUCTOR_AUTH) =>
+      screenshotUrl({ contentType: 'image/png', contentLength: 3145728 }, auth);
+
+    it('limits each user to 20 screenshot URLs an hour without limiting others', async () => {
+      for (let i = 0; i < 20; i++) {
+        await pngUrl().expect(200);
+      }
+
+      const res = await pngUrl().expect(429);
+
+      expect((res.body as { message: string }).message).toBe(
+        SCREENSHOT_LIMITED,
+      );
+      expect(storage.presigned).toHaveLength(20);
+      await pngUrl(ADMIN_AUTH).expect(200);
+      reports.now += 61 * 60 * 1000;
+      await pngUrl().expect(200);
+    });
+
+    it('applies a ceiling of 90 screenshot URLs a minute across all users', async () => {
+      for (let i = 0; i < 90; i++) {
+        reports.screenshots.push({
+          key: `bug-reports/${i}`,
+          reporterId: randomUUID(),
+          createdAt: reports.now,
+        });
+      }
+
+      await pngUrl(ADMIN_AUTH).expect(429);
+      reports.now += 61 * 1000;
+      await pngUrl(ADMIN_AUTH).expect(200);
+    });
+
+    it('still accepts reports while screenshot URLs are limited', async () => {
+      const key = await uploadedScreenshot();
+      for (let i = 0; i < 19; i++) {
+        await pngUrl().expect(200);
+      }
+      await pngUrl().expect(429);
+
+      await submit({ ...minimal, screenshotKey: key }).expect(201);
+      await submit(minimal).expect(201);
+      expect(reports.rows.map((r) => r.screenshot_key)).toEqual([key, null]);
+    });
+
+    it('stops a flood of 100 screenshot URLs from one user at 20 and records each issued key', async () => {
+      const statuses: number[] = [];
+      const keys = new Set<string>();
+      for (let i = 0; i < 100; i++) {
+        const res = await pngUrl();
+        statuses.push(res.status);
+        if (res.status === 200) {
+          keys.add((res.body as { key: string }).key);
+        }
+      }
+
+      expect(statuses.filter((s) => s === 200)).toHaveLength(20);
+      expect(statuses.filter((s) => s === 429)).toHaveLength(80);
+      expect(keys.size).toBe(20);
+      expect(reports.screenshots.map((s) => s.key)).toEqual([...keys]);
+      expect(reports.rows).toEqual([]);
     });
 
     it('needs a verified signed-in user', async () => {

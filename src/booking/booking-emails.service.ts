@@ -177,7 +177,7 @@ export class BookingEmailsService {
       `booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate;
     const stamp = new Date(this.clock.now());
     const organizer: IcsPerson = {
-      email: this.mailer.senderAddress(),
+      email: this.mailer.senderAddress(template),
       name: ORGANIZER_NAME,
     };
     return this.mailer.send({

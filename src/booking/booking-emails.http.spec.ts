@@ -24,9 +24,12 @@ import {
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
+import { MailerConfig } from '../mailer/mailer.config';
 import { MailerService } from '../mailer/mailer.service';
-import type { SendEmailRequest } from '../mailer/mailer.types';
+import type { EmailMessage, SendEmailRequest } from '../mailer/mailer.types';
+import { EmailRenderer } from '../mailer/templates/email-renderer';
 import { AvailabilityService } from './availability.service';
+import { BookingEmailQueue } from './booking-email-queue';
 import {
   BOOKING_CLOCK,
   BookingCalendarsService,
@@ -56,7 +59,10 @@ const NOW = Date.parse('2026-12-10T17:00:00.000Z');
 const CLASS_A = 'c0000000-0000-4000-8000-000000000001';
 const BATCH = 'b0000000-0000-4000-8000-000000000001';
 
-async function build(google = fakeBookingGoogle()) {
+async function build(
+  google = fakeBookingGoogle(),
+  mailerService?: MailerService,
+) {
   const repo = new InMemoryBookingRepository();
   const mailer = new RecordingMailer();
   const clock = { value: NOW, now: () => clock.value };
@@ -78,12 +84,41 @@ async function build(google = fakeBookingGoogle()) {
         { provide: BOOKING_CLOCK, useValue: clock },
         { provide: GoogleCalendarClient, useValue: google.client },
         { provide: AuditService, useValue: recordingAudit() },
-        { provide: MailerService, useValue: mailer.asService() },
+        {
+          provide: MailerService,
+          useValue: mailerService ?? mailer.asService(),
+        },
         { provide: ConfigService, useValue: { get: () => undefined } },
       ],
     }),
   );
   return { app, repo, mailer, google, clock };
+}
+
+function realMailer(env: Record<string, string>) {
+  const config = new MailerConfig({
+    get: (key: string) => env[key],
+  } as unknown as ConfigService);
+  const messages: EmailMessage[] = [];
+  const sender = {
+    isConfigured: () => true,
+    send: (message: EmailMessage) => {
+      messages.push(message);
+      return Promise.resolve({ id: `msg-${messages.length}` });
+    },
+  };
+  const supabase = {
+    from: () => ({ insert: () => Promise.resolve({ error: null }) }),
+  } as never;
+  return {
+    service: new MailerService(
+      sender,
+      new EmailRenderer(config),
+      config,
+      supabase,
+    ),
+    messages,
+  };
 }
 
 const booking = (overrides: Record<string, unknown> = {}) => ({
@@ -581,6 +616,53 @@ describe('booking emails HTTP', () => {
       });
       expect(ctx.google.deleteEvent).toHaveBeenCalledWith(AMY_CAL, 'evA');
       expect(ctx.google.freeBusy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sender address', () => {
+    const MAIL_FROM = 'Serendipity Snow <noreply@contact.ssnow.club>';
+    const BOOKINGS_FROM =
+      'Serendipity Snow Club Bookings <bookings@contact.ssnow.club>';
+
+    const book = async (env: Record<string, string>) => {
+      const mailer = realMailer(env);
+      await ctx.app.close();
+      ctx = await build(fakeBookingGoogle(), mailer.service);
+      await post(booking()).expect(201);
+      await ctx.app.get(BookingEmailQueue).idle();
+      return mailer.messages;
+    };
+    const calendarOf = (message: EmailMessage) =>
+      message.attachments![0].content.toString('utf8').replace(/\r\n /g, '');
+
+    it('sends from MAIL_FROM_BOOKINGS and names it the ICS organizer when set', async () => {
+      const messages = await book({
+        MAIL_FROM,
+        MAIL_FROM_BOOKINGS: BOOKINGS_FROM,
+        MAIL_REPLY_TO_BOOKINGS: 'bookings@ssnow.club',
+      });
+      expect(messages).toHaveLength(2);
+      for (const message of messages) {
+        expect(message).toMatchObject({
+          from: BOOKINGS_FROM,
+          replyTo: 'bookings@ssnow.club',
+        });
+        expect(calendarOf(message)).toContain(
+          ':mailto:bookings@contact.ssnow.club',
+        );
+      }
+    });
+
+    it('falls back to MAIL_FROM and MAIL_REPLY_TO when the booking vars are unset', async () => {
+      const messages = await book({ MAIL_FROM });
+      expect(messages).toHaveLength(2);
+      for (const message of messages) {
+        expect(message).not.toHaveProperty('from');
+        expect(message).not.toHaveProperty('replyTo');
+        expect(calendarOf(message)).toContain(
+          ':mailto:noreply@contact.ssnow.club',
+        );
+      }
     });
   });
 });

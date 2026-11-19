@@ -178,6 +178,38 @@ describe('ResendEmailSender', () => {
     expect(headers[1]).not.toHaveProperty('Idempotency-Key');
   });
 
+  it('sends from the message From and Reply-To when given, else the defaults', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ id: 'resend-1' }),
+    });
+    global.fetch = fetchMock;
+    const sender = new ResendEmailSender(
+      configWith({
+        RESEND_API_KEY: 're_x',
+        MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+        MAIL_REPLY_TO: 'info@ssnow.club',
+      }),
+    );
+
+    await sender.send({
+      ...message,
+      from: 'Bookings <bookings@contact.ssnow.club>',
+      replyTo: 'bookings@ssnow.club',
+    });
+    await sender.send(message);
+
+    const bodies = (fetchMock.mock.calls as [string, { body: string }][]).map(
+      ([, init]) => JSON.parse(init.body) as Record<string, unknown>,
+    );
+    expect(bodies.map((b) => [b.from, b.reply_to])).toEqual([
+      ['Bookings <bookings@contact.ssnow.club>', 'bookings@ssnow.club'],
+      ['Snow <noreply@contact.ssnow.club>', 'info@ssnow.club'],
+    ]);
+  });
+
   it('sets reply_to from MAIL_REPLY_TO', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,

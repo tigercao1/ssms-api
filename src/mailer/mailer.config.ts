@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { EmailTemplate } from './mailer.types';
 
 export const DEFAULT_REPLY_TO = 'info@ssnow.club';
 export const DEFAULT_EMAIL_LOGO_URL = 'https://app.ssnow.club/email-logo.png';
@@ -13,6 +14,8 @@ export const DEV_PORTAL_URL = 'http://localhost:5173';
  *   - `MAIL_REPLY_TO`  — Reply-To address (default `info@ssnow.club`).
  *   - `MAIL_FROM`      — its address is the calendar organizer in ICS
  *     attachments (falls back to the Reply-To address).
+ *   - `MAIL_FROM_BOOKINGS` / `MAIL_REPLY_TO_BOOKINGS` — From and Reply-To for
+ *     `booking.*` templates, falling back to `MAIL_FROM` / `MAIL_REPLY_TO`.
  *   - `EMAIL_LOGO_URL` — PNG logo in the email header.
  */
 @Injectable()
@@ -21,6 +24,8 @@ export class MailerConfig {
   readonly replyTo: string;
   readonly logoUrl: string;
   readonly senderAddress: string;
+  private readonly bookingsFrom?: string;
+  private readonly bookingsReplyTo?: string;
 
   constructor(config: ConfigService) {
     const fallbackPortal =
@@ -35,12 +40,34 @@ export class MailerConfig {
       readOptional(config, 'EMAIL_LOGO_URL') ?? DEFAULT_EMAIL_LOGO_URL;
     this.senderAddress =
       addressOf(readOptional(config, 'MAIL_FROM')) ?? addressOf(this.replyTo)!;
+    this.bookingsFrom = readOptional(config, 'MAIL_FROM_BOOKINGS');
+    this.bookingsReplyTo = readOptional(config, 'MAIL_REPLY_TO_BOOKINGS');
+  }
+
+  /** From / Reply-To overrides for `template`; empty means the sender's defaults. */
+  mailboxFor(template: EmailTemplate): { from?: string; replyTo?: string } {
+    if (!isBookingTemplate(template)) {
+      return {};
+    }
+    return {
+      ...(this.bookingsFrom ? { from: this.bookingsFrom } : {}),
+      ...(this.bookingsReplyTo ? { replyTo: this.bookingsReplyTo } : {}),
+    };
+  }
+
+  /** The address `template` is sent from, for the ICS organizer. */
+  senderAddressFor(template: EmailTemplate): string {
+    return addressOf(this.mailboxFor(template).from) ?? this.senderAddress;
   }
 
   /** Absolute portal URL for `path` (e.g. `/login`). */
   portalLink(path: string): string {
     return `${this.portalUrl}${path.startsWith('/') ? path : `/${path}`}`;
   }
+}
+
+export function isBookingTemplate(template: EmailTemplate): boolean {
+  return template.startsWith('booking.');
 }
 
 export function addressOf(mailbox: string | undefined): string | undefined {

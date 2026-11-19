@@ -238,6 +238,10 @@ export interface EmailMessage {
   /** Plain-text alternative body. */
   text: string;
   contentLanguage?: string;
+  /** Overrides the sender's default From mailbox. */
+  from?: string;
+  /** Overrides the sender's default Reply-To address. */
+  replyTo?: string;
   /** Sent as the provider's `Idempotency-Key` header when set. */
   idempotencyKey?: string;
   /** Abort the provider request after this many milliseconds. */
@@ -248,5 +252,5 @@ export interface EmailMessage {
 /** A rendered email before it is addressed. */
 export type RenderedEmail = Omit<
   EmailMessage,
-  'to' | 'idempotencyKey' | 'attachments'
+  'to' | 'from' | 'replyTo' | 'idempotencyKey' | 'attachments'
 >;

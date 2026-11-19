@@ -54,4 +54,38 @@ describe('MailerConfig', () => {
     const config = new MailerConfig(configWith({ MAIL_FROM: from }));
     expect(config.senderAddress).toBe(address);
   });
+
+  it('uses MAIL_FROM_BOOKINGS and MAIL_REPLY_TO_BOOKINGS for booking templates only', () => {
+    const config = new MailerConfig(
+      configWith({
+        MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+        MAIL_FROM_BOOKINGS: ' Bookings <bookings@contact.ssnow.club> ',
+        MAIL_REPLY_TO_BOOKINGS: 'bookings@ssnow.club',
+      }),
+    );
+    expect(config.mailboxFor('booking.confirmed.customer')).toEqual({
+      from: 'Bookings <bookings@contact.ssnow.club>',
+      replyTo: 'bookings@ssnow.club',
+    });
+    expect(config.senderAddressFor('booking.cancelled.instructor')).toBe(
+      'bookings@contact.ssnow.club',
+    );
+    expect(config.mailboxFor('approved')).toEqual({});
+    expect(config.senderAddressFor('approved')).toBe(
+      'noreply@contact.ssnow.club',
+    );
+  });
+
+  it('falls back to the default mailbox for booking templates when the booking vars are unset', () => {
+    const config = new MailerConfig(
+      configWith({
+        MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+        MAIL_FROM_BOOKINGS: ' ',
+      }),
+    );
+    expect(config.mailboxFor('booking.rescheduled.customer')).toEqual({});
+    expect(config.senderAddressFor('booking.rescheduled.customer')).toBe(
+      'noreply@contact.ssnow.club',
+    );
+  });
 });

@@ -22,6 +22,11 @@ const TOO_MANY_REQUESTS = 429;
  *   - `RESEND_API_KEY`  — provider secret (`re_...`).
  *   - `MAIL_FROM`       — verified sender, e.g. `Serendipity Snow <noreply@contact.ssnow.club>`.
  *   - `MAIL_REPLY_TO`   — Reply-To address (default `info@ssnow.club`).
+ *   - `MAIL_FROM_BOOKINGS` / `MAIL_REPLY_TO_BOOKINGS` — optional From and
+ *     Reply-To for booking emails, e.g.
+ *     `Serendipity Snow Club Bookings <bookings@contact.ssnow.club>`; unset
+ *     falls back to `MAIL_FROM` / `MAIL_REPLY_TO`. MailerService passes them
+ *     per message.
  *
  * Attachments are sent base64-encoded; over 30 MB (before base64) in
  * total throws before any request is made.
@@ -64,9 +69,9 @@ export class ResendEmailSender implements EmailSender {
           : {}),
       },
       body: JSON.stringify({
-        from: this.from,
+        from: message.from ?? this.from,
         to: [message.to],
-        reply_to: this.replyTo,
+        reply_to: message.replyTo ?? this.replyTo,
         subject: message.subject,
         html: message.html,
         text: message.text,

@@ -285,6 +285,35 @@ describe('MailerService', () => {
     });
   });
 
+  it('keeps the default From and Reply-To for non-booking emails when MAIL_FROM_BOOKINGS is set', async () => {
+    const { client } = makeSupabase();
+    const send = jest.fn().mockResolvedValue({ id: 'msg-from' });
+    const bookingsConfig = new MailerConfig({
+      get: (key: string) =>
+        ({
+          PORTAL_URL: 'https://portal.example.com/',
+          MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+          MAIL_FROM_BOOKINGS: 'Bookings <bookings@contact.ssnow.club>',
+          MAIL_REPLY_TO_BOOKINGS: 'bookings@ssnow.club',
+        })[key],
+    } as unknown as ConfigService);
+    const mailer = new MailerService(
+      { isConfigured: () => true, send },
+      new EmailRenderer(bookingsConfig),
+      bookingsConfig,
+      client,
+    );
+
+    expect(await mailer.send(request())).toBe('sent');
+    const [message] = send.mock.calls[0] as [Record<string, unknown>];
+    expect(message).not.toHaveProperty('from');
+    expect(message).not.toHaveProperty('replyTo');
+    expect(mailer.senderAddress('approved')).toBe('noreply@contact.ssnow.club');
+    expect(mailer.senderAddress('booking.confirmed.customer')).toBe(
+      'bookings@contact.ssnow.club',
+    );
+  });
+
   it('sends the same idempotency key on every attempt, and none when unset', async () => {
     const { client } = makeSupabase();
     const send = jest

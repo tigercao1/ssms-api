@@ -72,8 +72,9 @@ export class MailerService {
     return this.config.portalLink(path);
   }
 
-  senderAddress(): string {
-    return this.config.senderAddress;
+  /** The address `template` is sent from. */
+  senderAddress(template: EmailTemplate): string {
+    return this.config.senderAddressFor(template);
   }
 
   /**
@@ -152,6 +153,7 @@ export class MailerService {
         const { id } = await this.sender.send({
           to: request.to,
           ...rendered,
+          ...this.config.mailboxFor(request.template),
           timeoutMs,
           ...(request.attachments?.length
             ? { attachments: request.attachments }

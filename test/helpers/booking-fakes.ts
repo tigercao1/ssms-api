@@ -1,4 +1,8 @@
 import {
+  BOOKING_EMAIL_PACING,
+  BookingEmailQueue,
+} from '../../src/booking/booking-email-queue';
+import {
   type BatchRowCommit,
   type BatchRowKey,
   type BatchRowRecord,
@@ -12,6 +16,7 @@ import {
   type BusyClassRow,
   type CalendarLinkRow,
   type ClassBooking,
+  type ClassNoticeRow,
   type ClassRebooking,
   type EventDeletionRow,
   type SeriesBooking,
@@ -30,6 +35,14 @@ import type {
 import type { GoogleCalendarClient } from '../../src/google/google-calendar.client';
 import type { ClassRow } from '../../src/lessons/classes.repository';
 import type { ClassStatus } from '../../src/lessons/lessons.types';
+
+export const IMMEDIATE_BOOKING_EMAILS = [
+  BookingEmailQueue,
+  {
+    provide: BOOKING_EMAIL_PACING,
+    useValue: { intervalMs: 0, concurrency: Number.POSITIVE_INFINITY },
+  },
+];
 
 export const AMY_ID = '0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d';
 export const BEN_ID = '1b2c3d4e-5f6a-4b7c-9d8e-9f0a1b2c3d4e';
@@ -204,18 +217,40 @@ export function fakeBookingGoogle(
   };
 }
 
+type FakeInstructor = BookingInstructorRow & {
+  email: string | null;
+  preferred_language: string;
+};
+
+type FakeClass = ClassRow & {
+  series_id: string | null;
+  customer_ids: string[];
+  ics_sequence: number;
+};
+
 const instructor = (
   id: string,
   name: string,
-  overrides: Partial<BookingInstructorRow> = {},
-): BookingInstructorRow => ({
+  overrides: Partial<FakeInstructor> = {},
+): FakeInstructor => ({
   id,
   display_name_en: name,
   display_name_zh: null,
   approval_status: 'approved',
   is_active: true,
+  email: `${name.toLowerCase()}@example.com`,
+  preferred_language: 'en',
   ...overrides,
 });
+
+const ICS_FIELDS = [
+  'starts_at',
+  'ends_at',
+  'instructor_id',
+  'location_id',
+  'lesson_type_id',
+  'status',
+] as const;
 
 export class InMemoryBookingRepository extends BookingRepository {
   settings: BookingSettingsRow = {
@@ -226,8 +261,11 @@ export class InMemoryBookingRepository extends BookingRepository {
     updated_at: '2026-10-01T00:00:00.000Z',
   };
   savedBy: (string | null)[] = [];
-  instructors: BookingInstructorRow[] = [
-    instructor(AMY_ID, 'Amy', { display_name_zh: '艾米' }),
+  instructors: FakeInstructor[] = [
+    instructor(AMY_ID, 'Amy', {
+      display_name_zh: '艾米',
+      preferred_language: 'zh-CN',
+    }),
     instructor(BEN_ID, 'Ben'),
     instructor(CAL_ID, 'Cal'),
     instructor(DEV_ID, 'Dev'),
@@ -291,8 +329,7 @@ export class InMemoryBookingRepository extends BookingRepository {
     },
   ];
   locations: BookingLocationRow[] = [{ id: BLUE_ID, name: 'Blue Mountain' }];
-  classes: (ClassRow & { series_id: string | null; customer_ids: string[] })[] =
-    [];
+  classes: FakeClass[] = [];
   series: SeriesBooking[] = [];
   deletions: EventDeletionRow[] = [];
   batchRows: (BatchRowRecord & { batch_id: string })[] = [];
@@ -322,11 +359,27 @@ export class InMemoryBookingRepository extends BookingRepository {
 
   listInstructors(ids?: string[]): Promise<BookingInstructorRow[]> {
     return Promise.resolve(
-      this.instructors.filter((i) =>
-        ids
-          ? ids.includes(i.id)
-          : i.is_active && i.approval_status === 'approved',
-      ),
+      this.instructors
+        .filter((i) =>
+          ids
+            ? ids.includes(i.id)
+            : i.is_active && i.approval_status === 'approved',
+        )
+        .map(
+          ({
+            id,
+            display_name_en,
+            display_name_zh,
+            approval_status,
+            is_active,
+          }) => ({
+            id,
+            display_name_en,
+            display_name_zh,
+            approval_status,
+            is_active,
+          }),
+        ),
     );
   }
 
@@ -354,6 +407,15 @@ export class InMemoryBookingRepository extends BookingRepository {
         .filter((c) => ids.includes(c.id))
         .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
         .map((c) => this.hydrate(c)),
+    );
+  }
+
+  findClassNotices(ids: string[]): Promise<ClassNoticeRow[]> {
+    return Promise.resolve(
+      this.classes
+        .filter((c) => ids.includes(c.id))
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+        .map((c) => this.notice(c)),
     );
   }
 
@@ -480,6 +542,7 @@ export class InMemoryBookingRepository extends BookingRepository {
     if (!row) {
       throw new DatabaseError('move class', 'P0002', 'not found or cancelled');
     }
+    const before = { ...row };
     const calendar = rebooking.google_calendar_id;
     const drop =
       row.google_calendar_id !== null && row.google_calendar_id !== calendar;
@@ -499,6 +562,8 @@ export class InMemoryBookingRepository extends BookingRepository {
     if (customerIds) {
       row.customer_ids = customerIds;
     }
+    this.bumpIcs(before, row);
+    this.bumpMembership(before, row);
     row.updated_at = this.stamp();
     return Promise.resolve();
   }
@@ -529,7 +594,9 @@ export class InMemoryBookingRepository extends BookingRepository {
       this.markPending(row);
       row.google_sync_status = row.google_calendar_id ? 'pending' : 'ok';
     }
+    const before = { ...row };
     row.status = status;
+    this.bumpIcs(before, row);
     row.updated_at = this.stamp();
     return Promise.resolve();
   }
@@ -676,6 +743,62 @@ export class InMemoryBookingRepository extends BookingRepository {
     });
   }
 
+  private bumpIcs(before: FakeClass, row: FakeClass): void {
+    if (ICS_FIELDS.some((field) => before[field] !== row[field])) {
+      row.ics_sequence = before.ics_sequence + 1;
+    }
+  }
+
+  private bumpMembership(before: FakeClass, row: FakeClass): void {
+    const removed = before.customer_ids.some(
+      (id) => !row.customer_ids.includes(id),
+    );
+    const added = row.customer_ids.some(
+      (id) => !before.customer_ids.includes(id),
+    );
+    row.ics_sequence += Number(removed) + Number(added);
+  }
+
+  private notice(row: FakeClass): ClassNoticeRow {
+    const instructor = this.instructors.find((i) => i.id === row.instructor_id);
+    const lessonType = this.lessonTypes.find(
+      (t) => t.id === row.lesson_type_id,
+    );
+    const location = this.locations.find((l) => l.id === row.location_id);
+    return {
+      id: row.id,
+      instructor_id: row.instructor_id,
+      starts_at: row.starts_at,
+      ends_at: row.ends_at,
+      ics_sequence: row.ics_sequence,
+      instructor: instructor
+        ? {
+            display_name_en: instructor.display_name_en,
+            display_name_zh: instructor.display_name_zh,
+            email: instructor.email,
+            preferred_language: instructor.preferred_language,
+          }
+        : null,
+      location: location ? { name: location.name } : null,
+      lesson_type: lessonType
+        ? { name_en: lessonType.name_en, name_zh: lessonType.name_zh }
+        : null,
+      participants: row.customer_ids.map((id) => {
+        const c = this.customers.find((x) => x.id === id);
+        return {
+          customer_id: id,
+          customer: c
+            ? {
+                first_name: c.first_name,
+                last_name: c.last_name,
+                email: c.email,
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
   private markPending(row: ClassRow): void {
     row.google_sync_status = 'pending';
     row.google_sync_error = null;
@@ -694,8 +817,9 @@ export class InMemoryBookingRepository extends BookingRepository {
       ends_at: string;
       series_id?: string | null;
       customer_ids?: string[];
+      ics_sequence?: number;
     },
-  ): ClassRow & { series_id: string | null; customer_ids: string[] } {
+  ): FakeClass {
     return {
       instructor_id: AMY_ID,
       lesson_type_id: PRIVATE_1H,
@@ -718,19 +842,18 @@ export class InMemoryBookingRepository extends BookingRepository {
       participants: null,
       series_id: null,
       customer_ids: [],
+      ics_sequence: 0,
       ...overrides,
     };
   }
 
-  add(
-    overrides: Parameters<InMemoryBookingRepository['seed']>[0],
-  ): ClassRow & { series_id: string | null; customer_ids: string[] } {
+  add(overrides: Parameters<InMemoryBookingRepository['seed']>[0]): FakeClass {
     const row = this.seed(overrides);
     this.classes.push(row);
     return row;
   }
 
-  private hydrate(row: ClassRow & { customer_ids: string[] }): ClassRow {
+  private hydrate(row: FakeClass): ClassRow {
     const instructor = this.instructors.find((i) => i.id === row.instructor_id);
     const lessonType = this.lessonTypes.find(
       (t) => t.id === row.lesson_type_id,

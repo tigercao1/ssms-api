@@ -32,6 +32,7 @@ import {
 import {
   BookingService,
   type LastClass,
+  type NotifiedClass,
   type SyncIssues,
 } from './booking.service';
 import type { BookedClass } from './calendar-sync.service';
@@ -39,6 +40,7 @@ import {
   AvailabilityQueryDto,
   BatchBookingDto,
   BookingSettingsDto,
+  CancelBookingDto,
   CreateBookingDto,
   SetClassStatusDto,
   UpdateBookingDto,
@@ -85,7 +87,7 @@ export class BookingController {
     @Body() dto: CreateBookingDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<BookedClass[]> {
+  ): Promise<NotifiedClass[]> {
     return this.booking.create(dto, toActor(user, userAgent));
   }
 
@@ -105,7 +107,7 @@ export class BookingController {
     @Body() dto: UpdateBookingDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<BookedClass> {
+  ): Promise<NotifiedClass> {
     return this.booking.update(id, dto, toActor(user, userAgent));
   }
 
@@ -113,10 +115,11 @@ export class BookingController {
   @HttpCode(HttpStatus.OK)
   cancel(
     @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: CancelBookingDto,
     @CurrentUser() user: SupabaseJwtPayload,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<BookedClass> {
-    return this.booking.cancel(id, toActor(user, userAgent));
+  ): Promise<NotifiedClass> {
+    return this.booking.cancel(id, dto, toActor(user, userAgent));
   }
 
   @Post('classes/:id/status')

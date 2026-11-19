@@ -911,7 +911,7 @@ export default async () => {
               status: {
                 required: false,
                 type: () => [Object],
-                enum: ['completed', 'scheduled', 'no_show', 'cancelled'],
+                enum: ['cancelled', 'completed', 'scheduled', 'no_show'],
                 isArray: true,
               },
               lessonTypeId: {
@@ -947,7 +947,7 @@ export default async () => {
               },
               matchStatus: {
                 required: false,
-                enum: ['suggested', 'confirmed'],
+                enum: ['confirmed', 'suggested'],
               },
             },
           },
@@ -1117,6 +1117,7 @@ export default async () => {
                 enum: ['completed', 'scheduled', 'no_show'],
               },
               addToCalendar: { required: false, type: () => Boolean },
+              sendEmails: { required: false, type: () => Boolean },
             },
             CreateBookingDto: {
               repeat: {
@@ -1152,6 +1153,10 @@ export default async () => {
                 minItems: 1,
               },
               notes: { required: false, type: () => String, nullable: true },
+              sendEmails: { required: false, type: () => Boolean },
+            },
+            CancelBookingDto: {
+              sendEmails: { required: false, type: () => Boolean },
             },
             SetClassStatusDto: {
               status: {

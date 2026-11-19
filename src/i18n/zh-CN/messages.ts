@@ -455,6 +455,87 @@ export const zhCN: MessageCatalog = {
       listItem: '{title}（{kind}）',
       kinds: { sign: '签署', read: '阅读' },
     },
+    booking: {
+      labels: {
+        when: '{time}（多伦多时间）',
+        instructor: '教练：',
+        students: '学员：',
+        location: '地点：',
+        previously: '原时间：',
+      },
+      confirmed: {
+        customer: {
+          subject: '课程已预约：{lesson}',
+          preheader: '您与 {instructor} 的{lesson}已确认。',
+          heading: '课程已预约',
+          paragraphs: [
+            '您与 {instructor} 的{lesson}已预约在：',
+            '如需更改或取消，请直接回复这封邮件。',
+          ],
+          finePrint:
+            '附件中的日历文件可将课程添加到您的日历。您收到这封邮件，是因为有人在 SSnow 为您预约了课程。',
+        },
+        instructor: {
+          subject: '新课程：{lesson}',
+          preheader: '您的课表新增了一节{lesson}。',
+          heading: '新课程已预约',
+          paragraphs: [
+            '已为您预约一节{lesson}：',
+            '课程已显示在教练平台的课表中。',
+          ],
+          finePrint:
+            '附件中的日历文件可将课程添加到您的日历。您收到这封邮件，是因为您是 SSnow 的教练。',
+        },
+      },
+      rescheduled: {
+        customer: {
+          subject: '课程已改期：{lesson}',
+          preheader: '您与 {instructor} 的{lesson}有了新的安排。',
+          heading: '课程已改期',
+          paragraphs: [
+            '您与 {instructor} 的{lesson}更新后的安排如下：',
+            '如果新的安排不方便，请直接回复这封邮件。',
+          ],
+          finePrint:
+            '附件中的日历文件会更新您日历中的课程。您收到这封邮件，是因为有人在 SSnow 为您预约了课程。',
+        },
+        instructor: {
+          subject: '课程已改期：{lesson}',
+          preheader: '您的一节课程已改期。',
+          heading: '课程已改期',
+          paragraphs: [
+            '您的{lesson}更新后的安排如下：',
+            '教练平台的课表已同步更新。',
+          ],
+          finePrint:
+            '附件中的日历文件会更新您日历中的课程。您收到这封邮件，是因为您是 SSnow 的教练。',
+        },
+      },
+      cancelled: {
+        customer: {
+          subject: '课程已取消：{lesson}',
+          preheader: '您与 {instructor} 的{lesson}已取消。',
+          heading: '课程已取消',
+          paragraphs: [
+            '您与 {instructor} 在以下时间的{lesson}已取消：',
+            '如有疑问或想预约其他时间，请直接回复这封邮件。',
+          ],
+          finePrint:
+            '附件中的日历文件会从您的日历中移除这节课程。您收到这封邮件，是因为有人在 SSnow 为您预约了课程。',
+        },
+        instructor: {
+          subject: '课程已取消：{lesson}',
+          preheader: '您的一节课程已取消。',
+          heading: '课程已取消',
+          paragraphs: [
+            '您在以下时间的{lesson}已取消：',
+            '这节课程已从教练平台的课表中移除。',
+          ],
+          finePrint:
+            '附件中的日历文件会从您的日历中移除这节课程。您收到这封邮件，是因为您是 SSnow 的教练。',
+        },
+      },
+    },
   },
 };
 

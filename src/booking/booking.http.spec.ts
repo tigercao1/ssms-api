@@ -18,6 +18,7 @@ import {
   DEV_ID,
   EVA_ID,
   fakeBookingGoogle,
+  IMMEDIATE_BOOKING_EMAILS,
   GROUP_90,
   InMemoryBookingRepository,
   LEO_ID,
@@ -25,6 +26,7 @@ import {
   PRIVATE_1H,
   RETIRED_TYPE,
 } from '../../test/helpers/booking-fakes';
+import { RecordingMailer } from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseError } from '../database/db-result';
@@ -33,6 +35,7 @@ import {
   GoogleNotConnectedError,
 } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
+import { MailerService } from '../mailer/mailer.service';
 import type { GoogleEventInput } from '../google/google.types';
 import { GOOGLE_NOT_CONNECTED } from '../google/google-error.filter';
 import { type Availability, AvailabilityService } from './availability.service';
@@ -46,6 +49,10 @@ import {
   BookingBatchService,
 } from './booking-batch.service';
 import { BookingController } from './booking.controller';
+import {
+  BookingEmailsService,
+  CUSTOMER_EMAIL_MISSING,
+} from './booking-emails.service';
 import { BookingRepository } from './booking.repository';
 import {
   CALENDAR_UNAVAILABLE,
@@ -89,6 +96,7 @@ const CLASS_B = 'c0000000-0000-4000-8000-000000000002';
 async function build(google = fakeBookingGoogle()) {
   const repo = new InMemoryBookingRepository();
   const audit = recordingAudit();
+  const mailer = new RecordingMailer();
   const clock = { value: NOW, now: () => clock.value };
   repo.now = clock.now;
   const env: Record<string, string> = {};
@@ -107,6 +115,11 @@ async function build(google = fakeBookingGoogle()) {
         { provide: BOOKING_CLOCK, useValue: clock },
         { provide: GoogleCalendarClient, useValue: google.client },
         { provide: AuditService, useValue: audit },
+        BookingEmailsService,
+        ...IMMEDIATE_BOOKING_EMAILS,
+        { provide: MailerService, useValue: mailer.asService() },
+        BookingEmailsService,
+        { provide: MailerService, useValue: mailer.asService() },
         {
           provide: ConfigService,
           useValue: { get: (key: string) => env[key] },
@@ -118,7 +131,7 @@ async function build(google = fakeBookingGoogle()) {
     env[CALENDAR_SYNC_FLAG] = 'true';
     return app.get(CalendarSyncWorker);
   };
-  return { app, repo, audit, google, clock, env, reconciler };
+  return { app, repo, audit, mailer, google, clock, env, reconciler };
 }
 
 const one = (res: request.Response) => res.body as BookedClass;
@@ -429,18 +442,53 @@ describe('booking admin HTTP', () => {
       expect(avail(res).unavailable).toEqual([]);
     });
 
-    it('reports requested instructors that are inactive or have no calendar', async () => {
+    it('offers an instructor with no calendar from SSMS lessons alone and reports inactive ones', async () => {
       ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== BEN_ID);
+      ctx.repo.add({
+        id: CLASS_A,
+        instructor_id: BEN_ID,
+        starts_at: '2026-12-12T15:00:00.000Z',
+        ends_at: '2026-12-12T16:00:00.000Z',
+      });
       const res = await get(
         `date=2026-12-12&lessonTypeId=${PRIVATE_1H}&instructorIds=${BEN_ID},${EVA_ID}`,
       ).expect(200);
-      expect(avail(res).instructors).toEqual([]);
+      const [ben] = avail(res).instructors;
+      expect(ben).toMatchObject({
+        instructorId: BEN_ID,
+        googleCalendarId: null,
+        busy: [
+          {
+            start: '2026-12-12T15:00:00.000Z',
+            end: '2026-12-12T16:00:00.000Z',
+            source: 'ssms',
+          },
+        ],
+      });
+      expect(ben.freeSlots).toContain('2026-12-12T16:00:00.000Z');
+      expect(ben.freeSlots).not.toContain('2026-12-12T14:30:00.000Z');
+      expect(avail(res).unavailable).toEqual([
+        expect.objectContaining({ instructorId: EVA_ID, reason: 'inactive' }),
+      ]);
+      expect(ctx.google.isConnected).not.toHaveBeenCalled();
+      expect(ctx.google.freeBusy).not.toHaveBeenCalled();
+    });
+
+    it('still offers an instructor with no calendar when Google is not connected', async () => {
+      await ctx.app.close();
+      ctx = await build(fakeBookingGoogle({ connected: false }));
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== BEN_ID);
+      const res = await get(
+        `date=2026-12-12&lessonTypeId=${PRIVATE_1H}&instructorIds=${AMY_ID},${BEN_ID}`,
+      ).expect(200);
+      expect(avail(res).instructors.map((i) => i.instructorId)).toEqual([
+        BEN_ID,
+      ]);
       expect(avail(res).unavailable).toEqual([
         expect.objectContaining({
-          instructorId: BEN_ID,
-          reason: 'no_calendar',
+          instructorId: AMY_ID,
+          reason: 'google_not_connected',
         }),
-        expect.objectContaining({ instructorId: EVA_ID, reason: 'inactive' }),
       ]);
       expect(ctx.google.freeBusy).not.toHaveBeenCalled();
     });
@@ -1132,6 +1180,7 @@ describe('booking admin HTTP', () => {
               calendarSync: 'ok',
             }),
           ],
+          warnings: [],
         },
         {
           index: 1,
@@ -1148,6 +1197,13 @@ describe('booking admin HTTP', () => {
               endsAt: '2026-12-12T16:30:00.000Z',
             }),
           ],
+          warnings: [
+            {
+              code: 'customer_email_missing',
+              message: CUSTOMER_EMAIL_MISSING,
+              customerId: LEO_ID,
+            },
+          ],
         },
         {
           index: 3,
@@ -1158,7 +1214,14 @@ describe('booking admin HTTP', () => {
               googleCalendarId: null,
             }),
           ],
+          warnings: [],
         },
+      ]);
+      expect(ctx.mailer.sent.map((m) => [m.template, m.to])).toEqual([
+        ['booking.confirmed.customer', 'mei@example.com'],
+        ['booking.confirmed.instructor', 'amy@example.com'],
+        ['booking.confirmed.customer', 'mei@example.com'],
+        ['booking.confirmed.instructor', 'ben@example.com'],
       ]);
       expect(ctx.google.insertEvent).toHaveBeenCalledTimes(2);
       expect(ctx.audit.entries).toHaveLength(3);
@@ -1268,6 +1331,7 @@ describe('booking admin HTTP', () => {
           classes: [
             expect.objectContaining({ startsAt: '2026-12-12T17:55:00.000Z' }),
           ],
+          warnings: [],
         },
       ]);
     });

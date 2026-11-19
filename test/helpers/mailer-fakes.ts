@@ -6,6 +6,7 @@ import type {
 } from '../../src/mailer/mailer.types';
 
 export const FAKE_PORTAL_URL = 'https://portal.example.com';
+export const FAKE_SENDER_ADDRESS = 'noreply@mail.example.com';
 
 /** Records every {@link MailerService.send} request; `outcome` is what sends resolve to. */
 export class RecordingMailer {
@@ -17,6 +18,10 @@ export class RecordingMailer {
   ): Promise<SendOutcome> {
     this.sent.push(request);
     return Promise.resolve(this.outcome);
+  }
+
+  senderAddress(): string {
+    return FAKE_SENDER_ADDRESS;
   }
 
   portalLink(path: string): string {

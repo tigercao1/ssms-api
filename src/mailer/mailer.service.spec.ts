@@ -6,6 +6,7 @@ import type { EmailSender } from './email-sender.interface';
 import { createHash } from 'node:crypto';
 import {
   EmailDeliveryError,
+  EmailRateLimitError,
   MAX_ATTACHMENT_BYTES,
   type SendEmailRequest,
 } from './mailer.types';
@@ -228,6 +229,91 @@ describe('MailerService', () => {
     });
   });
 
+  describe('on a 429', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const rateLimited = (retryAfterMs: number | null) =>
+      new EmailRateLimitError('Resend send failed (429)', retryAfterMs);
+
+    it('waits for Retry-After before retrying', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest
+        .fn()
+        .mockRejectedValueOnce(rateLimited(2_000))
+        .mockResolvedValueOnce({ id: 'msg-429' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      const outcome = mailer.send(request());
+      await jest.advanceTimersByTimeAsync(1_999);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(send).toHaveBeenCalledTimes(2);
+
+      expect(await outcome).toBe('sent');
+      expect(inserts.email_log[0]).toMatchObject({
+        status: 'sent',
+        metadata: { attempts: 2 },
+      });
+    });
+
+    it('waits a second when Retry-After is missing, and caps it in sync mode', async () => {
+      const { client } = makeSupabase();
+      const send = jest
+        .fn()
+        .mockRejectedValueOnce(rateLimited(null))
+        .mockRejectedValueOnce(rateLimited(60_000))
+        .mockResolvedValue({ id: 'msg-429' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      const background = mailer.send(request());
+      await jest.advanceTimersByTimeAsync(999);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(send).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(await background).toBe('sent');
+
+      send.mockReset();
+      send
+        .mockRejectedValueOnce(rateLimited(60_000))
+        .mockResolvedValue({ id: 'msg-sync' });
+      const sync = mailer.send(request({ mode: 'sync' }));
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(await sync).toBe('sent');
+    });
+  });
+
+  it('keeps the default From and Reply-To for non-booking emails when MAIL_FROM_BOOKINGS is set', async () => {
+    const { client } = makeSupabase();
+    const send = jest.fn().mockResolvedValue({ id: 'msg-from' });
+    const bookingsConfig = new MailerConfig({
+      get: (key: string) =>
+        ({
+          PORTAL_URL: 'https://portal.example.com/',
+          MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+          MAIL_FROM_BOOKINGS: 'Bookings <bookings@contact.ssnow.club>',
+          MAIL_REPLY_TO_BOOKINGS: 'bookings@ssnow.club',
+        })[key],
+    } as unknown as ConfigService);
+    const mailer = new MailerService(
+      { isConfigured: () => true, send },
+      new EmailRenderer(bookingsConfig),
+      bookingsConfig,
+      client,
+    );
+
+    expect(await mailer.send(request())).toBe('sent');
+    const [message] = send.mock.calls[0] as [Record<string, unknown>];
+    expect(message).not.toHaveProperty('from');
+    expect(message).not.toHaveProperty('replyTo');
+    expect(mailer.senderAddress('approved')).toBe('noreply@contact.ssnow.club');
+    expect(mailer.senderAddress('booking.confirmed.customer')).toBe(
+      'bookings@contact.ssnow.club',
+    );
+  });
+
   it('sends the same idempotency key on every attempt, and none when unset', async () => {
     const { client } = makeSupabase();
     const send = jest
@@ -433,5 +519,55 @@ describe('MailerService', () => {
     );
 
     await expect(mailer.send(request())).resolves.toBe('failed');
+  });
+
+  describe('recordUnsent', () => {
+    it('writes one failed email_log row per unsent email, without sending', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn();
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      await mailer.recordUnsent(
+        [
+          request({ metadata: { started: false } }),
+          request({ to: 'li@example.com', instructorId: null }),
+        ],
+        'shutdown',
+      );
+
+      expect(send).not.toHaveBeenCalled();
+      expect(inserts.email_log).toEqual([
+        [
+          expect.objectContaining({
+            template: 'approved',
+            recipient: 'jane@example.com',
+            status: 'failed',
+            error: 'Not sent: shutdown',
+            metadata: {
+              started: false,
+              reason: 'shutdown',
+              mode: 'background',
+              attempts: 0,
+            },
+          }),
+          expect.objectContaining({
+            recipient: 'li@example.com',
+            instructor_id: null,
+            status: 'failed',
+            metadata: { reason: 'shutdown', mode: 'background', attempts: 0 },
+          }),
+        ],
+      ]);
+    });
+
+    it('writes nothing when there is nothing unsent', async () => {
+      const { client, inserts } = makeSupabase();
+      const mailer = service(
+        { isConfigured: () => true, send: jest.fn() },
+        client,
+      );
+      await mailer.recordUnsent([], 'shutdown');
+      expect(inserts.email_log).toEqual([]);
+    });
   });
 });

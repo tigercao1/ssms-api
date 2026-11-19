@@ -9,6 +9,7 @@ import { EMAIL_SENDER, type EmailSender } from './email-sender.interface';
 import { MailerConfig } from './mailer.config';
 import {
   EmailDeliveryError,
+  EmailRateLimitError,
   type EmailTemplate,
   type RenderedEmail,
   type SendEmailRequest,
@@ -20,16 +21,20 @@ import { EmailRenderer } from './templates/email-renderer';
 const AUDIT_TABLE = 'audit_log';
 const EMAIL_LOG_TABLE = 'email_log';
 const BACKOFF_BASE_MS = 250;
+const RATE_LIMIT_WAIT_MS = 1_000;
 
 /**
  * Per-mode retry budget. `sync` serves the Supabase send-email hook, which has
- * a 5s budget for the whole call: 2 x 1.5s + 250ms backoff stays under it.
+ * a 5s budget for the whole call: 2 x 1.5s + at most 1s of backoff (a 429's
+ * Retry-After is capped by `maxWaitMs`) stays under it.
  */
-const RETRY_POLICY: Record<SendMode, { attempts: number; timeoutMs: number }> =
-  {
-    sync: { attempts: 2, timeoutMs: 1_500 },
-    background: { attempts: 3, timeoutMs: 10_000 },
-  };
+const RETRY_POLICY: Record<
+  SendMode,
+  { attempts: number; timeoutMs: number; maxWaitMs: number }
+> = {
+  sync: { attempts: 2, timeoutMs: 1_500, maxWaitMs: 1_000 },
+  background: { attempts: 3, timeoutMs: 10_000, maxWaitMs: 10_000 },
+};
 
 interface AttemptResult {
   outcome: SendOutcome;
@@ -42,7 +47,8 @@ interface AttemptResult {
  * Transactional email: renders an {@link EmailTemplate} through the shared
  * branded layout and hands it to the {@link EMAIL_SENDER} binding (Resend).
  *
- * Every send retries up to 3 times and writes one `email_log` row with the
+ * Every send retries up to 3 times, waiting out a 429's Retry-After, and
+ * writes one `email_log` row with the
  * final outcome (`sent`, `skipped` when the sender is not configured, or
  * `failed`). A failure also writes a `notification.failure` row to
  * `audit_log`. Attachments over 30 MB in total fail without a send attempt;
@@ -64,6 +70,11 @@ export class MailerService {
   /** Absolute portal URL for `path`, from `PORTAL_URL`. */
   portalLink(path: string): string {
     return this.config.portalLink(path);
+  }
+
+  /** The address `template` is sent from. */
+  senderAddress(template: EmailTemplate): string {
+    return this.config.senderAddressFor(template);
   }
 
   /**
@@ -135,13 +146,14 @@ export class MailerService {
     request: SendEmailRequest,
     rendered: RenderedEmail,
   ): Promise<AttemptResult> {
-    const { attempts, timeoutMs } = RETRY_POLICY[request.mode];
+    const { attempts, timeoutMs, maxWaitMs } = RETRY_POLICY[request.mode];
     let lastError = 'unknown send failure';
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const { id } = await this.sender.send({
           to: request.to,
           ...rendered,
+          ...this.config.mailboxFor(request.template),
           timeoutMs,
           ...(request.attachments?.length
             ? { attachments: request.attachments }
@@ -163,39 +175,49 @@ export class MailerService {
             `failed: ${lastError}`,
         );
         if (attempt < attempts) {
-          await delay(BACKOFF_BASE_MS * 2 ** (attempt - 1));
+          await delay(retryWaitMs(err, attempt, maxWaitMs));
         }
       }
     }
     return { outcome: 'failed', attempts, error: lastError };
   }
 
-  /** Best-effort `email_log` insert; a logging failure is only logged. */
+  async recordUnsent(
+    requests: SendEmailRequest[],
+    reason: string,
+  ): Promise<void> {
+    if (requests.length === 0) {
+      return;
+    }
+    const result: AttemptResult = {
+      outcome: 'failed',
+      attempts: 0,
+      error: `Not sent: ${reason}`,
+    };
+    await this.insertLog(
+      requests.map((request) =>
+        logRow(
+          { ...request, metadata: { ...request.metadata, reason } },
+          result,
+        ),
+      ),
+    );
+  }
+
   private async writeLog(
     request: SendEmailRequest,
     result: AttemptResult,
     subject?: string,
   ): Promise<void> {
+    await this.insertLog(logRow(request, result, subject));
+  }
+
+  /** Best-effort `email_log` insert; a logging failure is only logged. */
+  private async insertLog(
+    rows: Record<string, unknown> | Record<string, unknown>[],
+  ): Promise<void> {
     try {
-      const { error } = await this.supabase.from(EMAIL_LOG_TABLE).insert({
-        template: request.template,
-        recipient: request.to,
-        language: request.language,
-        instructor_id: request.instructorId ?? null,
-        auth_user_id: request.authUserId ?? null,
-        provider_id: result.providerId ?? null,
-        status: result.outcome,
-        error: result.outcome === 'sent' ? null : (result.error ?? null),
-        metadata: {
-          ...request.metadata,
-          mode: request.mode,
-          attempts: result.attempts,
-          ...(subject ? { subject } : {}),
-          ...(request.attachments?.length
-            ? { attachments: describeAttachments(request.attachments) }
-            : {}),
-        },
-      });
+      const { error } = await this.supabase.from(EMAIL_LOG_TABLE).insert(rows);
       if (error) {
         this.logger.error(`Failed to write email_log row: ${error.message}`);
       }
@@ -239,8 +261,43 @@ export class MailerService {
   }
 }
 
+function logRow(
+  request: SendEmailRequest,
+  result: AttemptResult,
+  subject?: string,
+): Record<string, unknown> {
+  return {
+    template: request.template,
+    recipient: request.to,
+    language: request.language,
+    instructor_id: request.instructorId ?? null,
+    auth_user_id: request.authUserId ?? null,
+    provider_id: result.providerId ?? null,
+    status: result.outcome,
+    error: result.outcome === 'sent' ? null : (result.error ?? null),
+    metadata: {
+      ...request.metadata,
+      mode: request.mode,
+      attempts: result.attempts,
+      ...(subject ? { subject } : {}),
+      ...(request.attachments?.length
+        ? { attachments: describeAttachments(request.attachments) }
+        : {}),
+    },
+  };
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function retryWaitMs(err: unknown, attempt: number, maxWaitMs: number): number {
+  const backoff = BACKOFF_BASE_MS * 2 ** (attempt - 1);
+  if (!(err instanceof EmailRateLimitError)) {
+    return backoff;
+  }
+  const retryAfter = err.retryAfterMs ?? RATE_LIMIT_WAIT_MS;
+  return Math.max(backoff, Math.min(retryAfter, maxWaitMs));
 }
 
 function delay(ms: number): Promise<void> {

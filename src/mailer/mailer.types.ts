@@ -43,7 +43,13 @@ export type EmailTemplate =
   | 'admin.instructor_pending'
   | 'documents.assigned'
   | 'documents.reminder'
-  | 'documents.completed';
+  | 'documents.completed'
+  | 'booking.confirmed.customer'
+  | 'booking.confirmed.instructor'
+  | 'booking.rescheduled.customer'
+  | 'booking.rescheduled.instructor'
+  | 'booking.cancelled.customer'
+  | 'booking.cancelled.instructor';
 
 interface GreetingVars {
   /** Recipient's display name for the greeting; omitted or blank → "Hi there". */
@@ -84,6 +90,25 @@ interface CertificationRejectedVars extends GreetingVars {
   level: number | null;
   reason?: string | null;
   uploadUrl: string;
+}
+
+export interface BookingLessonTime {
+  startsAt: string;
+  endsAt: string;
+}
+
+export interface BookingEmailVars extends GreetingVars {
+  lessonNameEn: string;
+  lessonNameZh?: string | null;
+  instructorNameEn: string;
+  instructorNameZh?: string | null;
+  customerNames: string[];
+  location?: string | null;
+  lessons: BookingLessonTime[];
+}
+
+export interface BookingRescheduledVars extends BookingEmailVars {
+  previous: BookingLessonTime[];
 }
 
 /** Variables each template needs, keyed by template. */
@@ -136,6 +161,12 @@ export interface EmailTemplateVars {
     /** Portal link for instructors; omitted for recipients without a login. */
     onboardingUrl?: string | null;
   };
+  'booking.confirmed.customer': BookingEmailVars;
+  'booking.confirmed.instructor': BookingEmailVars;
+  'booking.rescheduled.customer': BookingRescheduledVars;
+  'booking.rescheduled.instructor': BookingRescheduledVars;
+  'booking.cancelled.customer': BookingEmailVars;
+  'booking.cancelled.instructor': BookingEmailVars;
 }
 
 /**
@@ -188,6 +219,16 @@ export class EmailDeliveryError extends Error {
   }
 }
 
+export class EmailRateLimitError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message);
+    this.name = 'EmailRateLimitError';
+  }
+}
+
 /** A fully-rendered email ready to hand to the {@link EmailSender}. */
 export interface EmailMessage {
   to: string;
@@ -197,6 +238,10 @@ export interface EmailMessage {
   /** Plain-text alternative body. */
   text: string;
   contentLanguage?: string;
+  /** Overrides the sender's default From mailbox. */
+  from?: string;
+  /** Overrides the sender's default Reply-To address. */
+  replyTo?: string;
   /** Sent as the provider's `Idempotency-Key` header when set. */
   idempotencyKey?: string;
   /** Abort the provider request after this many milliseconds. */
@@ -207,5 +252,5 @@ export interface EmailMessage {
 /** A rendered email before it is addressed. */
 export type RenderedEmail = Omit<
   EmailMessage,
-  'to' | 'idempotencyKey' | 'attachments'
+  'to' | 'from' | 'replyTo' | 'idempotencyKey' | 'attachments'
 >;

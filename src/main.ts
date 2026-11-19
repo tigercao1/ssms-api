@@ -7,6 +7,7 @@ import { signingBodyParser } from './documents/signing-body-parser';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   app.use(signingBodyParser);
+  app.enableShutdownHooks();
 
   // Global validation — see backend-architecture.md §4.
   app.useGlobalPipes(

@@ -185,6 +185,25 @@ export interface EmailMessages {
     listItem: string;
     kinds: { sign: string; read: string };
   };
+  booking: {
+    labels: EmailBookingLabels;
+    confirmed: EmailBookingAudienceCopy;
+    rescheduled: EmailBookingAudienceCopy;
+    cancelled: EmailBookingAudienceCopy;
+  };
+}
+
+export interface EmailBookingAudienceCopy {
+  customer: EmailCopy;
+  instructor: EmailCopy;
+}
+
+export interface EmailBookingLabels {
+  when: string;
+  instructor: string;
+  students: string;
+  location: string;
+  previously: string;
 }
 
 /** Strings shared by every email: greeting, sign-off, footer, link fallbacks. */

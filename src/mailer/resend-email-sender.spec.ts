@@ -1,6 +1,10 @@
 import { ConfigService } from '@nestjs/config';
-import { ResendEmailSender } from './resend-email-sender';
-import { MAX_ATTACHMENT_BYTES, type EmailMessage } from './mailer.types';
+import { ResendEmailSender, retryAfterMs } from './resend-email-sender';
+import {
+  EmailRateLimitError,
+  MAX_ATTACHMENT_BYTES,
+  type EmailMessage,
+} from './mailer.types';
 
 function configWith(values: Record<string, string | undefined>): ConfigService {
   return {
@@ -174,6 +178,38 @@ describe('ResendEmailSender', () => {
     expect(headers[1]).not.toHaveProperty('Idempotency-Key');
   });
 
+  it('sends from the message From and Reply-To when given, else the defaults', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ id: 'resend-1' }),
+    });
+    global.fetch = fetchMock;
+    const sender = new ResendEmailSender(
+      configWith({
+        RESEND_API_KEY: 're_x',
+        MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+        MAIL_REPLY_TO: 'info@ssnow.club',
+      }),
+    );
+
+    await sender.send({
+      ...message,
+      from: 'Bookings <bookings@contact.ssnow.club>',
+      replyTo: 'bookings@ssnow.club',
+    });
+    await sender.send(message);
+
+    const bodies = (fetchMock.mock.calls as [string, { body: string }][]).map(
+      ([, init]) => JSON.parse(init.body) as Record<string, unknown>,
+    );
+    expect(bodies.map((b) => [b.from, b.reply_to])).toEqual([
+      ['Bookings <bookings@contact.ssnow.club>', 'bookings@ssnow.club'],
+      ['Snow <noreply@contact.ssnow.club>', 'info@ssnow.club'],
+    ]);
+  });
+
   it('sets reply_to from MAIL_REPLY_TO', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
@@ -229,5 +265,34 @@ describe('ResendEmailSender', () => {
       configWith({ RESEND_API_KEY: 're_x', MAIL_FROM: 'a@b.com' }),
     );
     await expect(sender.send(message)).rejects.toThrow(/422/);
+  });
+
+  it('throws EmailRateLimitError with the Retry-After delay on a 429', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: new Headers({ 'retry-after': '2' }),
+      text: () => Promise.resolve('{"name":"rate_limit_exceeded"}'),
+    });
+
+    const sender = new ResendEmailSender(
+      configWith({ RESEND_API_KEY: 're_x', MAIL_FROM: 'a@b.com' }),
+    );
+    const promise = sender.send(message);
+    await expect(promise).rejects.toBeInstanceOf(EmailRateLimitError);
+    await expect(promise).rejects.toMatchObject({
+      retryAfterMs: 2_000,
+      message: expect.stringMatching(/429/) as string,
+    });
+  });
+
+  it('reads Retry-After as seconds or an HTTP date', () => {
+    const now = Date.parse('2026-12-10T17:00:00.000Z');
+    expect(retryAfterMs('1.5', now)).toBe(1_500);
+    expect(retryAfterMs('Thu, 10 Dec 2026 17:00:03 GMT', now)).toBe(3_000);
+    expect(retryAfterMs('Thu, 10 Dec 2026 16:59:00 GMT', now)).toBe(0);
+    expect(retryAfterMs('soon', now)).toBeNull();
+    expect(retryAfterMs(null, now)).toBeNull();
   });
 });

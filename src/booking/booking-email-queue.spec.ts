@@ -85,4 +85,60 @@ describe('BookingEmailQueue', () => {
     ]);
     error.mockRestore();
   });
+
+  describe('close', () => {
+    const sleep = (ms: number) => () =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    it('waits for the queue to drain and returns nothing left', async () => {
+      const queue = new BookingEmailQueue<string>({
+        intervalMs: 0,
+        concurrency: 1,
+      });
+      queue.enqueue(sleep(400), 'a');
+      queue.enqueue(sleep(400), 'b');
+
+      let unsent: unknown;
+      const closing = queue.close(3_000).then((left) => (unsent = left));
+      await jest.advanceTimersByTimeAsync(800);
+      await closing;
+
+      expect(unsent).toEqual([]);
+    });
+
+    it('returns the running and waiting jobs once the timeout passes, and starts no more', async () => {
+      const queue = new BookingEmailQueue<string>({
+        intervalMs: 0,
+        concurrency: 1,
+      });
+      const started: string[] = [];
+      for (const name of ['a', 'b', 'c']) {
+        queue.enqueue(() => {
+          started.push(name);
+          return sleep(2_000)();
+        }, name);
+      }
+
+      const closing = queue.close(3_000);
+      await jest.advanceTimersByTimeAsync(3_000);
+
+      expect(await closing).toEqual([
+        { payload: 'b', started: true },
+        { payload: 'c', started: false },
+      ]);
+      await jest.advanceTimersByTimeAsync(10_000);
+      await queue.idle();
+      expect(started).toEqual(['a', 'b']);
+    });
+
+    it('refuses jobs after closing', async () => {
+      const queue = new BookingEmailQueue<string>();
+      await queue.close(3_000);
+      const job = jest.fn(() => Promise.resolve());
+
+      expect(queue.enqueue(job, 'late')).toBe(false);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(job).not.toHaveBeenCalled();
+    });
+  });
 });

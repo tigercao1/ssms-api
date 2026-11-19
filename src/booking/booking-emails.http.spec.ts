@@ -349,7 +349,7 @@ describe('booking emails HTTP', () => {
   });
 
   describe('attendee privacy in a class with two customers', () => {
-    const attendees = (mail: SendEmailRequest) =>
+    const attendees = (mail: SendEmailRequest): string[] =>
       ics(mail).match(/^ATTENDEE.*$/gm) ?? [];
     const byRecipient = (mailer: RecordingMailer) =>
       Object.fromEntries(mailer.sent.map((m) => [m.to, m]));

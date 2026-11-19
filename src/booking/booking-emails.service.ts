@@ -1,4 +1,9 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+} from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
@@ -7,6 +12,7 @@ import type {
   BookingLessonTime,
   EmailLanguage,
   EmailTemplate,
+  SendEmailRequest,
 } from '../mailer/mailer.types';
 import { BOOKING_CLOCK, type BookingClock } from './booking-calendars.service';
 import { BookingEmailQueue } from './booking-email-queue';
@@ -55,20 +61,42 @@ interface Delivery {
   previous?: ClassNoticeRow;
 }
 
+interface PendingEmail {
+  delivery: Delivery;
+  to: string;
+}
+
+export const BOOKING_EMAIL_DRAIN_MS = 3_000;
+export const BOOKING_EMAIL_UNSENT_LOG_MS = 1_000;
+const SHUTDOWN_REASON = 'shutdown';
+
 const DEFAULT_LESSON_NAME = 'Lesson';
 const CUSTOMER_LANGUAGE: EmailLanguage = 'en';
 const ORGANIZER_NAME = 'Serendipity Snow Club';
 
 @Injectable()
-export class BookingEmailsService {
+export class BookingEmailsService implements OnModuleDestroy {
   private readonly logger = new Logger(BookingEmailsService.name);
 
   constructor(
     private readonly repo: BookingRepository,
     private readonly mailer: MailerService,
-    private readonly queue: BookingEmailQueue,
+    private readonly queue: BookingEmailQueue<PendingEmail>,
     @Inject(BOOKING_CLOCK) private readonly clock: BookingClock,
   ) {}
+
+  async onModuleDestroy(): Promise<void> {
+    const unsent = await this.queue.close(BOOKING_EMAIL_DRAIN_MS);
+    if (unsent.length === 0) {
+      return;
+    }
+    this.logger.warn(
+      `Shutting down with ${unsent.length} booking email(s) unsent`,
+    );
+    await this.recordUnsent(
+      unsent.map(({ payload, started }) => ({ ...payload, started })),
+    );
+  }
 
   async snapshot(classId: string): Promise<ClassNoticeRow | null> {
     const [notice] = await this.load([classId]);
@@ -161,7 +189,13 @@ export class BookingEmailsService {
     for (const delivery of deliveries) {
       const to = delivery.recipient.email;
       if (to) {
-        this.queue.enqueue(() => this.deliver(delivery, to));
+        const queued = this.queue.enqueue(
+          () => this.mailer.send(this.request(delivery, to)),
+          { delivery, to },
+        );
+        if (!queued) {
+          void this.recordUnsent([{ delivery, to, started: false }]);
+        }
       } else {
         warnings.push(missingEmail(delivery.recipient));
       }
@@ -169,7 +203,26 @@ export class BookingEmailsService {
     return warnings;
   }
 
-  private deliver(delivery: Delivery, to: string): Promise<unknown> {
+  private async recordUnsent(
+    emails: (PendingEmail & { started: boolean })[],
+  ): Promise<void> {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.mailer.recordUnsent(
+        emails.map(({ delivery, to, started }) => {
+          const request = this.request(delivery, to);
+          return { ...request, metadata: { ...request.metadata, started } };
+        }),
+        SHUTDOWN_REASON,
+      ),
+      new Promise<void>((resolve) => {
+        deadline = setTimeout(resolve, BOOKING_EMAIL_UNSENT_LOG_MS);
+      }),
+    ]);
+    clearTimeout(deadline);
+  }
+
+  private request(delivery: Delivery, to: string): SendEmailRequest {
     const { kind, recipient, notices } = delivery;
     const method: IcsMethod = kind === 'cancelled' ? 'CANCEL' : 'REQUEST';
     const vars = emailVars(recipient, delivery);
@@ -180,7 +233,7 @@ export class BookingEmailsService {
       email: this.mailer.senderAddress(template),
       name: ORGANIZER_NAME,
     };
-    return this.mailer.send({
+    return {
       template,
       to,
       language: recipient.language,
@@ -218,7 +271,7 @@ export class BookingEmailsService {
           ),
         },
       ],
-    });
+    };
   }
 }
 

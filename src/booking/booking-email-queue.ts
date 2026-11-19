@@ -14,15 +14,26 @@ export const DEFAULT_BOOKING_EMAIL_PACING: BookingEmailPacing = {
 
 type Job = () => Promise<unknown>;
 
+interface Entry<T> {
+  job: Job;
+  payload?: T;
+}
+
+export interface UnsentJob<T> {
+  payload: T;
+  started: boolean;
+}
+
 @Injectable()
-export class BookingEmailQueue {
+export class BookingEmailQueue<T = unknown> {
   private readonly logger = new Logger(BookingEmailQueue.name);
   private readonly pacing: BookingEmailPacing;
-  private readonly waiting: Job[] = [];
+  private readonly waiting: Entry<T>[] = [];
+  private readonly running = new Set<Entry<T>>();
   private readonly idleWaiters: (() => void)[] = [];
-  private active = 0;
   private nextStartAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
 
   constructor(
     @Optional()
@@ -32,9 +43,13 @@ export class BookingEmailQueue {
     this.pacing = pacing ?? DEFAULT_BOOKING_EMAIL_PACING;
   }
 
-  enqueue(job: Job): void {
-    this.waiting.push(job);
+  enqueue(job: Job, payload?: T): boolean {
+    if (this.closed) {
+      return false;
+    }
+    this.waiting.push({ job, payload });
     this.pump();
+    return true;
   }
 
   idle(): Promise<void> {
@@ -44,11 +59,38 @@ export class BookingEmailQueue {
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 
+  async close(timeoutMs: number): Promise<UnsentJob<T>[]> {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.idle(),
+      new Promise<void>((resolve) => {
+        deadline = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(deadline);
+    this.closed = true;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    const unsent = [
+      ...[...this.running].map((entry) => ({ entry, started: true })),
+      ...this.waiting.splice(0).map((entry) => ({ entry, started: false })),
+    ];
+    return unsent.flatMap(({ entry, started }) =>
+      entry.payload === undefined ? [] : [{ payload: entry.payload, started }],
+    );
+  }
+
   private pump(): void {
     if (this.timer) {
       return;
     }
-    while (this.waiting.length > 0 && this.active < this.pacing.concurrency) {
+    while (
+      !this.closed &&
+      this.waiting.length > 0 &&
+      this.running.size < this.pacing.concurrency
+    ) {
       const wait = this.nextStartAt - Date.now();
       if (wait > 0) {
         this.timer = setTimeout(() => {
@@ -64,11 +106,11 @@ export class BookingEmailQueue {
     }
   }
 
-  private start(job: Job): void {
-    this.active++;
+  private start(entry: Entry<T>): void {
+    this.running.add(entry);
     this.nextStartAt = Date.now() + this.pacing.intervalMs;
-    void this.run(job).finally(() => {
-      this.active--;
+    void this.run(entry.job).finally(() => {
+      this.running.delete(entry);
       this.pump();
     });
   }
@@ -84,6 +126,6 @@ export class BookingEmailQueue {
   }
 
   private isIdle(): boolean {
-    return this.active === 0 && this.waiting.length === 0;
+    return this.running.size === 0 && this.waiting.length === 0;
   }
 }

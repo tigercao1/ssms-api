@@ -182,32 +182,42 @@ export class MailerService {
     return { outcome: 'failed', attempts, error: lastError };
   }
 
-  /** Best-effort `email_log` insert; a logging failure is only logged. */
+  async recordUnsent(
+    requests: SendEmailRequest[],
+    reason: string,
+  ): Promise<void> {
+    if (requests.length === 0) {
+      return;
+    }
+    const result: AttemptResult = {
+      outcome: 'failed',
+      attempts: 0,
+      error: `Not sent: ${reason}`,
+    };
+    await this.insertLog(
+      requests.map((request) =>
+        logRow(
+          { ...request, metadata: { ...request.metadata, reason } },
+          result,
+        ),
+      ),
+    );
+  }
+
   private async writeLog(
     request: SendEmailRequest,
     result: AttemptResult,
     subject?: string,
   ): Promise<void> {
+    await this.insertLog(logRow(request, result, subject));
+  }
+
+  /** Best-effort `email_log` insert; a logging failure is only logged. */
+  private async insertLog(
+    rows: Record<string, unknown> | Record<string, unknown>[],
+  ): Promise<void> {
     try {
-      const { error } = await this.supabase.from(EMAIL_LOG_TABLE).insert({
-        template: request.template,
-        recipient: request.to,
-        language: request.language,
-        instructor_id: request.instructorId ?? null,
-        auth_user_id: request.authUserId ?? null,
-        provider_id: result.providerId ?? null,
-        status: result.outcome,
-        error: result.outcome === 'sent' ? null : (result.error ?? null),
-        metadata: {
-          ...request.metadata,
-          mode: request.mode,
-          attempts: result.attempts,
-          ...(subject ? { subject } : {}),
-          ...(request.attachments?.length
-            ? { attachments: describeAttachments(request.attachments) }
-            : {}),
-        },
-      });
+      const { error } = await this.supabase.from(EMAIL_LOG_TABLE).insert(rows);
       if (error) {
         this.logger.error(`Failed to write email_log row: ${error.message}`);
       }
@@ -249,6 +259,32 @@ export class MailerService {
       );
     }
   }
+}
+
+function logRow(
+  request: SendEmailRequest,
+  result: AttemptResult,
+  subject?: string,
+): Record<string, unknown> {
+  return {
+    template: request.template,
+    recipient: request.to,
+    language: request.language,
+    instructor_id: request.instructorId ?? null,
+    auth_user_id: request.authUserId ?? null,
+    provider_id: result.providerId ?? null,
+    status: result.outcome,
+    error: result.outcome === 'sent' ? null : (result.error ?? null),
+    metadata: {
+      ...request.metadata,
+      mode: request.mode,
+      attempts: result.attempts,
+      ...(subject ? { subject } : {}),
+      ...(request.attachments?.length
+        ? { attachments: describeAttachments(request.attachments) }
+        : {}),
+    },
+  };
 }
 
 function errorMessage(err: unknown): string {

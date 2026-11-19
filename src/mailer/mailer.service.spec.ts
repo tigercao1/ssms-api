@@ -520,4 +520,54 @@ describe('MailerService', () => {
 
     await expect(mailer.send(request())).resolves.toBe('failed');
   });
+
+  describe('recordUnsent', () => {
+    it('writes one failed email_log row per unsent email, without sending', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn();
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      await mailer.recordUnsent(
+        [
+          request({ metadata: { started: false } }),
+          request({ to: 'li@example.com', instructorId: null }),
+        ],
+        'shutdown',
+      );
+
+      expect(send).not.toHaveBeenCalled();
+      expect(inserts.email_log).toEqual([
+        [
+          expect.objectContaining({
+            template: 'approved',
+            recipient: 'jane@example.com',
+            status: 'failed',
+            error: 'Not sent: shutdown',
+            metadata: {
+              started: false,
+              reason: 'shutdown',
+              mode: 'background',
+              attempts: 0,
+            },
+          }),
+          expect.objectContaining({
+            recipient: 'li@example.com',
+            instructor_id: null,
+            status: 'failed',
+            metadata: { reason: 'shutdown', mode: 'background', attempts: 0 },
+          }),
+        ],
+      ]);
+    });
+
+    it('writes nothing when there is nothing unsent', async () => {
+      const { client, inserts } = makeSupabase();
+      const mailer = service(
+        { isConfigured: () => true, send: jest.fn() },
+        client,
+      );
+      await mailer.recordUnsent([], 'shutdown');
+      expect(inserts.email_log).toEqual([]);
+    });
+  });
 });

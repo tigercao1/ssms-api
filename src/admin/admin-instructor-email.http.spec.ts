@@ -267,7 +267,7 @@ function seedInvite(
     email: OLD,
     token_hash: hashInviteToken(OLD_TOKEN),
     sent_at: '2026-10-20T00:00:00Z',
-    expires_at: '2026-11-19T00:00:00Z',
+    expires_at: new Date(Date.now() + 30 * DAY_MS).toISOString(),
     display_name_en: 'Jane',
     preferred_language: 'zh-CN',
     ...over,

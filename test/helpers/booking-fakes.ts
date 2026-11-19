@@ -963,6 +963,10 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
     enabled: true,
     offsets_minutes: [1440, 60],
     enabled_at: '2026-10-01T00:00:00.000Z',
+    offsets_added_at: {
+      '1440': '2026-10-01T00:00:00.000Z',
+      '60': '2026-10-01T00:00:00.000Z',
+    },
     updated_at: '2026-10-01T00:00:00.000Z',
   };
   savedBy: (string | null)[] = [];
@@ -974,7 +978,17 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
   }
 
   getSettings(): Promise<ReminderSettingsRow> {
-    return Promise.resolve({ ...this.settings });
+    return Promise.resolve({
+      ...this.settings,
+      offsets_added_at: { ...this.settings.offsets_added_at },
+    });
+  }
+
+  setOffsets(offsets: number[], addedAt: string): void {
+    this.settings.offsets_minutes = offsets;
+    this.settings.offsets_added_at = Object.fromEntries(
+      offsets.map((o) => [String(o), addedAt]),
+    );
   }
 
   saveSettings(
@@ -988,6 +1002,14 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
         write.enabled && !this.settings.enabled
           ? stamp
           : this.settings.enabled_at,
+      offsets_added_at: Object.fromEntries(
+        write.offsets_minutes.map((o) => [
+          String(o),
+          this.settings.offsets_minutes.includes(o)
+            ? (this.settings.offsets_added_at[String(o)] ?? stamp)
+            : stamp,
+        ]),
+      ),
       updated_at: stamp,
     };
     this.savedBy.push(userId);
@@ -1059,7 +1081,7 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
   }
 
   async supersede(claim: ReminderClaim): Promise<boolean> {
-    const id = await this.claim(claim);
+    const id = await this.insert(claim);
     const row = this.sends.find((s) => s.id === id);
     if (row) {
       row.status = 'skipped';
@@ -1069,6 +1091,24 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
   }
 
   async claim(claim: ReminderClaim): Promise<string | null> {
+    await Promise.resolve();
+    const row = this.booking.classes.find((c) => c.id === claim.class_id);
+    const stillDue =
+      row !== undefined &&
+      this.settings.enabled &&
+      this.settings.offsets_minutes.includes(claim.offset_minutes) &&
+      row.status === 'scheduled' &&
+      row.source === 'ssms' &&
+      row.send_emails &&
+      Date.parse(row.starts_at) === Date.parse(claim.starts_at) &&
+      Date.parse(row.starts_at) > this.booking.now() &&
+      (claim.audience === 'instructor'
+        ? row.instructor_id === claim.recipient_id
+        : row.customer_ids.includes(claim.recipient_id));
+    return stillDue ? this.insert(claim) : null;
+  }
+
+  private async insert(claim: ReminderClaim): Promise<string | null> {
     await Promise.resolve();
     const taken = this.sends.some(
       (s) =>
@@ -1096,13 +1136,6 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
     if (row) {
       row.status = outcome;
     }
-    return Promise.resolve();
-  }
-
-  release(id: string): Promise<void> {
-    this.sends = this.sends.filter(
-      (s) => !(s.id === id && s.status === 'claimed'),
-    );
     return Promise.resolve();
   }
 }

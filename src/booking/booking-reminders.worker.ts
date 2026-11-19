@@ -11,7 +11,7 @@ import {
   runsOnProductionApp,
 } from '../config/process-group';
 import { MailerService } from '../mailer/mailer.service';
-import type { SendEmailRequest, SendOutcome } from '../mailer/mailer.types';
+import type { SendEmailRequest } from '../mailer/mailer.types';
 import { BOOKING_CLOCK, type BookingClock } from './booking-calendars.service';
 import { BookingEmailQueue } from './booking-email-queue';
 import {
@@ -25,6 +25,7 @@ import {
   type ReminderClaim,
   type ReminderClassRow,
   type ReminderOutcome,
+  type ReminderSettingsRow,
 } from './booking-reminders.repository';
 
 export const LESSON_REMINDERS_FLAG = 'BOOKING_REMINDERS_ENABLED';
@@ -36,16 +37,15 @@ const MINUTE_MS = 60_000;
 export type LessonRemindersRun = Record<ReminderOutcome, number>;
 
 interface InFlight {
-  id: string;
   started: boolean;
-  released: boolean;
+  abandoned: boolean;
 }
 
 export function reminderDue(
   lesson: Pick<ReminderClassRow, 'starts_at' | 'starts_at_set_at'>,
   offsetMinutes: number,
   now: number,
-  remindersEnabledAt: string,
+  offsetActiveSince: string,
 ): boolean {
   const start = Date.parse(lesson.starts_at);
   const dueAt = start - offsetMinutes * MINUTE_MS;
@@ -53,8 +53,21 @@ export function reminderDue(
     dueAt <= now &&
     now < start &&
     dueAt >= Date.parse(lesson.starts_at_set_at) &&
-    dueAt >= Date.parse(remindersEnabledAt)
+    dueAt >= Date.parse(offsetActiveSince)
   );
+}
+
+export function offsetActiveSince(
+  settings: Pick<ReminderSettingsRow, 'enabled_at' | 'offsets_added_at'>,
+  offsetMinutes: number,
+): string | null {
+  const addedAt = settings.offsets_added_at[String(offsetMinutes)];
+  if (!addedAt) {
+    return null;
+  }
+  return Date.parse(addedAt) > Date.parse(settings.enabled_at)
+    ? addedAt
+    : settings.enabled_at;
 }
 
 export function lessonRemindersEnabled(config: ConfigService): boolean {
@@ -117,19 +130,8 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     ]);
     clearTimeout(deadline);
     const pending = this.inFlight;
-    if (finished || !pending || pending.started) {
-      return;
-    }
-    pending.released = true;
-    try {
-      await this.repo.release(pending.id);
-      this.logger.warn(
-        `Shutting down before lesson reminder ${pending.id} was sent; released it for another worker`,
-      );
-    } catch (err) {
-      this.logger.error(
-        `Could not release lesson reminder ${pending.id}: ${messageOf(err)}`,
-      );
+    if (!finished && pending && !pending.started) {
+      pending.abandoned = true;
     }
   }
 
@@ -161,9 +163,10 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
       )
         .map((lesson) => ({
           lesson,
-          due: offsets.filter((o) =>
-            reminderDue(lesson, o, now, settings.enabled_at),
-          ),
+          due: offsets.filter((o) => {
+            const since = offsetActiveSince(settings, o);
+            return since !== null && reminderDue(lesson, o, now, since);
+          }),
         }))
         .filter(({ due }) => due.length > 0);
       const claimed = new Set(
@@ -211,28 +214,51 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     recipient: Recipient,
     email: string,
   ): Promise<ReminderOutcome | null> {
+    const flight: InFlight = { started: false, abandoned: false };
+    this.inFlight = flight;
+    try {
+      return await new Promise<ReminderOutcome | null>((resolve, reject) => {
+        const queued = this.queue.enqueue(async () => {
+          if (flight.abandoned) {
+            resolve(null);
+            return;
+          }
+          flight.started = true;
+          await this.claimAndSend(lesson, offset, recipient, email).then(
+            resolve,
+            reject,
+          );
+        });
+        if (!queued) {
+          resolve(null);
+        }
+      });
+    } finally {
+      this.inFlight = undefined;
+    }
+  }
+
+  private async claimAndSend(
+    lesson: ReminderClassRow,
+    offset: number,
+    recipient: Recipient,
+    email: string,
+  ): Promise<ReminderOutcome | null> {
     const id = await this.repo.claim(claimOf(lesson, offset, recipient));
     if (!id) {
       return null;
     }
-    const flight: InFlight = { id, started: false, released: false };
-    this.inFlight = flight;
+    let outcome: ReminderOutcome;
     try {
-      const outcome = await this.send(
-        flight,
+      outcome = await this.mailer.send(
         reminderRequest(lesson, offset, recipient, email),
       );
-      if (!outcome) {
-        if (!flight.released) {
-          await this.repo.release(id);
-        }
-        return null;
-      }
-      await this.repo.finish(id, outcome);
-      return outcome;
-    } finally {
-      this.inFlight = undefined;
+    } catch (err) {
+      this.logger.error(`Lesson reminder ${id} failed: ${messageOf(err)}`);
+      outcome = 'failed';
     }
+    await this.repo.finish(id, outcome);
+    return outcome;
   }
 
   private async failStaleClaims(now: number): Promise<void> {
@@ -244,30 +270,6 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
         `Lesson reminder ${claim.id} (class ${claim.class_id}, ${claim.offset_minutes} min, ${claim.audience}) was still claimed after ${LESSON_REMINDER_STALE_CLAIM_MS / MINUTE_MS} minutes; marked failed: stale_claim`,
       );
     }
-  }
-
-  private send(
-    flight: InFlight,
-    request: SendEmailRequest,
-  ): Promise<SendOutcome | null> {
-    return new Promise((resolve) => {
-      const queued = this.queue.enqueue(async () => {
-        if (flight.released) {
-          resolve(null);
-          return;
-        }
-        flight.started = true;
-        try {
-          resolve(await this.mailer.send(request));
-        } catch (err) {
-          resolve('failed');
-          throw err;
-        }
-      });
-      if (!queued) {
-        resolve(null);
-      }
-    });
   }
 }
 

@@ -6,6 +6,10 @@ const ID = '3f1c2b7a-9d4e-4c1a-8b2f-6a7e5d4c3b2a';
 const SETTINGS = {
   enabled: true,
   offsets_minutes: [1440, 60],
+  offsets_added_at: {
+    '1440': '2026-10-01T00:00:00Z',
+    '60': '2026-10-01T00:00:00Z',
+  },
   updated_at: '2026-10-01T00:00:00Z',
 };
 const CLAIM = {
@@ -142,45 +146,39 @@ describe('SupabaseBookingRemindersRepository', () => {
     ).resolves.toBe(false);
   });
 
-  it('claims a reminder once, ignoring an existing claim', async () => {
+  it('claims a reminder through the conditional claim function', async () => {
     const fresh = bookingSupabase({
-      booking_reminder_sends: { data: [{ id: 'r1' }], error: null },
+      'rpc:claim_booking_reminder': { data: 'r1', error: null },
     });
     await expect(
       new SupabaseBookingRemindersRepository(fresh.client).claim(CLAIM),
     ).resolves.toBe('r1');
-    expect(fresh.queries[0].ops).toContainEqual([
-      'upsert',
-      CLAIM,
+    expect(fresh.rpcs).toEqual([
       {
-        onConflict: 'class_id,starts_at,offset_minutes,audience,recipient_id',
-        ignoreDuplicates: true,
+        name: 'claim_booking_reminder',
+        args: {
+          p_class_id: CLAIM.class_id,
+          p_starts_at: CLAIM.starts_at,
+          p_offset_minutes: CLAIM.offset_minutes,
+          p_audience: CLAIM.audience,
+          p_recipient_id: CLAIM.recipient_id,
+        },
       },
     ]);
-    const taken = bookingSupabase({
-      booking_reminder_sends: { data: [], error: null },
-    });
+    const refused = bookingSupabase();
     await expect(
-      new SupabaseBookingRemindersRepository(taken.client).claim(CLAIM),
+      new SupabaseBookingRemindersRepository(refused.client).claim(CLAIM),
     ).resolves.toBeNull();
   });
 
-  it('finishes or releases only a claimed reminder', async () => {
+  it('finishes only a claimed reminder', async () => {
     const { client, queries } = bookingSupabase();
     const repo = new SupabaseBookingRemindersRepository(client);
     await repo.finish('r1', 'sent');
-    await repo.release('r2');
     expect(queries[0].ops).toEqual(
       expect.arrayContaining([
         ['update', expect.objectContaining({ status: 'sent' })],
         ['eq', 'id', 'r1'],
-        ['eq', 'status', 'claimed'],
-      ]),
-    );
-    expect(queries[1].ops).toEqual(
-      expect.arrayContaining([
-        ['delete'],
-        ['eq', 'id', 'r2'],
         ['eq', 'status', 'claimed'],
       ]),
     );
@@ -189,9 +187,10 @@ describe('SupabaseBookingRemindersRepository', () => {
   it('surfaces database errors', async () => {
     const { client } = bookingSupabase({
       booking_reminder_sends: { data: null, error: { message: 'boom' } },
+      'rpc:claim_booking_reminder': { data: null, error: { message: 'down' } },
     });
-    await expect(
-      new SupabaseBookingRemindersRepository(client).claim(CLAIM),
-    ).rejects.toThrow('boom');
+    const repo = new SupabaseBookingRemindersRepository(client);
+    await expect(repo.supersede(CLAIM)).rejects.toThrow('boom');
+    await expect(repo.claim(CLAIM)).rejects.toThrow('down');
   });
 });

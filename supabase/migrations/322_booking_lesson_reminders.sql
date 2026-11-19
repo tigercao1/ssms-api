@@ -10,10 +10,42 @@ create table if not exists booking_reminder_settings (
                        and 20160 >= all (offsets_minutes)
                      ),
   enabled_at       timestamptz not null default now(),
+  offsets_added_at jsonb not null default '{}',
   updated_by       uuid,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
+
+create or replace function public.stamp_booking_reminder_offsets_added_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.offsets_added_at := coalesce(
+    (select jsonb_object_agg(
+              o::text,
+              coalesce(
+                case when tg_op = 'UPDATE' and o = any(old.offsets_minutes)
+                  then old.offsets_added_at -> o::text
+                end,
+                to_jsonb(now())
+              )
+            )
+       from unnest(new.offsets_minutes) as o
+      where o is not null),
+    '{}'::jsonb
+  );
+  return new;
+end;
+$$;
+
+revoke all on function public.stamp_booking_reminder_offsets_added_at()
+  from public, anon, authenticated;
+
+create or replace trigger booking_reminder_settings_stamp_offsets_added_at
+  before insert or update on booking_reminder_settings
+  for each row execute function public.stamp_booking_reminder_offsets_added_at();
 
 insert into booking_reminder_settings (id) values (true)
 on conflict (id) do nothing;
@@ -112,6 +144,48 @@ create table if not exists booking_reminder_sends (
 create index if not exists booking_reminder_sends_claimed_at_idx
   on booking_reminder_sends (claimed_at)
   where status = 'claimed';
+
+create or replace function public.claim_booking_reminder(
+  p_class_id uuid,
+  p_starts_at timestamptz,
+  p_offset_minutes int,
+  p_audience text,
+  p_recipient_id uuid
+) returns uuid
+language sql
+security invoker
+set search_path = public
+as $$
+  insert into booking_reminder_sends (
+    class_id, starts_at, offset_minutes, audience, recipient_id
+  )
+  select c.id, c.starts_at, p_offset_minutes, p_audience, p_recipient_id
+    from classes c
+    join booking_reminder_settings s
+      on s.enabled and p_offset_minutes = any (s.offsets_minutes)
+   where c.id = p_class_id
+     and c.status = 'scheduled'
+     and c.source = 'ssms'
+     and c.send_emails
+     and c.starts_at = p_starts_at
+     and c.starts_at > now()
+     and case p_audience
+           when 'instructor' then c.instructor_id = p_recipient_id
+           when 'customer' then exists (
+             select 1 from class_participants p
+              where p.class_id = c.id and p.customer_id = p_recipient_id)
+           else false
+         end
+     for share of c
+  on conflict (class_id, starts_at, offset_minutes, audience, recipient_id)
+    do nothing
+  returning id;
+$$;
+
+revoke all on function public.claim_booking_reminder(uuid, timestamptz, int, text, uuid)
+  from public, anon, authenticated;
+grant execute on function public.claim_booking_reminder(uuid, timestamptz, int, text, uuid)
+  to service_role;
 
 alter table booking_reminder_sends enable row level security;
 alter table booking_reminder_sends force row level security;

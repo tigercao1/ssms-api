@@ -14,7 +14,7 @@ import {
 export const REMINDER_SETTINGS_TABLE = 'booking_reminder_settings';
 export const REMINDER_SENDS_TABLE = 'booking_reminder_sends';
 const REMINDER_SETTINGS_COLUMNS =
-  'enabled, offsets_minutes, enabled_at, updated_at';
+  'enabled, offsets_minutes, enabled_at, offsets_added_at, updated_at';
 const REMINDER_CLASS_COLUMNS = `${CLASS_NOTICE_COLUMNS}, starts_at_set_at`;
 const REMINDER_KEY_COLUMNS =
   'class_id,starts_at,offset_minutes,audience,recipient_id';
@@ -26,6 +26,7 @@ export interface ReminderSettingsRow {
   enabled: boolean;
   offsets_minutes: number[];
   enabled_at: string;
+  offsets_added_at: Record<string, string>;
   updated_at: string;
 }
 
@@ -70,7 +71,6 @@ export abstract class BookingRemindersRepository {
   ): Promise<StaleReminderClaim[]>;
   abstract claim(claim: ReminderClaim): Promise<string | null>;
   abstract finish(id: string, outcome: ReminderOutcome): Promise<void>;
-  abstract release(id: string): Promise<void>;
 }
 
 @Injectable()
@@ -185,15 +185,15 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
   }
 
   async claim(claim: ReminderClaim): Promise<string | null> {
-    const { data, error } = (await this.supabase
-      .from(REMINDER_SENDS_TABLE)
-      .upsert(claim, {
-        onConflict: REMINDER_KEY_COLUMNS,
-        ignoreDuplicates: true,
-      })
-      .select('id')) as DbResult<{ id: string }[]>;
+    const { data, error } = (await this.supabase.rpc('claim_booking_reminder', {
+      p_class_id: claim.class_id,
+      p_starts_at: claim.starts_at,
+      p_offset_minutes: claim.offset_minutes,
+      p_audience: claim.audience,
+      p_recipient_id: claim.recipient_id,
+    })) as DbResult<string | null>;
     check(error, 'claim booking reminder');
-    return data?.[0]?.id ?? null;
+    return data ?? null;
   }
 
   async finish(id: string, outcome: ReminderOutcome): Promise<void> {
@@ -203,14 +203,5 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
       .eq('id', id)
       .eq('status', 'claimed')) as DbResult<null>;
     check(error, 'record booking reminder');
-  }
-
-  async release(id: string): Promise<void> {
-    const { error } = (await this.supabase
-      .from(REMINDER_SENDS_TABLE)
-      .delete()
-      .eq('id', id)
-      .eq('status', 'claimed')) as DbResult<null>;
-    check(error, 'release booking reminder');
   }
 }

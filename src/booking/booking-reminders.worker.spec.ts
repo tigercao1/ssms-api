@@ -4,6 +4,7 @@ import {
   AMY_ID,
   BEN_ID,
   BLUE_ID,
+  CAL_ID,
   InMemoryBookingRemindersRepository,
   InMemoryBookingRepository,
   LEO_ID,
@@ -16,6 +17,7 @@ import {
   PROCESS_GROUP_KEY,
   PRODUCTION_FLY_APP,
 } from '../config/process-group';
+import type { MailerService } from '../mailer/mailer.service';
 import type {
   BookingEmailVars,
   SendEmailRequest,
@@ -28,6 +30,7 @@ import {
   LESSON_REMINDERS_DRAIN_MS,
   LESSON_REMINDERS_FLAG,
   LESSON_REMINDERS_INTERVAL_MS,
+  offsetActiveSince,
   reminderDue,
 } from './booking-reminders.worker';
 
@@ -62,8 +65,15 @@ function build() {
   const settings = new BookingReminderSettingsService(repo, {
     record: () => Promise.resolve(),
   } as unknown as AuditService);
+  const hooks = { beforeSend: (): Promise<void> | void => undefined };
+  const service = {
+    send: async (request: SendEmailRequest) => {
+      await hooks.beforeSend();
+      return mailer.send(request);
+    },
+  } as unknown as MailerService;
   const worker = (q: BookingEmailQueue = queue) =>
-    new BookingRemindersWorker(config, repo, mailer.asService(), q, clock);
+    new BookingRemindersWorker(config, repo, service, q, clock);
   const lesson = (
     startsAt: number,
     overrides: Partial<Parameters<InMemoryBookingRepository['add']>[0]> = {},
@@ -77,7 +87,18 @@ function build() {
       starts_at_set_at: at(NOW),
       ...overrides,
     });
-  return { booking, repo, mailer, clock, env, queue, settings, worker, lesson };
+  return {
+    booking,
+    repo,
+    mailer,
+    hooks,
+    clock,
+    env,
+    queue,
+    settings,
+    worker,
+    lesson,
+  };
 }
 
 async function tickEveryMinute(
@@ -158,6 +179,32 @@ describe('reminderDue', () => {
         at(enabledAt),
       ),
     ).toBe(due);
+  });
+});
+
+describe('offsetActiveSince', () => {
+  const settings = {
+    enabled_at: '2026-10-01T00:00:00.000Z',
+    offsets_added_at: {
+      '1440': '2026-09-01T00:00:00.000Z',
+      '60': '2026-11-01T00:00:00.000Z',
+    },
+  };
+
+  it.each([
+    [
+      'an offset added before reminders were turned on',
+      1440,
+      settings.enabled_at,
+    ],
+    [
+      'an offset added after reminders were turned on',
+      60,
+      '2026-11-01T00:00:00.000Z',
+    ],
+    ['an offset with no added time', 180, null],
+  ])('%s', (_name, offset, since) => {
+    expect(offsetActiveSince(settings, offset)).toBe(since);
   });
 });
 
@@ -289,7 +336,7 @@ describe('BookingRemindersWorker', () => {
   });
 
   it('uses the admin reminder times', async () => {
-    ctx.repo.settings.offsets_minutes = [2880, 180];
+    ctx.repo.setOffsets([2880, 180], ctx.repo.settings.enabled_at);
     ctx.lesson(NOW + 1440 * MINUTE);
     ctx.lesson(NOW + 2880 * MINUTE, { id: CLASS_B, instructor_id: BEN_ID });
     await ctx.worker().tick();
@@ -469,21 +516,82 @@ describe('BookingRemindersWorker', () => {
     expect(ctx.repo.sends).toHaveLength(6);
   });
 
-  it('supersedes a longer reminder added after a shorter one was sent', async () => {
-    ctx.repo.settings.offsets_minutes = [60];
-    ctx.lesson(NOW + 60 * MINUTE, {
-      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
+  it('sends no backlog for a newly added longer reminder time and sends it on time for later lessons', async () => {
+    const admin = { userId: AMY_ID, role: 'admin' } as const;
+    const bookedLongAgo = { starts_at_set_at: at(NOW - 14 * 1440 * MINUTE) };
+    ctx.lesson(NOW + 2 * 1440 * MINUTE, {
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
     });
-    const worker = ctx.worker();
-    await worker.tick();
-    ctx.repo.settings.offsets_minutes = [180, 60];
+    ctx.lesson(NOW + 6 * 1440 * MINUTE, {
+      id: CLASS_B,
+      instructor_id: BEN_ID,
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
+    });
+    await ctx.settings.update(
+      { enabled: true, offsetsMinutes: [10080, 1440, 60] },
+      admin,
+    );
+    expect(ctx.repo.settings.offsets_added_at).toEqual({
+      '10080': at(NOW),
+      '1440': '2026-10-01T00:00:00.000Z',
+      '60': '2026-10-01T00:00:00.000Z',
+    });
+    ctx.lesson(NOW + 8 * 1440 * MINUTE, {
+      id: CLASS_C,
+      instructor_id: CAL_ID,
+      customer_ids: [MEI_ID],
+      starts_at_set_at: at(NOW + MINUTE),
+    });
+    expect(await tickEveryMinute(ctx, NOW + 8 * 1440 * MINUTE)).toEqual([
+      [CLASS_A, 1440, 1440],
+      [CLASS_A, 1440, 1440],
+      [CLASS_C, 10080, 10080],
+      [CLASS_C, 10080, 10080],
+      [CLASS_A, 60, 60],
+      [CLASS_A, 60, 60],
+      [CLASS_B, 1440, 1440],
+      [CLASS_B, 1440, 1440],
+      [CLASS_B, 60, 60],
+      [CLASS_B, 60, 60],
+      [CLASS_C, 1440, 1440],
+      [CLASS_C, 1440, 1440],
+      [CLASS_C, 60, 60],
+      [CLASS_C, 60, 60],
+    ]);
+  });
+
+  it('treats a removed and re-added or changed reminder time as newly added', async () => {
+    const admin = { userId: AMY_ID, role: 'admin' } as const;
+    const bookedLongAgo = { starts_at_set_at: at(NOW - 7 * 1440 * MINUTE) };
+    ctx.lesson(NOW + 20 * 60 * MINUTE, {
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
+    });
+    ctx.lesson(NOW + 23 * 60 * MINUTE, {
+      id: CLASS_B,
+      instructor_id: BEN_ID,
+      customer_ids: [MEI_ID],
+      ...bookedLongAgo,
+    });
+    await ctx.settings.update({ enabled: true, offsetsMinutes: [60] }, admin);
     ctx.clock.value += MINUTE;
-    await expect(worker.tick()).resolves.toEqual({
-      sent: 0,
-      skipped: 3,
-      failed: 0,
+    await ctx.settings.update(
+      { enabled: true, offsetsMinutes: [1440, 1500, 60] },
+      admin,
+    );
+    expect(ctx.repo.settings.offsets_added_at).toEqual({
+      '1500': at(NOW + MINUTE),
+      '1440': at(NOW + MINUTE),
+      '60': '2026-10-01T00:00:00.000Z',
     });
-    expect(ctx.mailer.sent).toHaveLength(3);
+    expect(await tickEveryMinute(ctx, NOW + 23 * 60 * MINUTE)).toEqual([
+      [CLASS_A, 60, 60],
+      [CLASS_A, 60, 60],
+      [CLASS_B, 60, 60],
+      [CLASS_B, 60, 60],
+    ]);
   });
 
   it('on first enable sends nothing already overdue and later reminders on schedule', async () => {
@@ -611,12 +719,96 @@ describe('BookingRemindersWorker', () => {
     ]);
   });
 
-  it('releases the claim when the email queue is closed', async () => {
+  it('claims nothing when the email queue is closed', async () => {
     await ctx.queue.close(0);
     ctx.lesson(NOW + 60 * MINUTE);
     await ctx.worker().tick();
     expect(ctx.mailer.sent).toEqual([]);
     expect(ctx.repo.sends).toEqual([]);
+  });
+
+  it('never reminds a lesson cancelled or moved while the tick is sending', async () => {
+    const start = NOW + 60 * MINUTE;
+    ctx.lesson(start, { customer_ids: [MEI_ID] });
+    ctx.lesson(start, {
+      id: CLASS_B,
+      instructor_id: BEN_ID,
+      customer_ids: [KAI_ID],
+    });
+    ctx.lesson(start, { id: CLASS_C, instructor_id: CAL_ID, customer_ids: [] });
+    const moved = start + 3 * 60 * MINUTE;
+    ctx.hooks.beforeSend = async () => {
+      if (ctx.mailer.sent.length === 0) {
+        await ctx.booking.setClassStatus(CLASS_B, 'cancelled');
+        await ctx.booking.rebookClass(
+          CLASS_C,
+          {
+            instructor_id: CAL_ID,
+            lesson_type_id: null,
+            starts_at: at(moved),
+            ends_at: at(moved + 60 * MINUTE),
+            google_calendar_id: null,
+            notes: null,
+          },
+          null,
+        );
+      }
+    };
+    await expect(ctx.worker().tick()).resolves.toEqual({
+      sent: 2,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(
+      ctx.mailer.sent.map(
+        (r) => (r.metadata as { classIds: string[] }).classIds,
+      ),
+    ).toEqual([[CLASS_A], [CLASS_A]]);
+    expect(ctx.repo.sends.map((s) => s.class_id)).toEqual([CLASS_A, CLASS_A]);
+    ctx.clock.value = moved - 60 * MINUTE;
+    await ctx.worker().tick();
+    expect(
+      ctx.mailer.sent
+        .slice(2)
+        .map((r) => [r.to, (r.metadata as { classIds: string[] }).classIds]),
+    ).toEqual([['cal@example.com', [CLASS_C]]]);
+  });
+
+  it('never reminds a recipient taken off the lesson while the tick is sending', async () => {
+    ctx.lesson(NOW + 60 * MINUTE);
+    ctx.hooks.beforeSend = () => {
+      ctx.booking.classes[0].customer_ids = [MEI_ID];
+      ctx.booking.classes[0].instructor_id = BEN_ID;
+    };
+    await ctx.worker().tick();
+    expect(recipients(ctx.mailer.sent)).toEqual([
+      'booking.reminder.customer mei@example.com',
+    ]);
+  });
+
+  it('never reminds once reminders are turned off while the tick is sending', async () => {
+    ctx.lesson(NOW + 60 * MINUTE);
+    ctx.hooks.beforeSend = () => {
+      ctx.repo.settings.enabled = false;
+    };
+    await ctx.worker().tick();
+    expect(ctx.mailer.sent).toHaveLength(1);
+    expect(ctx.repo.sends).toHaveLength(1);
+  });
+
+  it('records a send that throws as failed', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    ctx.hooks.beforeSend = () => Promise.reject(new Error('resend down'));
+    ctx.lesson(NOW + 60 * MINUTE, { customer_ids: [MEI_ID] });
+    await expect(ctx.worker().tick()).resolves.toEqual({
+      sent: 0,
+      skipped: 0,
+      failed: 2,
+    });
+    expect(ctx.repo.sends.map((s) => s.status)).toEqual(['failed', 'failed']);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('failed: resend down'),
+    );
   });
 
   it('logs and stops the tick when the database fails', async () => {
@@ -631,9 +823,8 @@ describe('BookingRemindersWorker', () => {
     expect(error).toHaveBeenCalledWith('Lesson reminders failed: down');
   });
 
-  it('releases a reminder still waiting in the queue at shutdown and never sends it', async () => {
+  it('never claims or sends a reminder still waiting in the queue at shutdown', async () => {
     jest.useFakeTimers({ now: NOW });
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     const held: (() => Promise<unknown>)[] = [];
     const queue = {
       enqueue: (job: () => Promise<unknown>) => held.push(job) > 0,
@@ -643,12 +834,12 @@ describe('BookingRemindersWorker', () => {
     void worker.tick();
     await jest.advanceTimersByTimeAsync(0);
     expect(held).toHaveLength(1);
-    expect(ctx.repo.sends).toHaveLength(1);
+    expect(ctx.repo.sends).toEqual([]);
     const stopped = worker.onModuleDestroy();
     await jest.advanceTimersByTimeAsync(LESSON_REMINDERS_DRAIN_MS);
     await stopped;
-    expect(ctx.repo.sends).toEqual([]);
     await held[0]();
+    expect(ctx.repo.sends).toEqual([]);
     expect(ctx.mailer.sent).toEqual([]);
   });
 

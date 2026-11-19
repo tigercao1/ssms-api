@@ -19,6 +19,36 @@ begin
   if (select enabled_at from booking_reminder_settings) is null then
     raise exception 'booking_reminder_settings must record when reminders were turned on';
   end if;
+  if (select (offsets_added_at ->> '1440')::timestamptz is distinct from created_at
+             or (offsets_added_at ->> '60')::timestamptz is distinct from created_at
+             or (select count(*) from jsonb_object_keys(offsets_added_at)) <> 2
+        from booking_reminder_settings) then
+    raise exception 'booking_reminder_settings must record when each default offset was added';
+  end if;
+  alter table booking_reminder_settings disable trigger booking_reminder_settings_stamp_offsets_added_at;
+  update booking_reminder_settings
+     set offsets_added_at = '{"1440": "2000-01-01T00:00:00+00:00", "60": "2000-01-01T00:00:00+00:00"}';
+  alter table booking_reminder_settings enable trigger booking_reminder_settings_stamp_offsets_added_at;
+  update booking_reminder_settings
+     set offsets_minutes = '{10080,1440,60}', offsets_added_at = '{"10080": "2001-01-01T00:00:00+00:00"}';
+  if (select offsets_added_at from booking_reminder_settings)
+     <> jsonb_build_object('10080', to_jsonb(now()), '1440', '2000-01-01T00:00:00+00:00', '60', '2000-01-01T00:00:00+00:00') then
+    raise exception 'adding an offset must stamp only the new offset, got %',
+      (select offsets_added_at from booking_reminder_settings);
+  end if;
+  alter table booking_reminder_settings disable trigger booking_reminder_settings_stamp_offsets_added_at;
+  update booking_reminder_settings
+     set offsets_added_at = '{"10080": "2000-01-01T00:00:00+00:00", "1440": "2000-01-01T00:00:00+00:00", "60": "2000-01-01T00:00:00+00:00"}';
+  alter table booking_reminder_settings enable trigger booking_reminder_settings_stamp_offsets_added_at;
+  update booking_reminder_settings set offsets_minutes = '{1440,60}';
+  update booking_reminder_settings set offsets_minutes = '{10080,1500,60}';
+  if (select offsets_added_at from booking_reminder_settings)
+     <> jsonb_build_object('10080', to_jsonb(now()), '1500', to_jsonb(now()), '60', '2000-01-01T00:00:00+00:00') then
+    raise exception 'a removed and re-added or changed offset must count as newly added, got %',
+      (select offsets_added_at from booking_reminder_settings);
+  end if;
+  update booking_reminder_settings set enabled = false;
+  update booking_reminder_settings set enabled = true, offsets_minutes = '{1440,60}';
   alter table booking_reminder_settings disable trigger booking_reminder_settings_stamp_enabled_at;
   update booking_reminder_settings set enabled_at = '2000-01-01T00:00:00Z';
   alter table booking_reminder_settings enable trigger booking_reminder_settings_stamp_enabled_at;
@@ -176,6 +206,57 @@ begin
     raise exception 'an unknown reminder failure reason was accepted';
   exception when check_violation then null;
   end;
+
+  update booking_reminder_settings set enabled = true, offsets_minutes = '{1440,60}';
+  delete from booking_reminder_sends where class_id = loud;
+  if claim_booking_reminder(loud, '2030-02-02T15:00:00Z', 60, 'customer', ann) is not null then
+    raise exception 'a reminder for the old time of a moved class was claimed';
+  end if;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 60, 'customer', ann) is null then
+    raise exception 'a reminder for a scheduled class was not claimed';
+  end if;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 60, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed twice';
+  end if;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 60, 'instructor', i) is null then
+    raise exception 'the instructor reminder for a scheduled class was not claimed';
+  end if;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 1440, 'instructor', ann) is not null
+     or claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 1440, 'customer', i) is not null then
+    raise exception 'a reminder was claimed for someone not on the class';
+  end if;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 180, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed for an offset that is not configured';
+  end if;
+  update booking_reminder_settings set enabled = false;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 1440, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed while reminders are turned off';
+  end if;
+  update booking_reminder_settings set enabled = true;
+  if claim_booking_reminder(quiet, '2030-02-01T15:00:00Z', 60, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed for a class booked with send_emails false';
+  end if;
+  perform set_class_status(loud, 'cancelled');
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 1440, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed for a cancelled class';
+  end if;
+  update classes set status = 'scheduled' where id = loud;
+  if claim_booking_reminder(loud, '2030-02-02T17:00:00Z', 1440, 'customer', ann) is null then
+    raise exception 'a reminder for a class scheduled again was not claimed';
+  end if;
+
+  insert into classes (id, instructor_id, lesson_type_id, starts_at, ends_at, source)
+  values ('55555555-5555-4555-8555-555555555583', i, lt, now() - interval '1 minute', now() + interval '59 minutes', 'ssms'),
+         ('55555555-5555-4555-8555-555555555584', i, lt, '2030-04-01T15:00:00Z', '2030-04-01T16:00:00Z', 'app_import');
+  insert into class_participants (class_id, customer_id)
+  values ('55555555-5555-4555-8555-555555555583', ann),
+         ('55555555-5555-4555-8555-555555555584', ann);
+  if claim_booking_reminder('55555555-5555-4555-8555-555555555583', now() - interval '1 minute', 60, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed for a class that already started';
+  end if;
+  if claim_booking_reminder('55555555-5555-4555-8555-555555555584', '2030-04-01T15:00:00Z', 60, 'customer', ann) is not null then
+    raise exception 'a reminder was claimed for an imported class';
+  end if;
 
   delete from classes where id = loud;
   if exists (select 1 from booking_reminder_sends where class_id = loud) then

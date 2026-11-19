@@ -78,6 +78,17 @@ curl -fsS -X PATCH -H "Authorization: Bearer $SSMS_ADMIN_TOKEN" -H 'Content-Type
 
 Drop `"dryRun": true` to apply the same reorder, and add `"atomic": true` to apply all of it or none of it.
 
+## Common tasks
+
+- **Has this person signed the waiver?** `GET /admin/signatures/check?email=<email>` returns `signed`, `status`, `year`, `signedAt` and `templateTitles`, matching the email case-insensitively. Limit 60 a minute. `GET /admin/signatures?q=` searches instructors and customers by name or email.
+- **Book several classes at once.** `POST /admin/booking/classes/batch` with `{ batchId, bookings }`, at most 20 rows, a result per row. Repeating the same `batchId` is safe.
+- **Set up a signing form.** `POST /admin/documents/forms`, then `PUT /admin/documents/forms/{id}/versions/{lang}` per language, optionally upload the original PDF (`source/upload-url`, upload, `source/confirm`) and place fields with `PUT .../placements`, then `POST .../versions/{lang}/publish`.
+- **Edit several instructors.** `PATCH /admin/instructors`, described above.
+
+## Use it from an agent
+
+`skills/ssms-admin/SKILL.md` in this repo is a ready-made agent skill. Install it by copying the folder into the agent's skill directory, for example `cp -r skills/ssms-admin ~/.pi/agent/skills/`. It reads `SSMS_API_URL` and `SSMS_ADMIN_TOKEN` from the environment and fetches `/admin/openapi.json`. Keep the copy in the repo as the shared one; when it changes, copy it again.
+
 ## Session-only routes
 
 These seven routes answer 403 to a token and need a signed-in admin session on the admin site. The list comes

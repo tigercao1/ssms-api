@@ -233,9 +233,9 @@ export class EmailRateLimitError extends Error {
 export interface EmailMessage {
   to: string;
   subject: string;
-  /** HTML body. */
-  html: string;
-  /** Plain-text alternative body. */
+  /** HTML body; omitted for a plain-text email. */
+  html?: string;
+  /** Plain-text body, or the alternative to `html`. */
   text: string;
   contentLanguage?: string;
   /** Overrides the sender's default From mailbox. */
@@ -249,8 +249,18 @@ export interface EmailMessage {
   attachments?: EmailAttachment[];
 }
 
-/** A rendered email before it is addressed. */
-export type RenderedEmail = Omit<
+/** Email content before it is addressed. */
+export type EmailContent = Omit<
   EmailMessage,
   'to' | 'from' | 'replyTo' | 'idempotencyKey' | 'attachments'
 >;
+
+export type RenderedEmail = EmailContent & { html: string };
+
+export interface PlainTextEmailRequest {
+  kind: string;
+  to: string;
+  subject: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+}

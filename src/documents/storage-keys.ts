@@ -61,4 +61,7 @@ export const storageKeys = {
   /** Signed copy of a customer's assignment. */
   customerDocument: (customerId: string, assignmentId: string) =>
     `subjects/customer/${customerId}/documents/${assignmentId}.pdf`,
+  bugReportScreenshots: (authUserId: string) => `bug-reports/${authUserId}/`,
+  bugReportScreenshot: (authUserId: string, id: string, extension: string) =>
+    `${storageKeys.bugReportScreenshots(authUserId)}${id}.${extension}`,
 };

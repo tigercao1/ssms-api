@@ -1368,6 +1368,72 @@ export default async () => {
             },
           },
         ],
+        [
+          require('../bug-reports/dto/bug-report.dto'),
+          {
+            ScreenshotUploadUrlDto: {
+              contentType: {
+                required: true,
+                enum: ['image/jpeg', 'image/png', 'image/webp'],
+              },
+              contentLength: { required: true, type: () => Number, minimum: 1 },
+            },
+            SubmitBugReportDto: {
+              description: {
+                required: true,
+                type: () => String,
+                minLength: 1,
+                maxLength: 4000,
+              },
+              expected: {
+                required: false,
+                type: () => String,
+                maxLength: 2000,
+              },
+              severity: {
+                required: false,
+                enum: ['blocked', 'wrong', 'minor'],
+              },
+              pageUrl: { required: true, type: () => String, maxLength: 500 },
+              appVersion: {
+                required: false,
+                type: () => String,
+                maxLength: 64,
+              },
+              viewport: { required: false, type: () => String, maxLength: 32 },
+              userAgent: {
+                required: false,
+                type: () => String,
+                maxLength: 300,
+              },
+              screenshotKey: {
+                required: false,
+                type: () => String,
+                maxLength: 200,
+              },
+            },
+            BugReportsQueryDto: {
+              status: {
+                required: false,
+                enum: ['new', 'in_progress', 'resolved', 'wont_fix'],
+              },
+              page: { required: false, type: () => Number, minimum: 1 },
+              limit: { required: false, type: () => Number, minimum: 1 },
+            },
+            UpdateBugReportDto: {
+              status: {
+                required: false,
+                enum: ['new', 'in_progress', 'resolved', 'wont_fix'],
+              },
+              adminNote: {
+                required: false,
+                type: () => String,
+                nullable: true,
+                maxLength: 2000,
+              },
+            },
+          },
+        ],
       ],
       controllers: [],
     },

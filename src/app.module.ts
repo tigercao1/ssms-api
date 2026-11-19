@@ -30,6 +30,7 @@ import { ClassImportModule } from './class-import/class-import.module';
 import { DocumentsModule } from './documents/documents.module';
 import { ShopifyWebhooksModule } from './shopify-webhooks/shopify-webhooks.module';
 import { RemindersModule } from './reminders/reminders.module';
+import { BugReportsModule } from './bug-reports/bug-reports.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { RemindersModule } from './reminders/reminders.module';
     ShopifyWebhooksModule,
     AuthHooksModule,
     RemindersModule,
+    BugReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

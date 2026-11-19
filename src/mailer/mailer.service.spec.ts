@@ -570,4 +570,45 @@ describe('MailerService', () => {
       expect(inserts.email_log).toEqual([]);
     });
   });
+
+  describe('plain-text emails', () => {
+    const plain = {
+      kind: 'admin.bug_report',
+      to: 'triage@example.com',
+      subject: '[SSMS] report: <b>hi</b>',
+      text: 'Body <script>',
+      metadata: { bugReportId: 'r-1' },
+    };
+
+    it('sends only a text part and logs it under its kind', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn().mockResolvedValue({ id: 'msg-9' });
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      expect(await mailer.sendText(plain)).toBe('sent');
+      const [message] = send.mock.calls[0] as [Record<string, unknown>];
+      expect(message).toMatchObject({
+        to: 'triage@example.com',
+        subject: '[SSMS] report: <b>hi</b>',
+        text: 'Body <script>',
+      });
+      expect(message).not.toHaveProperty('html');
+      expect(inserts.email_log[0]).toMatchObject({
+        template: 'admin.bug_report',
+        recipient: 'triage@example.com',
+        status: 'sent',
+        metadata: { bugReportId: 'r-1', mode: 'background' },
+      });
+    });
+
+    it('resolves failed after retries without throwing', async () => {
+      const { client, inserts } = makeSupabase();
+      const send = jest.fn().mockRejectedValue(new Error('down'));
+      const mailer = service({ isConfigured: () => true, send }, client);
+
+      await expect(mailer.sendText(plain)).resolves.toBe('failed');
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(inserts.email_log[0]).toMatchObject({ status: 'failed' });
+    });
+  });
 });

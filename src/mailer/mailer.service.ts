@@ -8,10 +8,11 @@ import {
 import { EMAIL_SENDER, type EmailSender } from './email-sender.interface';
 import { MailerConfig } from './mailer.config';
 import {
+  type EmailContent,
   EmailDeliveryError,
   EmailRateLimitError,
   type EmailTemplate,
-  type RenderedEmail,
+  type PlainTextEmailRequest,
   type SendEmailRequest,
   type SendOutcome,
   type SendMode,
@@ -34,6 +35,10 @@ const RETRY_POLICY: Record<
 > = {
   sync: { attempts: 2, timeoutMs: 1_500, maxWaitMs: 1_000 },
   background: { attempts: 3, timeoutMs: 10_000, maxWaitMs: 10_000 },
+};
+
+type DeliveryRequest = Omit<SendEmailRequest, 'template' | 'vars'> & {
+  template: string;
 };
 
 interface AttemptResult {
@@ -87,7 +92,14 @@ export class MailerService {
   ): Promise<SendOutcome> {
     let result: AttemptResult;
     try {
-      result = await this.deliver(request);
+      result = await this.deliver(request, () => {
+        assertAttachmentsWithinLimit(request.attachments);
+        return this.renderer.render(
+          request.template,
+          request.language,
+          request.vars,
+        );
+      });
     } catch (err) {
       result = { outcome: 'failed', attempts: 0, error: errorMessage(err) };
     }
@@ -100,8 +112,28 @@ export class MailerService {
     return result.outcome;
   }
 
-  private async deliver<T extends EmailTemplate>(
-    request: SendEmailRequest<T>,
+  async sendText(request: PlainTextEmailRequest): Promise<SendOutcome> {
+    try {
+      const result = await this.deliver(
+        {
+          template: request.kind,
+          to: request.to,
+          language: 'en',
+          mode: 'background',
+          metadata: request.metadata,
+        },
+        () => ({ subject: request.subject, text: request.text }),
+      );
+      return result.outcome;
+    } catch (err) {
+      this.logger.error(`Failed to send ${request.kind}: ${errorMessage(err)}`);
+      return 'failed';
+    }
+  }
+
+  private async deliver(
+    request: DeliveryRequest,
+    prepare: () => EmailContent,
   ): Promise<AttemptResult> {
     if (!this.sender.isConfigured()) {
       this.logger.warn(
@@ -117,14 +149,9 @@ export class MailerService {
       return result;
     }
 
-    let rendered: RenderedEmail;
+    let rendered: EmailContent;
     try {
-      assertAttachmentsWithinLimit(request.attachments);
-      rendered = this.renderer.render(
-        request.template,
-        request.language,
-        request.vars,
-      );
+      rendered = prepare();
     } catch (err) {
       const error = errorMessage(err);
       this.logger.error(`Failed to prepare ${request.template}: ${error}`);
@@ -143,8 +170,8 @@ export class MailerService {
   }
 
   private async sendWithRetry(
-    request: SendEmailRequest,
-    rendered: RenderedEmail,
+    request: DeliveryRequest,
+    rendered: EmailContent,
   ): Promise<AttemptResult> {
     const { attempts, timeoutMs, maxWaitMs } = RETRY_POLICY[request.mode];
     let lastError = 'unknown send failure';
@@ -205,7 +232,7 @@ export class MailerService {
   }
 
   private async writeLog(
-    request: SendEmailRequest,
+    request: DeliveryRequest,
     result: AttemptResult,
     subject?: string,
   ): Promise<void> {
@@ -230,7 +257,7 @@ export class MailerService {
 
   /** Best-effort `notification.failure` audit row. */
   private async auditFailure(
-    request: SendEmailRequest,
+    request: DeliveryRequest,
     result: AttemptResult,
   ): Promise<void> {
     try {
@@ -262,7 +289,7 @@ export class MailerService {
 }
 
 function logRow(
-  request: SendEmailRequest,
+  request: DeliveryRequest,
   result: AttemptResult,
   subject?: string,
 ): Record<string, unknown> {

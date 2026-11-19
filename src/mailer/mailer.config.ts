@@ -45,7 +45,7 @@ export class MailerConfig {
   }
 
   /** From / Reply-To overrides for `template`; empty means the sender's defaults. */
-  mailboxFor(template: EmailTemplate): { from?: string; replyTo?: string } {
+  mailboxFor(template: string): { from?: string; replyTo?: string } {
     if (!isBookingTemplate(template)) {
       return {};
     }
@@ -66,7 +66,7 @@ export class MailerConfig {
   }
 }
 
-export function isBookingTemplate(template: EmailTemplate): boolean {
+export function isBookingTemplate(template: string): boolean {
   return template.startsWith('booking.');
 }
 

@@ -5,6 +5,7 @@ import {
 import type { ClassStatus } from '../../src/lessons/lessons.types';
 import type { RateUnit } from '../../src/lessons/pay-rates';
 import type { PayRateRow } from '../../src/lessons/pay-rates.repository';
+import { rateAmountCents } from '../../src/payroll/payroll-lines';
 import { daysBetween, localDate } from '../../src/payroll/payroll-time';
 import {
   type AdjustmentInsert,
@@ -237,6 +238,17 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     const cents = (amount: string | number) => Math.round(Number(amount) * 100);
     const net = (lines: PayrollLineRow[]) =>
       lines.reduce((sum, l) => sum + cents(l.amount), 0);
+    const owed = (lines: PayrollLineRow[]) => {
+      const terms = lines.find((l) => !l.flags.includes('already_paid'));
+      if (!terms) return null;
+      return terms.hourly_rate === null
+        ? 0
+        : rateAmountCents(
+            terms.hourly_rate,
+            terms.rate_unit,
+            terms.minutes ?? 0,
+          );
+    };
     const ids = this.classes
       .filter((c) => {
         const byInstructor = new Map<string, PayrollLineRow[]>();
@@ -247,34 +259,23 @@ export class InMemoryPayrollRepository extends PayrollRepository {
             l,
           ]);
         }
-        if (c.status === 'cancelled') {
-          return [...byInstructor.values()].some((lines) => net(lines) !== 0);
-        }
+        const reversals = [...byInstructor].some(
+          ([id, lines]) =>
+            (c.status === 'cancelled' || id !== c.instructor_id) &&
+            net(lines) !== 0,
+        );
+        if (reversals) return true;
+        if (c.status === 'cancelled') return false;
+        const mine = byInstructor.get(c.instructor_id) ?? [];
+        const due = owed(mine);
+        if (due !== null) return net(mine) !== due;
         const date = localDate(c.starts_at);
-        const ownFinalized = this.periods.some(
+        return this.periods.some(
           (p) =>
             p.status === 'finalized' &&
             p.starts_on <= date &&
             date <= p.ends_on,
         );
-        if (!ownFinalized) return false;
-        const othersPaid = [...byInstructor].some(
-          ([id, lines]) => id !== c.instructor_id && net(lines) !== 0,
-        );
-        const mine = byInstructor.get(c.instructor_id) ?? [];
-        let running = 0;
-        let owed: number | null = null;
-        for (const l of mine) {
-          running += cents(l.amount);
-          if (
-            !l.flags.includes('already_paid') &&
-            !l.flags.includes('late_cancel')
-          ) {
-            owed = running;
-            break;
-          }
-        }
-        return othersPaid || owed === null || net(mine) !== owed;
       })
       .map((c) => c.id);
     return Promise.resolve(ids);

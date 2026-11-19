@@ -812,7 +812,7 @@ describe('GET /me/lessons', () => {
         expect(open.totals[0]).toMatchObject({ lessons: 0, minutes: 0 });
       });
 
-      it('pays a restored lesson moved into the open period there', async () => {
+      it('repays a restored lesson moved into the open period as a late line in the current period', async () => {
         const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
         await finalize('2025-12-29');
         cls.status = 'cancelled';
@@ -823,14 +823,18 @@ describe('GET /me/lessons', () => {
         cls.status = 'completed';
         cls.starts_at = '2026-01-27T15:00:00.000Z';
         cls.ends_at = '2026-01-27T16:30:00.000Z';
-        const { upcoming } = await mine();
-        expect(upcoming.lessons).toEqual([
-          expect.objectContaining({
-            classId: cls.id,
-            amount: 135,
-            late: false,
-          }),
-        ]);
+        const { upcoming, periods } = await mine();
+        expect(upcoming.lessons).toEqual([]);
+        expect(periods[0]).toMatchObject({
+          startsOn: '2026-01-26',
+          lessons: [
+            expect.objectContaining({
+              classId: cls.id,
+              amount: 135,
+              late: true,
+            }),
+          ],
+        });
       });
 
       it('leaves out other instructors’ late lines', async () => {

@@ -36,6 +36,7 @@ import {
   addDays,
   localDate,
   localTime,
+  periodContaining,
   periodsAround,
   startOfLocalDay,
 } from './payroll-time';
@@ -186,10 +187,18 @@ export async function lateClassLines(
   if (ids.length === 0) {
     return [];
   }
-  const [rows, paidRows] = await Promise.all([
+  const [rows, paidRows, settings] = await Promise.all([
     repo.classesByIds(ids),
     repo.classLines(ids),
+    repo.settings(),
   ]);
+  const ownPeriod = (row: LateClassRow) =>
+    periodContaining(settings.anchor_date, localDate(row.starts_at)).startsOn;
+  const finalized = new Set(
+    (await repo.periodsStartingOn([...new Set(rows.map(ownPeriod))]))
+      .filter((period) => period.status === 'finalized')
+      .map((period) => period.starts_on),
+  );
   const lessonTypeIds = [
     ...new Set(
       rows
@@ -206,7 +215,12 @@ export async function lateClassLines(
   const late: LateClassLine[] = [];
   for (const row of rows) {
     const paid = paidByClass.get(row.id) ?? [];
-    for (const line of lateLines(toPayable(row), paid.map(storedLine), rates)) {
+    for (const line of lateLines(
+      toPayable(row),
+      paid.map(storedLine),
+      rates,
+      finalized.has(ownPeriod(row)),
+    )) {
       const instructor =
         line.instructorId === row.instructor_id
           ? row.instructor
@@ -363,9 +377,15 @@ export class PayrollService {
             zhNames.set(row.lesson_type_id, row.lesson_type.name_zh);
           }
         }
-        classLines = [...classLines, ...late.map(({ line }) => line)].sort(
-          byLessonStart,
+        const settled = new Set(
+          late.map(({ line }) => `${line.classId}|${line.instructorId}`),
         );
+        classLines = [
+          ...classLines.filter(
+            (line) => !settled.has(`${line.classId}|${line.instructorId}`),
+          ),
+          ...late.map(({ line }) => line),
+        ].sort(byLessonStart);
       }
     } else {
       classLines = rows

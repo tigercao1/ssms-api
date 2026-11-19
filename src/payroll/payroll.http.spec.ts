@@ -1010,6 +1010,25 @@ describe('payroll admin HTTP', () => {
       expect((await detailOf(later)).lines).toEqual([]);
     });
 
+    it('keeps a restored lesson paid after the period that first paid it is reopened and finalized again', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.status = 'cancelled';
+      await finalize(current);
+      cls.status = 'completed';
+      await finalize(next);
+      await reopen(previous);
+      expect(summary(await detailOf(previous))).toEqual([
+        ['2025-12-20', 0, 'completed', ['already_paid']],
+      ]);
+      await finalize(previous);
+      expect(summary(await detailOf(later))).toEqual([
+        ['2025-12-20', 60, 'completed', ['late']],
+      ]);
+      await finalize(later);
+      expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60 });
+    });
+
     describe('when a paid lesson changes instructor', () => {
       beforeEach(() => {
         ctx.repo.addRate({
@@ -1090,6 +1109,56 @@ describe('payroll admin HTTP', () => {
         expect((await detailOf(later)).lines).toEqual([]);
       });
 
+      it('keeps a lesson paid after it moves away and back and the period that first paid it is reopened (P10)', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        reassign(cls, BO_ID);
+        await finalize(current);
+        reassign(cls, ADA_ID);
+        await finalize(next);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60, [BO_ID]: 0 });
+        await reopen(previous);
+        await finalize(previous);
+        expect(byInstructor(await detailOf(later))).toEqual([
+          ['Ada Lin', 60, ['late', 'reassigned']],
+        ]);
+        await finalize(later);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60, [BO_ID]: 0 });
+      });
+
+      it('settles both instructors in the current period when a paid lesson moves into it on another instructor', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        reassign(cls, BO_ID);
+        cls.starts_at = '2026-01-05T15:00:00.000Z';
+        cls.ends_at = '2026-01-05T16:30:00.000Z';
+        expect(byInstructor(await detailOf(current))).toEqual([
+          ['Bo Chen', 120, ['late', 'reassigned']],
+          ['Ada Lin', -60, ['late_cancel', 'reassigned']],
+        ]);
+        await finalize(current);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 0, [BO_ID]: 120 });
+        expect((await detailOf(next)).lines).toEqual([]);
+      });
+
+      it('settles both instructors in the current period when a paid lesson moves into a later open period on another instructor', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        reassign(cls, BO_ID);
+        cls.starts_at = '2026-01-13T15:00:00.000Z';
+        cls.ends_at = '2026-01-13T16:30:00.000Z';
+        expect(byInstructor(await detailOf(current))).toEqual([
+          ['Bo Chen', 120, ['late', 'reassigned']],
+          ['Ada Lin', -60, ['late_cancel', 'reassigned']],
+        ]);
+        expect(byInstructor(await detailOf(next))).toEqual([
+          ['Bo Chen', 0, ['already_paid']],
+        ]);
+        await finalize(current);
+        await finalize(next);
+        expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 0, [BO_ID]: 120 });
+      });
+
       it('pays only the new instructor for a lesson reassigned in an open period that was never paid', async () => {
         const cls = ctx.repo.addClass({ startsAt: '2026-01-02T15:00:00Z' });
         reassign(cls, BO_ID);
@@ -1102,7 +1171,7 @@ describe('payroll admin HTTP', () => {
       });
     });
 
-    it('pays a restored lesson moved into an open period in that period at what it was first paid (S12)', async () => {
+    it('repays a restored lesson moved into an open period as a late line at what it was first paid (S12)', async () => {
       const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
       await finalize(previous);
       cls.status = 'cancelled';
@@ -1112,11 +1181,32 @@ describe('payroll admin HTTP', () => {
       cls.ends_at = '2026-01-13T16:30:00.000Z';
       ctx.repo.rates[0].hourly_rate = 50;
       const live = await detailOf(next);
-      expect(summary(live)).toEqual([['2026-01-13', 60, 'completed', []]]);
+      expect(summary(live)).toEqual([
+        ['2026-01-13', 60, 'completed', ['late']],
+      ]);
       expect(live.lines[0]).toMatchObject({ hourlyRate: 40, minutes: 90 });
       await finalize(next);
       expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60 });
       expect((await detailOf(later)).lines).toEqual([]);
+    });
+
+    it('repays a restored lesson moved into a later open period in the current period and marks it paid there', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.status = 'cancelled';
+      await finalize(current);
+      cls.status = 'completed';
+      cls.starts_at = '2026-01-27T15:00:00.000Z';
+      cls.ends_at = '2026-01-27T16:30:00.000Z';
+      expect(summary(await detailOf(next))).toEqual([
+        ['2026-01-27', 60, 'completed', ['late']],
+      ]);
+      expect(summary(await detailOf(later))).toEqual([
+        ['2026-01-27', 0, 'completed', ['already_paid']],
+      ]);
+      await finalize(next);
+      await finalize(later);
+      expect(netByInstructor(cls.id)).toEqual({ [ADA_ID]: 60 });
     });
 
     it('labels late lessons and late cancels in both exports', async () => {

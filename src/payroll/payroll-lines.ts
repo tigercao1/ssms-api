@@ -111,10 +111,8 @@ export function classLine(
   };
 }
 
-function isPayingLine(line: ClassLine): boolean {
-  return (
-    !line.flags.includes(ALREADY_PAID) && !line.flags.includes(LATE_CANCEL)
-  );
+function isMarker(line: ClassLine): boolean {
+  return line.flags.includes(ALREADY_PAID);
 }
 
 function groupBy<T>(items: readonly T[], key: (item: T) => string) {
@@ -129,17 +127,26 @@ function netCents(lines: readonly ClassLine[]): number {
   return lines.reduce((sum, line) => sum + toCents(line.amount), 0);
 }
 
-function owedFrom(
+function paidTerms(lines: readonly ClassLine[]): ClassLine | null {
+  return lines.find((line) => !isMarker(line)) ?? null;
+}
+
+function termsCents(line: ClassLine): number {
+  return line.hourlyRate === null
+    ? 0
+    : rateAmountCents(line.hourlyRate, line.rateUnit, line.minutes);
+}
+
+function othersHold(
+  instructorId: string,
   lines: readonly ClassLine[],
-): { line: ClassLine; cents: number } | null {
-  let running = 0;
-  for (const line of lines) {
-    running += toCents(line.amount);
-    if (isPayingLine(line)) {
-      return { line, cents: running };
-    }
-  }
-  return null;
+): boolean {
+  return [
+    ...groupBy(
+      lines.filter((line) => line.instructorId !== instructorId),
+      (line) => line.instructorId,
+    ).values(),
+  ].some((theirs) => netCents(theirs) !== 0);
 }
 
 function alreadyPaid(line: ClassLine): ClassLine {
@@ -151,28 +158,9 @@ export function settledLine(
   elsewhere: readonly ClassLine[],
 ): ClassLine {
   const mine = elsewhere.filter((l) => l.instructorId === line.instructorId);
-  if (mine.length === 0) {
-    return line;
-  }
-  if (netCents(mine) !== 0) {
-    return alreadyPaid(line);
-  }
-  const owed = owedFrom(mine);
-  if (!owed) {
-    return line;
-  }
-  if (owed.cents === 0) {
-    return alreadyPaid(line);
-  }
-  return {
-    ...line,
-    minutes: owed.line.minutes,
-    hourlyRate: owed.line.hourlyRate,
-    rateUnit: owed.line.rateUnit,
-    currency: owed.line.currency,
-    amount: fromCents(owed.cents),
-    flags: [],
-  };
+  return paidTerms(mine) || othersHold(line.instructorId, elsewhere)
+    ? alreadyPaid(line)
+    : line;
 }
 
 export function settleLines(
@@ -238,8 +226,7 @@ function reversalLine(
   if (net === 0) {
     return null;
   }
-  const reference =
-    [...paid].reverse().find(isPayingLine) ?? paid[paid.length - 1];
+  const reference = paidTerms(paid) ?? paid[paid.length - 1];
   return settlementLine(cls, reference, -net, [
     LATE_CANCEL,
     ...(net < 0 ? [CORRECTION] : []),
@@ -252,11 +239,16 @@ function owedLine(
   paid: readonly ClassLine[],
   rates: readonly PayableRate[],
   reassigned: boolean,
+  late: boolean,
 ): ClassLine | null {
-  const owed = owedFrom(paid);
-  const reference = owed?.line ?? classLine(cls, rates);
-  const needsRate = !owed && reference.flags.includes(NEEDS_RATE);
-  const diff = (owed?.cents ?? toCents(reference.amount)) - netCents(paid);
+  const terms = paidTerms(paid);
+  if (!terms && !late) {
+    return null;
+  }
+  const reference = terms ?? classLine(cls, rates);
+  const needsRate = !terms && reference.flags.includes(NEEDS_RATE);
+  const owed = terms ? termsCents(terms) : toCents(reference.amount);
+  const diff = owed - netCents(paid);
   if (diff === 0 && !needsRate) {
     return null;
   }
@@ -277,13 +269,20 @@ export function lateLines(
   cls: PayableClass,
   paid: readonly ClassLine[],
   rates: readonly PayableRate[],
+  ownPeriodFinalized: boolean,
 ): ClassLine[] {
   const byInstructor = groupBy(paid, (line) => line.instructorId);
   const mine = byInstructor.get(cls.instructorId) ?? [];
   byInstructor.delete(cls.instructorId);
   const lines = [
     isPaid(cls.status)
-      ? owedLine(cls, mine, rates, byInstructor.size > 0)
+      ? owedLine(
+          cls,
+          mine,
+          rates,
+          byInstructor.size > 0,
+          ownPeriodFinalized || othersHold(cls.instructorId, paid),
+        )
       : reversalLine(cls, mine, []),
     ...[...byInstructor.values()].map((theirs) =>
       reversalLine(cls, theirs, [REASSIGNED]),

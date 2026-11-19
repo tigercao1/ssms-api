@@ -136,6 +136,60 @@ describe('SupabasePayrollRepository', () => {
     ]);
   });
 
+  it('reads, adds and deletes lines', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      payroll_lines: [ok(null), ok({ id: ID }), ok(null), ok({ id: ID })],
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.lines(ID)).resolves.toEqual([]);
+    const insert = {
+      period_id: ID,
+      instructor_id: ID,
+      kind: 'adjustment' as const,
+      description: 'Bonus',
+      currency: 'CAD',
+      amount: 10,
+      created_by: null,
+    };
+    await expect(repo.insertAdjustment(insert)).resolves.toEqual({ id: ID });
+    await expect(repo.deleteAdjustment(ID, ID)).resolves.toBeNull();
+    await expect(repo.deleteAdjustment(ID, ID)).resolves.toEqual({ id: ID });
+    expect(calls[0].ops[0]).toEqual(['select', PAYROLL_LINE_COLUMNS]);
+    expect(calls[1].ops[0]).toEqual(['insert', insert]);
+    expect(calls[2].ops).toEqual(
+      expect.arrayContaining([
+        ['delete'],
+        ['eq', 'period_id', ID],
+        ['eq', 'kind', 'adjustment'],
+      ]),
+    );
+  });
+
+  it('fails when an insert returns no row and surfaces query errors', async () => {
+    const { client } = recordingPayrollSupabase({
+      payroll_lines: [ok(null), fail],
+      payroll_periods: fail,
+      classes: fail,
+      pay_rates: fail,
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(
+      repo.insertAdjustment({
+        period_id: ID,
+        instructor_id: ID,
+        kind: 'adjustment',
+        description: 'x',
+        currency: 'CAD',
+        amount: 1,
+        created_by: null,
+      }),
+    ).rejects.toThrow('no row returned');
+    await expect(repo.lines(ID)).rejects.toThrow('boom');
+    await expect(repo.findPeriod(ID)).rejects.toThrow('boom');
+    await expect(repo.classesBetween('a', 'b')).rejects.toThrow('boom');
+    await expect(repo.ratesFor([ID])).rejects.toThrow('boom');
+  });
+
   it('reads one instructor’s profile, classes, lines and periods', async () => {
     const full = Array.from({ length: PAGE_SIZE }, (_, i) => ({ id: `r${i}` }));
     const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);

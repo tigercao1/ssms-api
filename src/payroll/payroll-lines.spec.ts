@@ -106,48 +106,54 @@ describe('lateLines', () => {
   });
 
   it('pays a never-paid lesson at the current rate', () => {
-    expect(lateLines(lesson(90), [], [rate(40, 'hour')])).toEqual([
+    expect(lateLines(lesson(90), [], [rate(40, 'hour')], true)).toEqual([
       expect.objectContaining({ amount: 60, hourlyRate: 40, flags: [LATE] }),
     ]);
   });
 
   it('flags a never-paid lesson without a rate even at zero', () => {
-    expect(lateLines(lesson(90), [], [])).toEqual([
+    expect(lateLines(lesson(90), [], [], true)).toEqual([
       expect.objectContaining({ amount: 0, flags: [LATE, NEEDS_RATE] }),
     ]);
   });
 
   it('ignores a rate change, a zero-rate payment and an already-paid move', () => {
     const rates = [rate(50, 'hour')];
-    expect(lateLines(lesson(90), [paid(60)], rates)).toEqual([]);
+    expect(lateLines(lesson(90), [paid(60)], rates, true)).toEqual([]);
     expect(
-      lateLines(lesson(90), [paid(0, { flags: [NEEDS_RATE] })], rates),
+      lateLines(
+        lesson(90),
+        [paid(0, { flags: [NEEDS_RATE], hourlyRate: null })],
+        rates,
+        true,
+      ),
     ).toEqual([]);
     expect(
       lateLines(
         lesson(90),
         [paid(60), paid(0, { flags: [ALREADY_PAID] })],
         rates,
+        true,
       ),
     ).toEqual([]);
   });
 
   it('leaves a cancelled lesson that was never paid alone', () => {
-    expect(lateLines(cancelled(lesson(90)), [], [rate(40, 'hour')])).toEqual(
-      [],
-    );
+    expect(
+      lateLines(cancelled(lesson(90)), [], [rate(40, 'hour')], true),
+    ).toEqual([]);
   });
 
   it('repays a restored lesson at the amount it was first paid', () => {
     const lines = [paid(60), paid(-60, { flags: [LATE_CANCEL] })];
-    expect(lateLines(lesson(90), lines, [rate(50, 'hour')])).toEqual([
+    expect(lateLines(lesson(90), lines, [rate(50, 'hour')], true)).toEqual([
       expect.objectContaining({ amount: 60, hourlyRate: 40, flags: [LATE] }),
     ]);
   });
 
   it('labels a refund on a cancelled lesson as a late cancel correction (S3a)', () => {
     const lines = [paid(-60, { flags: [LATE_CANCEL] })];
-    expect(lateLines(cancelled(lesson(90)), lines, [])).toEqual([
+    expect(lateLines(cancelled(lesson(90)), lines, [], true)).toEqual([
       expect.objectContaining({
         amount: 60,
         classStatus: 'cancelled',
@@ -158,7 +164,7 @@ describe('lateLines', () => {
 
   it('labels a take-back on a lesson that still stands as a late correction (S9)', () => {
     const lines = [paid(60), paid(60, { flags: [LATE] })];
-    expect(lateLines(lesson(90), lines, [])).toEqual([
+    expect(lateLines(lesson(90), lines, [], true)).toEqual([
       expect.objectContaining({
         amount: -60,
         classStatus: 'completed',
@@ -167,13 +173,48 @@ describe('lateLines', () => {
     ]);
   });
 
-  it('owes the net reached by the line that first set the pay, so a top-up is not repeated', () => {
+  it('owes what the first paying line paid, so a top-up is not repeated', () => {
     const lines = [
       paid(-60, { flags: [LATE_CANCEL] }),
       paid(0, { flags: [ALREADY_PAID] }),
       paid(120, { flags: [LATE] }),
     ];
-    expect(lateLines(lesson(90), lines, [rate(50, 'hour')])).toEqual([]);
+    expect(lateLines(lesson(90), lines, [rate(50, 'hour')], true)).toEqual([]);
+  });
+
+  it('repays a restored lesson after the period that first paid it is reopened and finalized again', () => {
+    const lines = [
+      paid(-60, { flags: [LATE_CANCEL] }),
+      paid(60, { flags: [LATE] }),
+      paid(0, { flags: [ALREADY_PAID], hourlyRate: 50 }),
+    ];
+    expect(lateLines(lesson(90), lines, [rate(50, 'hour')], true)).toEqual([
+      expect.objectContaining({ amount: 60, hourlyRate: 40, flags: [LATE] }),
+    ]);
+  });
+
+  it('leaves a never-paid lesson in an open period to that period', () => {
+    expect(lateLines(lesson(90), [], [rate(40, 'hour')], false)).toEqual([]);
+    expect(
+      lateLines(lesson(90), [paid(0, { flags: [ALREADY_PAID] })], [], false),
+    ).toEqual([]);
+  });
+
+  it('settles a paid lesson moved into an open period and given to another instructor in the current period', () => {
+    const bo = { ...lesson(90), instructorId: 'bo' };
+    const rates = [{ ...rate(80, 'hour'), instructorId: 'bo' }];
+    expect(lateLines(bo, [paid(60)], rates, false)).toEqual([
+      expect.objectContaining({
+        instructorId: 'bo',
+        amount: 120,
+        flags: [LATE, REASSIGNED],
+      }),
+      expect.objectContaining({
+        instructorId: ADA,
+        amount: -60,
+        flags: [LATE_CANCEL, REASSIGNED],
+      }),
+    ]);
   });
 
   it('takes the pay back from an instructor who left the lesson and pays the new one at their own rate', () => {
@@ -182,7 +223,7 @@ describe('lateLines', () => {
       rate(40, 'hour'),
       { ...rate(80, 'hour'), instructorId: 'bo' },
     ];
-    expect(lateLines(bo, [paid(60)], rates)).toEqual([
+    expect(lateLines(bo, [paid(60)], rates, true)).toEqual([
       expect.objectContaining({
         instructorId: 'bo',
         amount: 120,
@@ -209,7 +250,7 @@ describe('lateLines', () => {
         flags: [LATE, REASSIGNED],
       }),
     ];
-    expect(lateLines(lesson(90), lines, [rate(50, 'hour')])).toEqual([
+    expect(lateLines(lesson(90), lines, [rate(50, 'hour')], true)).toEqual([
       expect.objectContaining({
         instructorId: ADA,
         amount: 60,
@@ -229,7 +270,7 @@ describe('lateLines', () => {
       paid(60),
       paid(120, { instructorId: 'bo', flags: [LATE, REASSIGNED] }),
     ];
-    expect(lateLines(bo, lines, [])).toEqual([
+    expect(lateLines(bo, lines, [], true)).toEqual([
       expect.objectContaining({
         instructorId: 'bo',
         amount: -120,
@@ -252,12 +293,18 @@ describe('settledLine', () => {
     flags,
   });
 
-  it('keeps a lesson nobody was paid for', () => {
+  it('keeps a lesson nobody holds pay for', () => {
     expect(settledLine(live, [])).toBe(live);
-    expect(settledLine(live, [{ ...paid(60), instructorId: 'bo' }])).toBe(live);
+    expect(settledLine(live, [paid(0, [ALREADY_PAID])])).toBe(live);
+    expect(
+      settledLine(live, [
+        { ...paid(60), instructorId: 'bo' },
+        { ...paid(-60, [LATE_CANCEL, REASSIGNED]), instructorId: 'bo' },
+      ]),
+    ).toBe(live);
   });
 
-  it('marks a lesson already paid to its instructor elsewhere', () => {
+  it('marks a lesson already paid to its instructor elsewhere, even at a net of zero', () => {
     expect(settledLine(live, [paid(60)])).toMatchObject({
       amount: 0,
       flags: [ALREADY_PAID],
@@ -265,13 +312,15 @@ describe('settledLine', () => {
     expect(settledLine(live, [paid(0, [NEEDS_RATE])])).toMatchObject({
       flags: [ALREADY_PAID],
     });
-  });
-
-  it('pays a lesson whose payments net to zero at what it was first paid (S12)', () => {
     expect(
       settledLine(live, [paid(60), paid(-60, [LATE_CANCEL])]),
-    ).toMatchObject({ amount: 60, hourlyRate: 40, flags: [] });
-    expect(settledLine(live, [paid(0, [ALREADY_PAID])])).toBe(live);
+    ).toMatchObject({ amount: 0, flags: [ALREADY_PAID] });
+  });
+
+  it('marks a lesson another instructor still holds pay for', () => {
+    expect(
+      settledLine(live, [{ ...paid(60), instructorId: 'bo' }]),
+    ).toMatchObject({ amount: 0, flags: [ALREADY_PAID] });
   });
 });
 

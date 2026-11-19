@@ -1366,6 +1366,45 @@ describe('booking admin HTTP', () => {
       expect(ctx.repo.classes[0].starts_at).toBe('2026-12-12T15:00:00.000Z');
     });
 
+    it('moves a lesson to a start on a 5-minute boundary', async () => {
+      withEvent();
+      const res = await patch(CLASS_A, {
+        startsAt: '2026-12-12T15:05:00.000Z',
+      }).expect(200);
+      expect(res.body).toMatchObject({
+        startsAt: '2026-12-12T15:05:00.000Z',
+        endsAt: '2026-12-12T16:05:00.000Z',
+      });
+      expect(ctx.google.patchEvent).toHaveBeenCalledWith(
+        AMY_CAL,
+        'evA',
+        expect.objectContaining({
+          start: {
+            dateTime: '2026-12-12T15:05:00.000Z',
+            timeZone: 'America/Toronto',
+          },
+        }),
+      );
+    });
+
+    it('refuses to move a lesson off the 5-minute grid and changes nothing', async () => {
+      withEvent();
+      const before = structuredClone(ctx.repo.classes);
+      const res = await patch(CLASS_A, {
+        startsAt: '2026-12-12T15:07:00.000Z',
+        notes: 'moved',
+      }).expect(400);
+      expect(res.body).toMatchObject({
+        statusCode: 400,
+        error: 'Bad Request',
+        code: START_NOT_ALIGNED,
+        message: START_NOT_ALIGNED_MESSAGE,
+      });
+      expect(ctx.repo.classes).toEqual(before);
+      expect(ctx.google.patchEvent).not.toHaveBeenCalled();
+      expect(ctx.audit.entries).toEqual([]);
+    });
+
     it('moves the Google event when the instructor changes', async () => {
       withEvent();
       const res = await patch(CLASS_A, { instructorId: BEN_ID }).expect(200);

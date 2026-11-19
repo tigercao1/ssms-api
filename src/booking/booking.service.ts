@@ -287,6 +287,12 @@ export class BookingService {
     if (Object.values(dto).every((v) => v === undefined)) {
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
+    if (
+      dto.startsAt &&
+      !isOnStep(new Date(dto.startsAt), BOOKING_START_STEP_MINUTES)
+    ) {
+      throw misaligned();
+    }
     const current = await this.loadClass(id);
     if (current.status === 'cancelled') {
       throw new ConflictException(CLASS_CANCELLED);

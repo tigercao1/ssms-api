@@ -105,6 +105,7 @@ export const AUDIT_ACTIONS = {
   lessonInsuranceRequestMarkPaid: 'lesson_insurance_request.mark_paid',
   lessonInsuranceRequestMarkUnpaid: 'lesson_insurance_request.mark_unpaid',
   lessonInsuranceRequestVoid: 'lesson_insurance_request.void',
+  bugReportUpdate: 'bug_report.update',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -151,6 +152,7 @@ export interface AuditEntry {
     | 'season'
     | 'lesson_insurance_record'
     | 'lesson_insurance_request'
+    | 'bug_report'
     | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;

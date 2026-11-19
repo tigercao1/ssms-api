@@ -1,6 +1,7 @@
 import type { MailerService } from '../../src/mailer/mailer.service';
 import type {
   EmailTemplate,
+  PlainTextEmailRequest,
   SendEmailRequest,
   SendOutcome,
 } from '../../src/mailer/mailer.types';
@@ -11,12 +12,18 @@ export const FAKE_SENDER_ADDRESS = 'noreply@mail.example.com';
 /** Records every {@link MailerService.send} request; `outcome` is what sends resolve to. */
 export class RecordingMailer {
   readonly sent: SendEmailRequest[] = [];
+  readonly sentText: PlainTextEmailRequest[] = [];
   outcome: SendOutcome = 'sent';
 
   send<T extends EmailTemplate>(
     request: SendEmailRequest<T>,
   ): Promise<SendOutcome> {
     this.sent.push(request);
+    return Promise.resolve(this.outcome);
+  }
+
+  sendText(request: PlainTextEmailRequest): Promise<SendOutcome> {
+    this.sentText.push(request);
     return Promise.resolve(this.outcome);
   }
 

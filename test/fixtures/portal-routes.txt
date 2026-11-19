@@ -14,6 +14,8 @@ GET /admin/booking/availability
 GET /admin/booking/customers/:id/last
 GET /admin/booking/settings
 GET /admin/booking/sync-issues
+GET /admin/bug-reports
+GET /admin/bug-reports/:id
 GET /admin/certification-uploads/:id/url
 GET /admin/class-imports
 GET /admin/class-imports/:id
@@ -94,6 +96,7 @@ GET /reference/teaching-locations
 GET /sign/forms/:slug
 GET /sign/forms/:slug/original
 PATCH /admin/booking/classes/:id
+PATCH /admin/bug-reports/:id
 PATCH /admin/certification-uploads/:id
 PATCH /admin/class-imports/:id/rows/:rowNo
 PATCH /admin/documents/forms/:id
@@ -170,6 +173,8 @@ POST /hooks/auth/send-email
 POST /internal/documents/reminders
 POST /internal/shopify-sync/reconcile
 POST /me/activation/complete
+POST /me/bug-reports
+POST /me/bug-reports/screenshot-url
 POST /me/certification-uploads/:uploadId/confirm
 POST /me/certification-uploads/upload-url
 POST /me/documents/:assignmentId/complete

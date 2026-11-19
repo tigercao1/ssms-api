@@ -190,6 +190,7 @@ export interface EmailMessages {
     confirmed: EmailBookingAudienceCopy;
     rescheduled: EmailBookingAudienceCopy;
     cancelled: EmailBookingAudienceCopy;
+    reminder: EmailBookingAudienceCopy;
   };
 }
 

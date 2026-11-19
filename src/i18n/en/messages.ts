@@ -558,6 +558,30 @@ export const en: MessageCatalog = {
             "The attached calendar file removes the lesson from your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
         },
       },
+      reminder: {
+        customer: {
+          subject: 'Reminder: your {lesson} with {instructor}',
+          preheader: 'Your {lesson} with {instructor} is coming up.',
+          heading: 'Your lesson is coming up',
+          paragraphs: [
+            'This is a reminder of your {lesson} with {instructor}:',
+            'To change or cancel, just reply to this email.',
+          ],
+          finePrint:
+            "You're receiving this because a lesson was booked for you with Serendipity Snow Club.",
+        },
+        instructor: {
+          subject: 'Reminder: upcoming {lesson}',
+          preheader: 'You have a {lesson} coming up.',
+          heading: 'Upcoming lesson',
+          paragraphs: [
+            'This is a reminder of your upcoming {lesson}:',
+            'The lesson is on your schedule in the instructor portal.',
+          ],
+          finePrint:
+            "You're receiving this because you're an instructor with Serendipity Snow Club.",
+        },
+      },
     },
   },
 };

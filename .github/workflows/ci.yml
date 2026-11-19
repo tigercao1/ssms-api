@@ -111,6 +111,9 @@ jobs:
       - name: Class ICS sequence checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/class_ics_sequence_checks.sql
 
+      - name: Booking reminders checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci/booking_reminders_checks.sql
+
       - name: Payroll checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/ci/payroll_checks.sql
 

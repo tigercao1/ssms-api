@@ -234,6 +234,7 @@ describe('booking emails HTTP', () => {
       ).expect(201);
       expect(created(res)[0].warnings).toEqual([]);
       expect(ctx.mailer.sent).toEqual([]);
+      expect(ctx.repo.classes.map((c) => c.send_emails)).toEqual([false]);
     });
 
     it('books, skips the customer email and warns when the customer has no email', async () => {
@@ -332,6 +333,7 @@ describe('booking emails HTTP', () => {
         })
         .expect(200);
       const { results } = res.body as BatchBookingResult;
+      expect(ctx.repo.classes.map((c) => c.send_emails)).toEqual([true, false]);
       expect(results.map((r) => r.status === 'created' && r.warnings)).toEqual([
         [
           {

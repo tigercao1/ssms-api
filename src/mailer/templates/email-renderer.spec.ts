@@ -50,6 +50,8 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'booking.rescheduled.instructor',
   'booking.cancelled.customer',
   'booking.cancelled.instructor',
+  'booking.reminder.customer',
+  'booking.reminder.instructor',
 ];
 
 describe('EmailRenderer', () => {

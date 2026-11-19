@@ -24,6 +24,14 @@ import {
   type SyncFinish,
   type SyncResult,
 } from '../../src/booking/booking.repository';
+import {
+  BookingRemindersRepository,
+  type ReminderClaim,
+  type ReminderClassRow,
+  type ReminderOutcome,
+  type ReminderSettingsRow,
+  type ReminderSettingsWrite,
+} from '../../src/booking/booking-reminders.repository';
 import { classEventId } from '../../src/booking/calendar-sync.service';
 import { DatabaseError } from '../../src/database/db-result';
 import { GoogleApiError } from '../../src/google/google.errors';
@@ -83,7 +91,10 @@ export function bookingSupabase(
       'in',
       'gt',
       'lt',
+      'lte',
       'order',
+      'range',
+      'upsert',
       'limit',
       'update',
       'delete',
@@ -226,6 +237,7 @@ type FakeClass = ClassRow & {
   series_id: string | null;
   customer_ids: string[];
   ics_sequence: number;
+  send_emails: boolean;
 };
 
 const instructor = (
@@ -477,6 +489,7 @@ export class InMemoryBookingRepository extends BookingRepository {
           notes: c.notes,
           series_id: series?.id ?? null,
           customer_ids: c.customer_ids,
+          send_emails: c.send_emails,
           updated_at: this.stamp(),
         }),
       );
@@ -759,7 +772,7 @@ export class InMemoryBookingRepository extends BookingRepository {
     row.ics_sequence += Number(removed) + Number(added);
   }
 
-  private notice(row: FakeClass): ClassNoticeRow {
+  notice(row: FakeClass): ClassNoticeRow {
     const instructor = this.instructors.find((i) => i.id === row.instructor_id);
     const lessonType = this.lessonTypes.find(
       (t) => t.id === row.lesson_type_id,
@@ -818,6 +831,7 @@ export class InMemoryBookingRepository extends BookingRepository {
       series_id?: string | null;
       customer_ids?: string[];
       ics_sequence?: number;
+      send_emails?: boolean;
     },
   ): FakeClass {
     return {
@@ -843,6 +857,7 @@ export class InMemoryBookingRepository extends BookingRepository {
       series_id: null,
       customer_ids: [],
       ics_sequence: 0,
+      send_emails: true,
       ...overrides,
     };
   }
@@ -925,5 +940,94 @@ export class InMemoryBookingRepository extends BookingRepository {
         'overlaps an existing class',
       );
     }
+  }
+}
+
+export type FakeReminderSend = ReminderClaim & {
+  id: string;
+  status: 'claimed' | ReminderOutcome;
+};
+
+export class InMemoryBookingRemindersRepository extends BookingRemindersRepository {
+  settings: ReminderSettingsRow = {
+    enabled: true,
+    offsets_minutes: [1440, 60],
+    updated_at: '2026-10-01T00:00:00.000Z',
+  };
+  savedBy: (string | null)[] = [];
+  sends: FakeReminderSend[] = [];
+  private nextId = 0;
+
+  constructor(private readonly booking: InMemoryBookingRepository) {
+    super();
+  }
+
+  getSettings(): Promise<ReminderSettingsRow> {
+    return Promise.resolve({ ...this.settings });
+  }
+
+  saveSettings(
+    write: ReminderSettingsWrite,
+    userId: string | null,
+  ): Promise<ReminderSettingsRow> {
+    this.settings = {
+      ...write,
+      updated_at: new Date(this.booking.now()).toISOString(),
+    };
+    this.savedBy.push(userId);
+    return this.getSettings();
+  }
+
+  classesStartingBetween(
+    after: string,
+    until: string,
+  ): Promise<ReminderClassRow[]> {
+    return Promise.resolve(
+      this.booking.classes
+        .filter(
+          (c) =>
+            Date.parse(c.starts_at) > Date.parse(after) &&
+            Date.parse(c.starts_at) <= Date.parse(until),
+        )
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+        .map((c) => ({
+          ...this.booking.notice(c),
+          status: c.status,
+          send_emails: c.send_emails,
+        })),
+    );
+  }
+
+  async claim(claim: ReminderClaim): Promise<string | null> {
+    await Promise.resolve();
+    const taken = this.sends.some(
+      (s) =>
+        s.class_id === claim.class_id &&
+        Date.parse(s.starts_at) === Date.parse(claim.starts_at) &&
+        s.offset_minutes === claim.offset_minutes &&
+        s.audience === claim.audience &&
+        s.recipient_id === claim.recipient_id,
+    );
+    if (taken) {
+      return null;
+    }
+    const id = `send-${++this.nextId}`;
+    this.sends.push({ ...claim, id, status: 'claimed' });
+    return id;
+  }
+
+  finish(id: string, outcome: ReminderOutcome): Promise<void> {
+    const row = this.sends.find((s) => s.id === id && s.status === 'claimed');
+    if (row) {
+      row.status = outcome;
+    }
+    return Promise.resolve();
+  }
+
+  release(id: string): Promise<void> {
+    this.sends = this.sends.filter(
+      (s) => !(s.id === id && s.status === 'claimed'),
+    );
+    return Promise.resolve();
   }
 }

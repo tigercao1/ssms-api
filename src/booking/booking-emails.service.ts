@@ -42,9 +42,9 @@ export const INSTRUCTOR_EMAIL_MISSING =
   'The instructor has no email address, so no booking email was sent';
 
 type BookingEmailKind = 'confirmed' | 'rescheduled' | 'cancelled';
-type Audience = 'customer' | 'instructor';
+export type Audience = 'customer' | 'instructor';
 
-interface Recipient {
+export interface Recipient {
   audience: Audience;
   id: string;
   email: string | null;
@@ -297,7 +297,7 @@ function idempotencyKey(delivery: Delivery): string {
   return ['booking', kind, recipient.audience, recipient.id, digest].join(':');
 }
 
-function recipientsOf(notice: ClassNoticeRow): Recipient[] {
+export function recipientsOf(notice: ClassNoticeRow): Recipient[] {
   const customers: Recipient[] = (notice.participants ?? [])
     .filter((p) => p.customer)
     .map((p) => ({
@@ -338,7 +338,17 @@ function emailVars(
   recipient: Recipient,
   delivery: Delivery,
 ): BookingEmailVars & { previous?: BookingLessonTime[] } {
-  const first = delivery.notices[0];
+  return {
+    ...lessonVars(recipient, delivery.notices),
+    ...(delivery.previous ? { previous: [timeOf(delivery.previous)] } : {}),
+  };
+}
+
+export function lessonVars(
+  recipient: Recipient,
+  notices: ClassNoticeRow[],
+): BookingEmailVars {
+  const first = notices[0];
   return {
     displayName: recipient.displayName,
     lessonNameEn: first.lesson_type?.name_en ?? DEFAULT_LESSON_NAME,
@@ -348,8 +358,7 @@ function emailVars(
     customerNames:
       recipient.audience === 'instructor' ? customerNames(first) : [],
     location: first.location?.name ?? null,
-    lessons: delivery.notices.map(timeOf),
-    ...(delivery.previous ? { previous: [timeOf(delivery.previous)] } : {}),
+    lessons: notices.map(timeOf),
   };
 }
 

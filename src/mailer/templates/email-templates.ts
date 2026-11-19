@@ -217,7 +217,7 @@ const BOOKING_FORMATS: Record<
   'zh-CN': ['zh-CN', { dateStyle: 'full', timeStyle: 'short' }],
 };
 
-type BookingKind = 'confirmed' | 'rescheduled' | 'cancelled';
+type BookingKind = 'confirmed' | 'rescheduled' | 'cancelled' | 'reminder';
 type BookingAudience = 'customer' | 'instructor';
 
 function localized(
@@ -730,6 +730,19 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     'cancelled',
     'instructor',
     () => sampleBooking('instructor'),
+  ),
+  'booking.reminder.customer': bookingTemplate('reminder', 'customer', () => ({
+    ...sampleBooking('customer'),
+    customerNames: [],
+    lessons: sampleBooking('customer').lessons.slice(0, 1),
+  })),
+  'booking.reminder.instructor': bookingTemplate(
+    'reminder',
+    'instructor',
+    () => ({
+      ...sampleBooking('instructor'),
+      lessons: sampleBooking('instructor').lessons.slice(0, 1),
+    }),
   ),
 };
 

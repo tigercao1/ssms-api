@@ -9,6 +9,13 @@ import {
 import { BookingBatchService } from './booking-batch.service';
 import { BookingEmailQueue } from './booking-email-queue';
 import { BookingEmailsService } from './booking-emails.service';
+import { BookingReminderSettingsService } from './booking-reminder-settings.service';
+import { BookingRemindersController } from './booking-reminders.controller';
+import {
+  BookingRemindersRepository,
+  SupabaseBookingRemindersRepository,
+} from './booking-reminders.repository';
+import { BookingRemindersWorker } from './booking-reminders.worker';
 import { BookingController } from './booking.controller';
 import {
   BookingRepository,
@@ -21,7 +28,7 @@ import { CalendarSyncWorker } from './calendar-sync.worker';
 
 @Module({
   imports: [GoogleModule, MailerModule],
-  controllers: [BookingController],
+  controllers: [BookingController, BookingRemindersController],
   providers: [
     { provide: BookingRepository, useClass: SupabaseBookingRepository },
     { provide: BOOKING_CLOCK, useValue: { now: () => Date.now() } },
@@ -34,6 +41,12 @@ import { CalendarSyncWorker } from './calendar-sync.worker';
     BookingBatchService,
     CalendarSyncService,
     CalendarSyncWorker,
+    {
+      provide: BookingRemindersRepository,
+      useClass: SupabaseBookingRemindersRepository,
+    },
+    BookingReminderSettingsService,
+    BookingRemindersWorker,
   ],
 })
 export class BookingModule {}

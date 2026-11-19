@@ -535,6 +535,28 @@ export const zhCN: MessageCatalog = {
             '附件中的日历文件会从您的日历中移除这节课程。您收到这封邮件，是因为您是 SSnow 的教练。',
         },
       },
+      reminder: {
+        customer: {
+          subject: '课程提醒：您与 {instructor} 的{lesson}',
+          preheader: '您与 {instructor} 的{lesson}即将开始。',
+          heading: '课程即将开始',
+          paragraphs: [
+            '温馨提醒，您与 {instructor} 的{lesson}安排在：',
+            '如需更改或取消，请直接回复这封邮件。',
+          ],
+          finePrint: '您收到这封邮件，是因为有人在 SSnow 为您预约了课程。',
+        },
+        instructor: {
+          subject: '课程提醒：{lesson}',
+          preheader: '您有一节{lesson}即将开始。',
+          heading: '课程即将开始',
+          paragraphs: [
+            '温馨提醒，您的{lesson}安排在：',
+            '课程已显示在教练平台的课表中。',
+          ],
+          finePrint: '您收到这封邮件，是因为您是 SSnow 的教练。',
+        },
+      },
     },
   },
 };

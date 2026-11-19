@@ -49,7 +49,9 @@ export type EmailTemplate =
   | 'booking.rescheduled.customer'
   | 'booking.rescheduled.instructor'
   | 'booking.cancelled.customer'
-  | 'booking.cancelled.instructor';
+  | 'booking.cancelled.instructor'
+  | 'booking.reminder.customer'
+  | 'booking.reminder.instructor';
 
 interface GreetingVars {
   /** Recipient's display name for the greeting; omitted or blank → "Hi there". */
@@ -167,6 +169,8 @@ export interface EmailTemplateVars {
   'booking.rescheduled.instructor': BookingRescheduledVars;
   'booking.cancelled.customer': BookingEmailVars;
   'booking.cancelled.instructor': BookingEmailVars;
+  'booking.reminder.customer': BookingEmailVars;
+  'booking.reminder.instructor': BookingEmailVars;
 }
 
 /**

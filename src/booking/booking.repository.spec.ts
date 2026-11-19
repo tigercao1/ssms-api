@@ -295,6 +295,7 @@ describe('SupabaseBookingRepository', () => {
       notes: null,
       created_by: null,
       customer_ids: [ID],
+      send_emails: true,
     };
     const key = { batch_id: ID, row_index: 1, payload_hash: 'h' };
     const { client, rpcs } = bookingSupabase({

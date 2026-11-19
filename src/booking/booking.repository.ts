@@ -16,7 +16,7 @@ const DELETION_COLUMNS =
   'id, google_calendar_id, google_event_id, class_id, attempts, last_error, last_attempt_at, created_at';
 const SETTINGS_COLUMNS =
   'day_start_time, day_end_time, slot_minutes, weekday_overrides, updated_at';
-const CLASS_NOTICE_COLUMNS = [
+export const CLASS_NOTICE_COLUMNS = [
   'id, instructor_id, starts_at, ends_at, ics_sequence',
   'instructor:instructors(display_name_en, display_name_zh, email, preferred_language)',
   'location:teaching_locations(name)',
@@ -119,6 +119,7 @@ export interface ClassBooking {
   notes: string | null;
   created_by: string | null;
   customer_ids: string[];
+  send_emails: boolean;
 }
 
 export interface SeriesBooking {

@@ -20,6 +20,14 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import {
+  MAX_REMINDER_OFFSET_MINUTES,
+  MAX_REMINDER_OFFSETS,
+  MIN_REMINDER_OFFSET_MINUTES,
+  REMINDER_OFFSET_RANGE,
+  REMINDER_OFFSETS_DUPLICATE,
+  REMINDER_OFFSETS_TOO_MANY,
+} from '../booking-reminder-settings.service';
 import { SLOT_MINUTES } from '../booking-settings.service';
 
 export const MAX_CUSTOMERS_PER_CLASS = 20;
@@ -193,4 +201,23 @@ export class BookingSettingsDto {
   @IsOptional()
   @IsObject()
   weekdayOverrides?: Record<string, unknown>;
+}
+
+export class BookingReminderSettingsDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsArray()
+  @ArrayMaxSize(MAX_REMINDER_OFFSETS, { message: REMINDER_OFFSETS_TOO_MANY })
+  @ArrayUnique({ message: REMINDER_OFFSETS_DUPLICATE })
+  @IsInt({ each: true, message: REMINDER_OFFSET_RANGE })
+  @Min(MIN_REMINDER_OFFSET_MINUTES, {
+    each: true,
+    message: REMINDER_OFFSET_RANGE,
+  })
+  @Max(MAX_REMINDER_OFFSET_MINUTES, {
+    each: true,
+    message: REMINDER_OFFSET_RANGE,
+  })
+  offsetsMinutes!: number[];
 }

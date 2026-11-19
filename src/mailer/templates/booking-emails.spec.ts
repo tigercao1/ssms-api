@@ -126,6 +126,29 @@ describe('booking emails', () => {
     expect(email.text).not.toContain('地点：');
   });
 
+  it('renders lesson reminders without a calendar file note', () => {
+    const customer = renderer.render('booking.reminder.customer', 'en', {
+      ...vars,
+      customerNames: [],
+    });
+    expect(customer.subject).toBe('Reminder: your Private 1h with Amy');
+    expect(customer.text).toContain(
+      `• ${bookingTime(LESSON, 'en')} (Toronto time)`,
+    );
+    expect(customer.text).toContain('Instructor: Amy');
+    expect(customer.text).toContain('Location: Blue Mountain');
+    expect(customer.text).not.toContain('calendar file');
+
+    const instructor = renderer.render(
+      'booking.reminder.instructor',
+      'zh-CN',
+      vars,
+    );
+    expect(instructor.subject).toBe('课程提醒：私教1小时');
+    expect(instructor.text).toContain('学员： Mei Wang, Leo Chen');
+    expect(instructor.text).not.toContain('日历文件');
+  });
+
   it('renders bilingual with both blocks', () => {
     const email = renderer.render(
       'booking.rescheduled.instructor',

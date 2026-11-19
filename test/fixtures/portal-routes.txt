@@ -12,6 +12,7 @@ GET /
 GET /admin/api-tokens
 GET /admin/booking/availability
 GET /admin/booking/customers/:id/last
+GET /admin/booking/reminder-settings
 GET /admin/booking/settings
 GET /admin/booking/sync-issues
 GET /admin/bug-reports
@@ -185,6 +186,7 @@ POST /me/insurance/records
 POST /me/insurance/requests
 POST /sign/forms/:slug/complete
 POST /webhooks/shopify
+PUT /admin/booking/reminder-settings
 PUT /admin/booking/settings
 PUT /admin/class-imports/event-map
 PUT /admin/documents/forms/:id/versions/:lang

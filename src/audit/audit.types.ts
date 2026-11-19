@@ -60,6 +60,7 @@ export const AUDIT_ACTIONS = {
   bookingClassStatus: 'booking.class_status',
   bookingClassSyncRetry: 'booking.class_sync_retry',
   bookingSettingsUpdate: 'booking.settings_update',
+  bookingReminderSettingsUpdate: 'booking.reminder_settings_update',
   payrollSettingsUpdate: 'payroll.settings_update',
   payrollAdjustmentCreate: 'payroll.adjustment_create',
   payrollAdjustmentDelete: 'payroll.adjustment_delete',
@@ -142,6 +143,7 @@ export interface AuditEntry {
     | 'customer'
     | 'class'
     | 'booking_settings'
+    | 'booking_reminder_settings'
     | 'payroll_period'
     | 'payroll_settings'
     | 'class_import'

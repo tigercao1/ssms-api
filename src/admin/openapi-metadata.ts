@@ -1174,6 +1174,14 @@ export default async () => {
                 additionalProperties: true,
               },
             },
+            BookingReminderSettingsDto: {
+              enabled: { required: true, type: () => Boolean },
+              offsetsMinutes: {
+                required: true,
+                type: () => [Number],
+                uniqueItems: true,
+              },
+            },
           },
         ],
         [

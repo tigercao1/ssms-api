@@ -258,6 +258,7 @@ export class BookingService {
       notes,
       created_by: actor.userId ?? null,
       customer_ids: customers.map((c) => c.id),
+      send_emails: dto.sendEmails !== false,
     }));
     return {
       bookings,

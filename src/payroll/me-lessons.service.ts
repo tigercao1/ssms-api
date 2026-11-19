@@ -22,6 +22,7 @@ import {
   LATE,
   LATE_CANCEL,
   NEEDS_RATE,
+  notSettledBy,
   REASSIGNED,
   settledLine,
 } from './payroll-lines';
@@ -322,8 +323,11 @@ export class MeLessonsService {
       ),
       details: classDetails(row),
     });
+    const notSettled = notSettledBy(
+      current ? myLate.map(({ line }) => line) : [],
+    );
     const unpaid = ({ line }: { line: ClassLine }) =>
-      !line.flags.includes(ALREADY_PAID);
+      !line.flags.includes(ALREADY_PAID) && notSettled(line);
 
     const upcoming = EMPTY_UPCOMING();
     if (lockReason === null) {

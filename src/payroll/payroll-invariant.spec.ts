@@ -5,6 +5,8 @@ import {
 } from '../../test/helpers/payroll-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import type { AuditService } from '../audit/audit.service';
+import type { MeDocumentsService } from '../documents/me-documents.service';
+import { MeLessonsService } from './me-lessons.service';
 import {
   ALREADY_PAID,
   CORRECTION,
@@ -48,6 +50,7 @@ const pairKey = (classId: string, instructorId: string) =>
 class Model {
   readonly repo = new InMemoryPayrollRepository();
   readonly service: PayrollService;
+  readonly meLessons: MeLessonsService;
   readonly terms = new Map<string, number>();
   readonly log: string[] = [];
   today = '2026-01-07';
@@ -63,6 +66,16 @@ class Model {
       recordingAudit() as unknown as AuditService,
       () => new Date(`${this.today}T17:00:00Z`),
     );
+    this.meLessons = new MeLessonsService(
+      this.repo,
+      {
+        onboardingLockFor: () => Promise.resolve(null),
+      } as unknown as MeDocumentsService,
+      () => new Date(`${this.today}T17:00:00Z`),
+    );
+    for (const instructorId of INSTRUCTORS) {
+      this.repo.addInstructorUser(instructorId, instructorId, 'approved');
+    }
     this.repo.addRate({
       instructorId: ADA_ID,
       hourlyRate: 40,
@@ -340,6 +353,70 @@ class Model {
         );
       }
     }
+    problems.push(...(await this.checkInstructorView()));
+    return problems;
+  }
+
+  async checkInstructorView(): Promise<string[]> {
+    const problems: string[] = [];
+    const net = this.finalizedNet();
+    for (const instructorId of INSTRUCTORS) {
+      const view = await this.meLessons.lessons(instructorId);
+      const places = new Map<string, string[]>();
+      const shown = new Map<string, number>();
+      const add = (key: string, place: string, amount: number | null) => {
+        places.set(key, [...(places.get(key) ?? []), place]);
+        shown.set(key, (shown.get(key) ?? 0) + cents(amount ?? 0));
+      };
+      for (const lesson of view.upcoming.lessons) {
+        add(pairKey(lesson.classId, instructorId), 'upcoming', lesson.amount);
+      }
+      const projectedCents = view.upcoming.projected.reduce(
+        (sum, total) => sum + cents(total.amount),
+        0,
+      );
+      const upcomingCents = view.upcoming.lessons.reduce(
+        (sum, lesson) => sum + cents(lesson.amount ?? 0),
+        0,
+      );
+      if (projectedCents !== upcomingCents) {
+        problems.push(
+          `${instructorId.slice(0, 2)} projected ${projectedCents} != upcoming lessons ${upcomingCents}`,
+        );
+      }
+      for (const period of view.periods) {
+        if (period.status !== 'awaiting') continue;
+        for (const lesson of period.lessons) {
+          add(
+            pairKey(lesson.classId, instructorId),
+            period.startsOn,
+            lesson.amount,
+          );
+        }
+      }
+      const keys = new Set(shown.keys());
+      for (const cls of this.repo.classes) {
+        if (cls.instructor_id === instructorId)
+          keys.add(pairKey(cls.id, instructorId));
+      }
+      for (const key of net.keys()) {
+        if (key.endsWith(`|${instructorId}`)) keys.add(key);
+      }
+      for (const key of keys) {
+        const where = places.get(key) ?? [];
+        if (where.length > 1) {
+          problems.push(`instructor view ${key} in ${where.join(' and ')}`);
+        }
+        const [classId] = key.split('|');
+        const owed = this.owed(classId, instructorId);
+        const total = (net.get(key) ?? 0) + (shown.get(key) ?? 0);
+        if (total !== owed) {
+          problems.push(
+            `instructor view ${classId.slice(-3)}|${instructorId.slice(0, 2)}: finalized ${net.get(key) ?? 0} + shown ${shown.get(key) ?? 0} != owed ${owed}`,
+          );
+        }
+      }
+    }
     return problems;
   }
 
@@ -385,7 +462,7 @@ async function run(seed: number): Promise<string | null> {
 }
 
 describe('payroll settlement invariant', () => {
-  it(`holds for ${SEQUENCES} random sequences of bookings, edits, rate changes, finalizes, reopens and days passing`, async () => {
+  it(`holds in the admin and instructor views for ${SEQUENCES} random sequences of bookings, edits, rate changes, finalizes, reopens and days passing`, async () => {
     const failures: string[] = [];
     for (let seed = 1; seed <= SEQUENCES; seed++) {
       const failure = await run(seed);

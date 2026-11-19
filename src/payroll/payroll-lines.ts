@@ -173,6 +173,14 @@ export function settleLines(
   );
 }
 
+export function notSettledBy(
+  settlements: readonly ClassLine[],
+): (line: ClassLine) => boolean {
+  const pair = (line: ClassLine) => `${line.classId}|${line.instructorId}`;
+  const settled = new Set(settlements.map(pair));
+  return (line) => !settled.has(pair(line));
+}
+
 export function classLinesFor(
   classes: readonly PayableClass[],
   rates: readonly PayableRate[],

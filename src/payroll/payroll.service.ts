@@ -29,6 +29,7 @@ import {
   instructorTotals,
   lateLines,
   NEEDS_RATE,
+  notSettledBy,
   type PayableClass,
   settleLines,
 } from './payroll-lines';
@@ -377,13 +378,8 @@ export class PayrollService {
             zhNames.set(row.lesson_type_id, row.lesson_type.name_zh);
           }
         }
-        const settled = new Set(
-          late.map(({ line }) => `${line.classId}|${line.instructorId}`),
-        );
         classLines = [
-          ...classLines.filter(
-            (line) => !settled.has(`${line.classId}|${line.instructorId}`),
-          ),
+          ...classLines.filter(notSettledBy(late.map(({ line }) => line))),
           ...late.map(({ line }) => line),
         ].sort(byLessonStart);
       }

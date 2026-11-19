@@ -837,6 +837,30 @@ describe('GET /me/lessons', () => {
         });
       });
 
+      it('counts a future lesson booked into a finalized period once, as a late line in the current period', async () => {
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-26', ends_on: '2026-02-08' },
+        ]);
+        await finalize('2026-01-12');
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-22T15:00:00Z' });
+        const { upcoming, periods } = await mine();
+        expect(upcoming).toEqual({
+          lessons: [],
+          projected: [],
+          needsRateCount: 0,
+        });
+        expect(
+          periods.map((p) => [
+            p.startsOn,
+            p.status,
+            p.lessons.map((l) => [l.classId, l.amount, l.late]),
+            p.totals.map((t) => [t.lessons, t.total]),
+          ]),
+        ).toEqual([
+          ['2026-01-26', 'awaiting', [[cls.id, 135, true]], [[1, 135]]],
+        ]);
+      });
+
       it('leaves out other instructors’ late lines', async () => {
         await finalize('2025-12-29');
         ctx.repo.addClass({

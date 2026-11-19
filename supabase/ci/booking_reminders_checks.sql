@@ -16,6 +16,21 @@ begin
      <> 'true:{1440,60}' then
     raise exception 'booking_reminder_settings defaults are wrong';
   end if;
+  if (select enabled_at from booking_reminder_settings) is null then
+    raise exception 'booking_reminder_settings must record when reminders were turned on';
+  end if;
+  alter table booking_reminder_settings disable trigger booking_reminder_settings_stamp_enabled_at;
+  update booking_reminder_settings set enabled_at = '2000-01-01T00:00:00Z';
+  alter table booking_reminder_settings enable trigger booking_reminder_settings_stamp_enabled_at;
+  update booking_reminder_settings set offsets_minutes = '{60}', enabled_at = '2001-01-01T00:00:00Z';
+  update booking_reminder_settings set enabled = false;
+  if (select enabled_at from booking_reminder_settings) <> '2000-01-01T00:00:00Z' then
+    raise exception 'enabled_at changed without reminders being turned on';
+  end if;
+  update booking_reminder_settings set enabled = true;
+  if (select enabled_at from booking_reminder_settings) <> now() then
+    raise exception 'turning reminders on must record enabled_at';
+  end if;
   update booking_reminder_settings set enabled = false, offsets_minutes = '{20160,2880,180,60,15}';
   update booking_reminder_settings set offsets_minutes = '{}';
   begin
@@ -139,6 +154,22 @@ begin
     raise exception 'a stale_claim reason was accepted on a claimed reminder';
   exception when check_violation then null;
   end;
+  update booking_reminder_sends set status = 'skipped', reason = 'superseded'
+   where class_id = loud and offset_minutes = 1440;
+  begin
+    update booking_reminder_sends set status = 'failed', reason = 'superseded'
+     where class_id = loud and offset_minutes = 1440;
+    raise exception 'a superseded reason was accepted on a failed reminder';
+  exception when check_violation then null;
+  end;
+  begin
+    update booking_reminder_sends set status = 'skipped', reason = 'stale_claim'
+     where class_id = loud and offset_minutes = 1440;
+    raise exception 'a stale_claim reason was accepted on a skipped reminder';
+  exception when check_violation then null;
+  end;
+  update booking_reminder_sends set status = 'failed', reason = 'stale_claim'
+   where class_id = loud and offset_minutes = 1440;
   begin
     update booking_reminder_sends set reason = 'boom'
      where class_id = loud and offset_minutes = 1440;

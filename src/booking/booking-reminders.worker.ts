@@ -20,7 +20,6 @@ import {
   type Recipient,
   recipientsOf,
 } from './booking-emails.service';
-import { BookingReminderSettingsService } from './booking-reminder-settings.service';
 import {
   BookingRemindersRepository,
   type ReminderClaim,
@@ -46,11 +45,15 @@ export function reminderDue(
   lesson: Pick<ReminderClassRow, 'starts_at' | 'starts_at_set_at'>,
   offsetMinutes: number,
   now: number,
+  remindersEnabledAt: string,
 ): boolean {
   const start = Date.parse(lesson.starts_at);
   const dueAt = start - offsetMinutes * MINUTE_MS;
   return (
-    dueAt <= now && now < start && dueAt >= Date.parse(lesson.starts_at_set_at)
+    dueAt <= now &&
+    now < start &&
+    dueAt >= Date.parse(lesson.starts_at_set_at) &&
+    dueAt >= Date.parse(remindersEnabledAt)
   );
 }
 
@@ -73,7 +76,6 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly config: ConfigService,
     private readonly repo: BookingRemindersRepository,
-    private readonly settings: BookingReminderSettingsService,
     private readonly mailer: MailerService,
     private readonly queue: BookingEmailQueue,
     @Inject(BOOKING_CLOCK) private readonly clock: BookingClock,
@@ -146,37 +148,54 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     try {
       const now = this.clock.now();
       await this.failStaleClaims(now);
-      const settings = await this.settings.get();
-      if (!settings.enabled) {
+      const settings = await this.repo.getSettings();
+      const offsets = [...settings.offsets_minutes].sort((a, b) => a - b);
+      if (!settings.enabled || offsets.length === 0) {
         return result;
       }
-      for (const offset of settings.offsetsMinutes) {
-        const lessons = (
-          await this.repo.remindableClassesStartingBetween(
-            new Date(now).toISOString(),
-            new Date(now + offset * MINUTE_MS).toISOString(),
-          )
-        ).filter((lesson) => reminderDue(lesson, offset, now));
-        const claimed = new Set(
-          (
-            await this.repo.claimed(
-              lessons.map((l) => l.id),
-              offset,
-            )
-          ).map(claimKey),
-        );
-        for (const lesson of lessons) {
-          for (const recipient of recipientsOf(lesson)) {
-            if (this.stopping) {
-              return result;
+      const lessons = (
+        await this.repo.remindableClassesStartingBetween(
+          new Date(now).toISOString(),
+          new Date(now + offsets[offsets.length - 1] * MINUTE_MS).toISOString(),
+        )
+      )
+        .map((lesson) => ({
+          lesson,
+          due: offsets.filter((o) =>
+            reminderDue(lesson, o, now, settings.enabled_at),
+          ),
+        }))
+        .filter(({ due }) => due.length > 0);
+      const claimed = new Set(
+        (await this.repo.claimed(lessons.map(({ lesson }) => lesson.id))).map(
+          claimKey,
+        ),
+      );
+      for (const { lesson, due } of lessons) {
+        const [shortest, ...superseded] = due;
+        for (const recipient of recipientsOf(lesson)) {
+          if (this.stopping) {
+            return result;
+          }
+          const email = recipient.email;
+          if (!email) {
+            continue;
+          }
+          for (const offset of superseded) {
+            const claim = claimOf(lesson, offset, recipient);
+            if (
+              !claimed.has(claimKey(claim)) &&
+              (await this.repo.supersede(claim))
+            ) {
+              result.skipped += 1;
             }
-            if (claimed.has(claimKey(claimOf(lesson, offset, recipient)))) {
-              continue;
-            }
-            const outcome = await this.remind(lesson, offset, recipient);
-            if (outcome) {
-              result[outcome] += 1;
-            }
+          }
+          if (claimed.has(claimKey(claimOf(lesson, shortest, recipient)))) {
+            continue;
+          }
+          const outcome = await this.remind(lesson, shortest, recipient, email);
+          if (outcome) {
+            result[outcome] += 1;
           }
         }
       }
@@ -190,10 +209,8 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     lesson: ReminderClassRow,
     offset: number,
     recipient: Recipient,
+    email: string,
   ): Promise<ReminderOutcome | null> {
-    if (!recipient.email) {
-      return null;
-    }
     const id = await this.repo.claim(claimOf(lesson, offset, recipient));
     if (!id) {
       return null;
@@ -203,7 +220,7 @@ export class BookingRemindersWorker implements OnModuleInit, OnModuleDestroy {
     try {
       const outcome = await this.send(
         flight,
-        reminderRequest(lesson, offset, recipient, recipient.email),
+        reminderRequest(lesson, offset, recipient, email),
       );
       if (!outcome) {
         if (!flight.released) {

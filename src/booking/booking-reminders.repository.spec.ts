@@ -63,22 +63,21 @@ describe('SupabaseBookingRemindersRepository', () => {
     );
   });
 
-  it('lists existing claims for an offset in chunks of class ids', async () => {
+  it('lists existing claims in chunks of class ids', async () => {
     const { client, queries } = bookingSupabase({
       booking_reminder_sends: { data: [CLAIM], error: null },
     });
     const repo = new SupabaseBookingRemindersRepository(client);
     const ids = Array.from({ length: 150 }, (_, i) => `class-${i}`);
-    await expect(repo.claimed(ids, 60)).resolves.toEqual([CLAIM, CLAIM]);
+    await expect(repo.claimed(ids)).resolves.toEqual([CLAIM, CLAIM]);
     expect(queries).toHaveLength(2);
-    expect(queries[0].ops).toEqual(
-      expect.arrayContaining([
-        ['in', 'class_id', ids.slice(0, 100)],
-        ['eq', 'offset_minutes', 60],
-      ]),
-    );
+    expect(queries[0].ops).toContainEqual([
+      'in',
+      'class_id',
+      ids.slice(0, 100),
+    ]);
     expect(queries[1].ops).toContainEqual(['in', 'class_id', ids.slice(100)]);
-    await expect(repo.claimed([], 60)).resolves.toEqual([]);
+    await expect(repo.claimed([])).resolves.toEqual([]);
     expect(queries).toHaveLength(2);
   });
 
@@ -110,6 +109,37 @@ describe('SupabaseBookingRemindersRepository', () => {
     await expect(
       new SupabaseBookingRemindersRepository(none.client).failStaleClaims('x'),
     ).resolves.toEqual([]);
+  });
+
+  it('records a superseded reminder as skipped unless already claimed', async () => {
+    const fresh = bookingSupabase({
+      booking_reminder_sends: { data: [{ id: 'r1' }], error: null },
+    });
+    await expect(
+      new SupabaseBookingRemindersRepository(fresh.client).supersede(CLAIM),
+    ).resolves.toBe(true);
+    expect(fresh.queries[0].ops).toContainEqual([
+      'upsert',
+      expect.objectContaining({
+        ...CLAIM,
+        status: 'skipped',
+        reason: 'superseded',
+      }),
+      {
+        onConflict: 'class_id,starts_at,offset_minutes,audience,recipient_id',
+        ignoreDuplicates: true,
+      },
+    ]);
+    const taken = bookingSupabase({
+      booking_reminder_sends: { data: [], error: null },
+    });
+    await expect(
+      new SupabaseBookingRemindersRepository(taken.client).supersede(CLAIM),
+    ).resolves.toBe(false);
+    const none = bookingSupabase();
+    await expect(
+      new SupabaseBookingRemindersRepository(none.client).supersede(CLAIM),
+    ).resolves.toBe(false);
   });
 
   it('claims a reminder once, ignoring an existing claim', async () => {

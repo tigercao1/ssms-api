@@ -9,6 +9,7 @@ create table if not exists booking_reminder_settings (
                        and 15 <= all (offsets_minutes)
                        and 20160 >= all (offsets_minutes)
                      ),
+  enabled_at       timestamptz not null default now(),
   updated_by       uuid,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
@@ -20,6 +21,28 @@ on conflict (id) do nothing;
 create or replace trigger booking_reminder_settings_set_updated_at
   before update on booking_reminder_settings
   for each row execute function public.set_updated_at();
+
+create or replace function public.stamp_booking_reminders_enabled_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.enabled and not old.enabled then
+    new.enabled_at := now();
+  else
+    new.enabled_at := old.enabled_at;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.stamp_booking_reminders_enabled_at()
+  from public, anon, authenticated;
+
+create or replace trigger booking_reminder_settings_stamp_enabled_at
+  before update on booking_reminder_settings
+  for each row execute function public.stamp_booking_reminders_enabled_at();
 
 alter table booking_reminder_settings enable row level security;
 alter table booking_reminder_settings force row level security;
@@ -75,7 +98,11 @@ create table if not exists booking_reminder_sends (
                     check (status in ('claimed', 'sent', 'skipped', 'failed')),
   reason          text
                     constraint booking_reminder_sends_reason_check
-                    check (reason is null or (status = 'failed' and reason = 'stale_claim')),
+                    check (
+                      reason is null
+                      or (status = 'failed' and reason = 'stale_claim')
+                      or (status = 'skipped' and reason = 'superseded')
+                    ),
   claimed_at      timestamptz not null default now(),
   finished_at     timestamptz,
   constraint booking_reminder_sends_key

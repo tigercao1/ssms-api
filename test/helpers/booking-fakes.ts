@@ -954,7 +954,7 @@ export class InMemoryBookingRepository extends BookingRepository {
 export type FakeReminderSend = ReminderClaim & {
   id: string;
   status: 'claimed' | ReminderOutcome;
-  reason?: 'stale_claim';
+  reason?: 'stale_claim' | 'superseded';
   claimed_at: string;
 };
 
@@ -962,6 +962,7 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
   settings: ReminderSettingsRow = {
     enabled: true,
     offsets_minutes: [1440, 60],
+    enabled_at: '2026-10-01T00:00:00.000Z',
     updated_at: '2026-10-01T00:00:00.000Z',
   };
   savedBy: (string | null)[] = [];
@@ -980,9 +981,14 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
     write: ReminderSettingsWrite,
     userId: string | null,
   ): Promise<ReminderSettingsRow> {
+    const stamp = new Date(this.booking.now()).toISOString();
     this.settings = {
       ...write,
-      updated_at: new Date(this.booking.now()).toISOString(),
+      enabled_at:
+        write.enabled && !this.settings.enabled
+          ? stamp
+          : this.settings.enabled_at,
+      updated_at: stamp,
     };
     this.savedBy.push(userId);
     return this.getSettings();
@@ -1010,13 +1016,10 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
     );
   }
 
-  claimed(classIds: string[], offsetMinutes: number): Promise<ReminderClaim[]> {
+  claimed(classIds: string[]): Promise<ReminderClaim[]> {
     return Promise.resolve(
       this.sends
-        .filter(
-          (s) =>
-            classIds.includes(s.class_id) && s.offset_minutes === offsetMinutes,
-        )
+        .filter((s) => classIds.includes(s.class_id))
         .map(
           ({
             class_id,
@@ -1053,6 +1056,16 @@ export class InMemoryBookingRemindersRepository extends BookingRemindersReposito
         audience,
       })),
     );
+  }
+
+  async supersede(claim: ReminderClaim): Promise<boolean> {
+    const id = await this.claim(claim);
+    const row = this.sends.find((s) => s.id === id);
+    if (row) {
+      row.status = 'skipped';
+      row.reason = 'superseded';
+    }
+    return row !== undefined;
   }
 
   async claim(claim: ReminderClaim): Promise<string | null> {

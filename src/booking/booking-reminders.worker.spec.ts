@@ -62,14 +62,7 @@ function build() {
     record: () => Promise.resolve(),
   } as unknown as AuditService);
   const worker = (q: BookingEmailQueue = queue) =>
-    new BookingRemindersWorker(
-      config,
-      repo,
-      settings,
-      mailer.asService(),
-      q,
-      clock,
-    );
+    new BookingRemindersWorker(config, repo, mailer.asService(), q, clock);
   const lesson = (
     startsAt: number,
     overrides: Partial<Parameters<InMemoryBookingRepository['add']>[0]> = {},
@@ -83,7 +76,7 @@ function build() {
       starts_at_set_at: at(NOW),
       ...overrides,
     });
-  return { booking, repo, mailer, clock, env, queue, worker, lesson };
+  return { booking, repo, mailer, clock, env, queue, settings, worker, lesson };
 }
 
 const recipients = (sent: SendEmailRequest[]) =>
@@ -120,6 +113,21 @@ describe('reminderDue', () => {
         { starts_at: at(startsAt), starts_at_set_at: at(setAt) },
         offset,
         NOW,
+        at(longAgo),
+      ),
+    ).toBe(due);
+  });
+
+  it.each([
+    ['fell due before reminders were turned on', NOW - 5 * MINUTE, false],
+    ['fell due exactly when reminders were turned on', NOW - 10 * MINUTE, true],
+  ])('a reminder that %s', (_name, enabledAt, due) => {
+    expect(
+      reminderDue(
+        { starts_at: at(NOW + 50 * MINUTE), starts_at_set_at: at(longAgo) },
+        60,
+        NOW,
+        at(enabledAt),
       ),
     ).toBe(due);
   });
@@ -314,7 +322,7 @@ describe('BookingRemindersWorker', () => {
     );
     ctx.clock.value = moved - 60 * MINUTE;
     await ctx.worker().tick();
-    expect(ctx.mailer.sent).toHaveLength(9);
+    expect(ctx.mailer.sent).toHaveLength(6);
     expect(
       ctx.mailer.sent
         .slice(3)
@@ -322,10 +330,7 @@ describe('BookingRemindersWorker', () => {
           (r.metadata as { offsetMinutes: number }).offsetMinutes,
           (r.vars as BookingEmailVars).lessons[0].startsAt,
         ]),
-    ).toEqual([
-      ...Array<[number, string]>(3).fill([1440, at(moved)]),
-      ...Array<[number, string]>(3).fill([60, at(moved)]),
-    ]);
+    ).toEqual(Array<[number, string]>(3).fill([60, at(moved)]));
   });
 
   it('skips cancelled lessons', async () => {
@@ -403,6 +408,104 @@ describe('BookingRemindersWorker', () => {
         (r) => (r.metadata as { offsetMinutes: number }).offsetMinutes,
       ),
     ).toEqual([60, 60, 60]);
+  });
+
+  it('sends only the shortest reminder when several are due at once', async () => {
+    ctx.lesson(NOW + 30 * MINUTE, {
+      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
+    });
+    const worker = ctx.worker();
+    await expect(worker.tick()).resolves.toEqual({
+      sent: 3,
+      skipped: 3,
+      failed: 0,
+    });
+    expect(
+      ctx.mailer.sent.map(
+        (r) => (r.metadata as { offsetMinutes: number }).offsetMinutes,
+      ),
+    ).toEqual([60, 60, 60]);
+    expect(
+      ctx.repo.sends
+        .filter((s) => s.offset_minutes === 1440)
+        .map((s) => [s.status, s.reason]),
+    ).toEqual(Array(3).fill(['skipped', 'superseded']));
+    ctx.clock.value += MINUTE;
+    await expect(worker.tick()).resolves.toEqual({
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(ctx.repo.sends).toHaveLength(6);
+  });
+
+  it('supersedes a longer reminder added after a shorter one was sent', async () => {
+    ctx.repo.settings.offsets_minutes = [60];
+    ctx.lesson(NOW + 60 * MINUTE, {
+      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
+    });
+    const worker = ctx.worker();
+    await worker.tick();
+    ctx.repo.settings.offsets_minutes = [180, 60];
+    ctx.clock.value += MINUTE;
+    await expect(worker.tick()).resolves.toEqual({
+      sent: 0,
+      skipped: 3,
+      failed: 0,
+    });
+    expect(ctx.mailer.sent).toHaveLength(3);
+  });
+
+  it('sends nothing on the first run for reminders that fell due before reminders were on', async () => {
+    ctx.repo.settings.enabled_at = at(NOW);
+    ctx.lesson(NOW + 120 * MINUTE, {
+      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
+    });
+    ctx.lesson(NOW + 30 * MINUTE, {
+      id: CLASS_B,
+      instructor_id: BEN_ID,
+      starts_at_set_at: at(NOW - 3 * 1440 * MINUTE),
+    });
+    const worker = ctx.worker();
+    await worker.tick();
+    expect(ctx.mailer.sent).toEqual([]);
+    expect(ctx.repo.sends).toEqual([]);
+    ctx.clock.value = NOW + 60 * MINUTE;
+    await worker.tick();
+    expect(
+      ctx.mailer.sent.map(
+        (r) => (r.metadata as { offsetMinutes: number }).offsetMinutes,
+      ),
+    ).toEqual([60, 60, 60]);
+  });
+
+  it('does not catch up on reminders that fell due while reminders were off', async () => {
+    const admin = { userId: AMY_ID, role: 'admin' } as const;
+    const start = NOW + 1440 * MINUTE + 120 * MINUTE;
+    ctx.lesson(start, { starts_at_set_at: at(NOW - 3 * 1440 * MINUTE) });
+    await ctx.settings.update(
+      { enabled: false, offsetsMinutes: [1440, 60] },
+      admin,
+    );
+    ctx.clock.value = start - 120 * MINUTE;
+    const worker = ctx.worker();
+    await worker.tick();
+    await ctx.settings.update(
+      { enabled: true, offsetsMinutes: [1440, 60] },
+      admin,
+    );
+    expect(ctx.repo.settings.enabled_at).toBe(at(start - 120 * MINUTE));
+    ctx.clock.value += MINUTE;
+    await worker.tick();
+    expect(ctx.mailer.sent).toEqual([]);
+    await ctx.settings.update(
+      { enabled: true, offsetsMinutes: [1440, 60] },
+      admin,
+    );
+    expect(ctx.repo.settings.enabled_at).toBe(at(start - 120 * MINUTE));
+    ctx.clock.value = start - 60 * MINUTE;
+    await worker.tick();
+    expect(ctx.mailer.sent).toHaveLength(3);
   });
 
   it('does not try to claim reminders it already claimed', async () => {

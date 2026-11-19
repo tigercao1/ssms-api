@@ -13,7 +13,8 @@ import {
 
 export const REMINDER_SETTINGS_TABLE = 'booking_reminder_settings';
 export const REMINDER_SENDS_TABLE = 'booking_reminder_sends';
-const REMINDER_SETTINGS_COLUMNS = 'enabled, offsets_minutes, updated_at';
+const REMINDER_SETTINGS_COLUMNS =
+  'enabled, offsets_minutes, enabled_at, updated_at';
 const REMINDER_CLASS_COLUMNS = `${CLASS_NOTICE_COLUMNS}, starts_at_set_at`;
 const REMINDER_KEY_COLUMNS =
   'class_id,starts_at,offset_minutes,audience,recipient_id';
@@ -24,6 +25,7 @@ const BOOKED_IN_SSMS: ClassSource = 'ssms';
 export interface ReminderSettingsRow {
   enabled: boolean;
   offsets_minutes: number[];
+  enabled_at: string;
   updated_at: string;
 }
 
@@ -61,10 +63,8 @@ export abstract class BookingRemindersRepository {
     after: string,
     until: string,
   ): Promise<ReminderClassRow[]>;
-  abstract claimed(
-    classIds: string[],
-    offsetMinutes: number,
-  ): Promise<ReminderClaim[]>;
+  abstract claimed(classIds: string[]): Promise<ReminderClaim[]>;
+  abstract supersede(claim: ReminderClaim): Promise<boolean>;
   abstract failStaleClaims(
     claimedBefore: string,
   ): Promise<StaleReminderClaim[]>;
@@ -132,10 +132,7 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
     );
   }
 
-  async claimed(
-    classIds: string[],
-    offsetMinutes: number,
-  ): Promise<ReminderClaim[]> {
+  async claimed(classIds: string[]): Promise<ReminderClaim[]> {
     const out: ReminderClaim[] = [];
     for (let i = 0; i < classIds.length; i += CLAIM_LOOKUP_CHUNK) {
       const chunk = classIds.slice(i, i + CLAIM_LOOKUP_CHUNK);
@@ -146,7 +143,6 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
               .from(REMINDER_SENDS_TABLE)
               .select(REMINDER_KEY_COLUMNS)
               .in('class_id', chunk)
-              .eq('offset_minutes', offsetMinutes)
               .order('id', { ascending: true })
               .range(from, to),
           'list claimed booking reminders',
@@ -169,6 +165,23 @@ export class SupabaseBookingRemindersRepository extends BookingRemindersReposito
       .select(STALE_CLAIM_COLUMNS)) as DbResult<StaleReminderClaim[]>;
     check(error, 'fail stale booking reminder claims');
     return data ?? [];
+  }
+
+  async supersede(claim: ReminderClaim): Promise<boolean> {
+    const { data, error } = (await this.supabase
+      .from(REMINDER_SENDS_TABLE)
+      .upsert(
+        {
+          ...claim,
+          status: 'skipped',
+          reason: 'superseded',
+          finished_at: new Date().toISOString(),
+        },
+        { onConflict: REMINDER_KEY_COLUMNS, ignoreDuplicates: true },
+      )
+      .select('id')) as DbResult<{ id: string }[]>;
+    check(error, 'record superseded booking reminder');
+    return (data?.length ?? 0) > 0;
   }
 
   async claim(claim: ReminderClaim): Promise<string | null> {

@@ -86,7 +86,6 @@ describe('buildIcs', () => {
         calendar(
           {
             location: null,
-            description: null,
             attendees: [{ email: 'leo@example.com', name: '  ' }],
           },
           { organizer: { email: 'info@ssnow.club' } },
@@ -94,7 +93,6 @@ describe('buildIcs', () => {
       ),
     );
     expect(ics.some((l) => l.startsWith('LOCATION'))).toBe(false);
-    expect(ics.some((l) => l.startsWith('DESCRIPTION'))).toBe(false);
     expect(ics).toContain('ORGANIZER:mailto:info@ssnow.club');
     expect(ics).toContain(
       'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:leo@example.com',
@@ -106,13 +104,11 @@ describe('buildIcs', () => {
       buildIcs(
         calendar({
           summary: 'Group; kids, level 1\\2',
-          description: 'Line one\nLine two',
           attendees: [{ email: 'a@example.com', name: 'A "Ace" B' }],
         }),
       ),
     );
     expect(ics).toContain('SUMMARY:Group\\; kids\\, level 1\\\\2');
-    expect(ics).toContain('DESCRIPTION:Line one\\nLine two');
     expect(ics.find((l) => l.startsWith('ATTENDEE'))).toContain('CN="A Ace B"');
   });
 

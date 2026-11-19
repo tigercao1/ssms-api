@@ -184,8 +184,9 @@ export class BookingEmailsService implements OnModuleDestroy {
     return notices.filter((n) => Date.parse(n.starts_at) >= now);
   }
 
-  private deliverAll(deliveries: Delivery[]): BookingWarning[] {
+  private async deliverAll(deliveries: Delivery[]): Promise<BookingWarning[]> {
     const warnings: BookingWarning[] = [];
+    const unsent: (PendingEmail & { started: boolean })[] = [];
     for (const delivery of deliveries) {
       const to = delivery.recipient.email;
       if (to) {
@@ -194,11 +195,19 @@ export class BookingEmailsService implements OnModuleDestroy {
           { delivery, to },
         );
         if (!queued) {
-          void this.recordUnsent([{ delivery, to, started: false }]);
+          unsent.push({ delivery, to, started: false });
         }
       } else {
         warnings.push(missingEmail(delivery.recipient));
       }
+    }
+    if (unsent.length > 0) {
+      for (const { delivery } of unsent) {
+        this.logger.warn(
+          `Booking email queue closed; recording ${templateOf(delivery)} for class(es) ${delivery.notices.map((n) => n.id).join(', ')} as unsent`,
+        );
+      }
+      await this.recordUnsent(unsent);
     }
     return warnings;
   }
@@ -226,8 +235,7 @@ export class BookingEmailsService implements OnModuleDestroy {
     const { kind, recipient, notices } = delivery;
     const method: IcsMethod = kind === 'cancelled' ? 'CANCEL' : 'REQUEST';
     const vars = emailVars(recipient, delivery);
-    const template =
-      `booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate;
+    const template = templateOf(delivery);
     const stamp = new Date(this.clock.now());
     const organizer: IcsPerson = {
       email: this.mailer.senderAddress(template),
@@ -410,4 +418,8 @@ function fullName(c: {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function templateOf({ kind, recipient }: Delivery): EmailTemplate {
+  return `booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate;
 }

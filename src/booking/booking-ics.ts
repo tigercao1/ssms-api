@@ -11,7 +11,6 @@ export interface IcsEvent {
   start: Date;
   end: Date;
   summary: string;
-  description?: string | null;
   location?: string | null;
   attendees: IcsPerson[];
 }
@@ -58,9 +57,6 @@ function eventLines(calendar: IcsCalendar, event: IcsEvent): string[] {
     `DTSTART:${utc(event.start)}`,
     `DTEND:${utc(event.end)}`,
     `SUMMARY:${escapeText(event.summary)}`,
-    ...(event.description
-      ? [`DESCRIPTION:${escapeText(event.description)}`]
-      : []),
     ...(event.location ? [`LOCATION:${escapeText(event.location)}`] : []),
     `STATUS:${calendar.method === 'CANCEL' ? 'CANCELLED' : 'CONFIRMED'}`,
     'TRANSP:OPAQUE',

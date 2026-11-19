@@ -770,7 +770,6 @@ export class InMemoryBookingRepository extends BookingRepository {
       instructor_id: row.instructor_id,
       starts_at: row.starts_at,
       ends_at: row.ends_at,
-      status: row.status,
       ics_sequence: row.ics_sequence,
       instructor: instructor
         ? {

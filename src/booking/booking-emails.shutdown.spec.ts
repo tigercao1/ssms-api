@@ -123,6 +123,42 @@ describe('BookingEmailsService shutdown', () => {
     expect(unsent.every((u) => u.reason === 'shutdown')).toBe(true);
   });
 
+  it('waits for the email_log write and warns per email booked after the queue closed', async () => {
+    const { service, mailer, unsent } = build(10);
+    await service.onModuleDestroy();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    let written!: () => void;
+    mailer.recordUnsent.mockImplementationOnce(
+      (requests: SendEmailRequest[], reason: string) =>
+        new Promise<void>((resolve) => {
+          written = () => {
+            unsent.push({ requests, reason });
+            resolve();
+          };
+        }),
+    );
+
+    let done = false;
+    const booking = service.booked([CLASS_A]).then(() => (done = true));
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mailer.recordUnsent).toHaveBeenCalledTimes(1);
+    expect(done).toBe(false);
+
+    written();
+    await booking;
+
+    expect(unsent.flatMap((u) => u.requests.map((r) => r.to))).toHaveLength(3);
+    expect(warn).toHaveBeenCalledTimes(3);
+    const lines = warn.mock.calls.map(([line]) => String(line));
+    expect(lines).toEqual([
+      expect.stringContaining('booking.confirmed.customer'),
+      expect.stringContaining('booking.confirmed.customer'),
+      expect.stringContaining('booking.confirmed.instructor'),
+    ]);
+    expect(lines.every((l) => l.includes(CLASS_A))).toBe(true);
+    expect(lines.some((l) => l.includes('@'))).toBe(false);
+  });
+
   it('gives up waiting on the email_log write after its time budget', async () => {
     const { service, mailer } = build(60_000);
     mailer.recordUnsent.mockReturnValue(new Promise(() => undefined));

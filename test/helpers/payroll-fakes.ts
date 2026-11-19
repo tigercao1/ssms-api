@@ -5,7 +5,7 @@ import {
 import type { ClassStatus } from '../../src/lessons/lessons.types';
 import type { RateUnit } from '../../src/lessons/pay-rates';
 import type { PayRateRow } from '../../src/lessons/pay-rates.repository';
-import { daysBetween } from '../../src/payroll/payroll-time';
+import { daysBetween, localDate } from '../../src/payroll/payroll-time';
 import {
   type AdjustmentInsert,
   type ApprovalStatus,
@@ -14,6 +14,7 @@ import {
   type InstructorClassRow,
   type InstructorLineRow,
   type InstructorEmbed,
+  type LateClassRow,
   type PayrollClassRow,
   type PayrollLineRow,
   PayrollRepository,
@@ -240,6 +241,66 @@ export class InMemoryPayrollRepository extends PayrollRepository {
             classIds.includes(l.class_id),
         )
         .map((l) => l.class_id as string),
+    );
+  }
+
+  currentPeriod(today: string): Promise<PayrollPeriodRow | null> {
+    const period = this.periods
+      .filter((p) => p.status === 'open' && p.ends_on >= today)
+      .sort((a, b) => a.starts_on.localeCompare(b.starts_on))[0];
+    return Promise.resolve(period ? { ...period } : null);
+  }
+
+  unsettledClassIds(): Promise<string[]> {
+    const ids = this.classes
+      .filter((c) => {
+        const lines = this.lineRows.filter(
+          (l) => l.kind === 'class' && l.class_id === c.id,
+        );
+        const net = lines.reduce(
+          (sum, l) => sum + Math.round(Number(l.amount) * 100),
+          0,
+        );
+        if (c.status === 'cancelled') {
+          return net !== 0;
+        }
+        const firstPaid = lines.find(
+          (l) =>
+            !l.flags.includes('already_paid') &&
+            !l.flags.includes('late_cancel'),
+        );
+        const date = localDate(c.starts_at);
+        const ownFinalized = this.periods.some(
+          (p) =>
+            p.status === 'finalized' &&
+            p.starts_on <= date &&
+            date <= p.ends_on,
+        );
+        return (
+          ownFinalized &&
+          (!firstPaid || net !== Math.round(Number(firstPaid.amount) * 100))
+        );
+      })
+      .map((c) => c.id);
+    return Promise.resolve(ids);
+  }
+
+  classesByIds(ids: string[]): Promise<LateClassRow[]> {
+    return Promise.resolve(
+      this.classes.filter((c) => ids.includes(c.id)).map((c) => ({ ...c })),
+    );
+  }
+
+  classLines(classIds: string[]): Promise<PayrollLineRow[]> {
+    return Promise.resolve(
+      this.lineRows
+        .filter(
+          (l) =>
+            l.kind === 'class' &&
+            l.class_id !== null &&
+            classIds.includes(l.class_id),
+        )
+        .map((l) => ({ ...l })),
     );
   }
 

@@ -18,20 +18,32 @@ import {
   type ClassLine,
   classLine,
   instructorTotals,
+  LATE,
+  LATE_CANCEL,
   NEEDS_RATE,
 } from './payroll-lines';
 import { localDate, localTime, periodContaining } from './payroll-time';
 import {
   type InstructorClassRow,
   type InstructorLineRow,
+  type LateClassRow,
   type ParticipantEmbed,
   type PayrollPeriodRow,
   PayrollRepository,
 } from './payroll.repository';
-import { PAYROLL_CLOCK, storedLine, toPayable } from './payroll.service';
+import {
+  lateClassLines,
+  PAYROLL_CLOCK,
+  storedLine,
+  toPayable,
+} from './payroll.service';
 
 export type LockReason = OnboardingLockReason;
-export type MyLessonStatus = 'scheduled' | 'completed' | 'no_show';
+export type MyLessonStatus =
+  | 'scheduled'
+  | 'completed'
+  | 'no_show'
+  | 'cancelled';
 
 export interface MyLesson {
   classId: string;
@@ -51,6 +63,8 @@ export interface MyLesson {
   currency: string;
   amount: number | null;
   needsRate: boolean;
+  late: boolean;
+  lateCancel: boolean;
 }
 
 export interface MyAdjustment {
@@ -155,7 +169,7 @@ function toLesson(
     endTime: localTime(line.endsAt),
     startsAt: line.startsAt,
     endsAt: line.endsAt,
-    status: line.classStatus as MyLessonStatus,
+    status: line.classStatus,
     ...details,
     minutes: line.minutes,
     rate: line.hourlyRate,
@@ -163,10 +177,12 @@ function toLesson(
     currency: line.currency,
     amount: projected && needsRate ? null : line.amount,
     needsRate,
+    late: line.flags.includes(LATE),
+    lateCancel: line.flags.includes(LATE_CANCEL),
   };
 }
 
-function classDetails(row: InstructorClassRow): LessonDetails {
+function classDetails(row: InstructorClassRow | LateClassRow): LessonDetails {
   return {
     lessonTypeNameEn: row.lesson_type?.name_en ?? null,
     lessonTypeNameZh: row.lesson_type?.name_zh ?? null,
@@ -261,11 +277,16 @@ export class MeLessonsService {
       };
     }
     const now = this.now().getTime();
-    const [settings, classes, lines] = await Promise.all([
+    const [settings, classes, lines, current, late] = await Promise.all([
       this.repo.settings(),
       this.repo.classesForInstructor(instructor.id),
       this.repo.linesForInstructor(instructor.id),
+      this.repo.currentPeriod(localDate(this.now())),
+      lateClassLines(this.repo),
     ]);
+    const myLate = late.filter(
+      ({ line }) => line.instructorId === instructor.id,
+    );
     const lessonTypeIds = [
       ...new Set(
         classes
@@ -329,6 +350,9 @@ export class MeLessonsService {
     for (const line of lines) {
       if (line.period) periodRows.set(line.period.starts_on, line.period);
     }
+    if (current && myLate.length > 0) {
+      periodRows.set(current.starts_on, current);
+    }
     const missing = [...pastByPeriod.keys()].filter(
       (startsOn) => !periodRows.has(startsOn),
     );
@@ -356,9 +380,17 @@ export class MeLessonsService {
           toLesson(line, details, false),
         );
       } else {
-        const live = (pastByPeriod.get(startsOn) ?? [])
-          .filter((c) => !paidOutside(c.id, row?.id ?? null))
-          .map(project);
+        const live = [
+          ...(pastByPeriod.get(startsOn) ?? [])
+            .filter((c) => !paidOutside(c.id, row?.id ?? null))
+            .map(project),
+          ...(row && row.id === current?.id
+            ? myLate.map(({ line, row: cls }) => ({
+                line,
+                details: classDetails(cls),
+              }))
+            : []),
+        ];
         classLines = live.map(({ line }) => line);
         lessons = live.map(({ line, details }) =>
           toLesson(line, details, true),

@@ -27,6 +27,7 @@ import {
   DEFAULT_CURRENCY,
   type InstructorTotal,
   instructorTotals,
+  lateLine,
   markAlreadyPaid,
   NEEDS_RATE,
   type PayableClass,
@@ -40,6 +41,7 @@ import {
 } from './payroll-time';
 import {
   type InstructorEmbed,
+  type LateClassRow,
   type PayrollClassRow,
   type PayrollLineRow,
   type PayrollPeriodRow,
@@ -163,6 +165,57 @@ export function storedLine(row: Omit<PayrollLineRow, 'instructor'>): ClassLine {
     amount: Number(row.amount),
     flags: row.flags ?? [],
   };
+}
+
+export interface LateClassLine {
+  line: ClassLine;
+  row: LateClassRow;
+  instructor: InstructorEmbed | null;
+}
+
+function byLessonStart(a: ClassLine, b: ClassLine): number {
+  return (
+    a.startsAt.localeCompare(b.startsAt) || a.classId.localeCompare(b.classId)
+  );
+}
+
+export async function lateClassLines(
+  repo: PayrollRepository,
+): Promise<LateClassLine[]> {
+  const ids = await repo.unsettledClassIds();
+  if (ids.length === 0) {
+    return [];
+  }
+  const [rows, paidRows] = await Promise.all([
+    repo.classesByIds(ids),
+    repo.classLines(ids),
+  ]);
+  const lessonTypeIds = [
+    ...new Set(
+      rows
+        .map((row) => row.lesson_type_id)
+        .filter((v): v is string => v !== null),
+    ),
+  ];
+  const rates = (await repo.ratesFor(lessonTypeIds)).map(toPayRate);
+  const paidByClass = new Map<string, PayrollLineRow[]>();
+  for (const paid of paidRows) {
+    const classId = paid.class_id as string;
+    paidByClass.set(classId, [...(paidByClass.get(classId) ?? []), paid]);
+  }
+  const late: LateClassLine[] = [];
+  for (const row of rows) {
+    const paid = paidByClass.get(row.id) ?? [];
+    const line = lateLine(toPayable(row), paid.map(storedLine), rates);
+    if (!line) continue;
+    const instructor =
+      line.instructorId === row.instructor_id
+        ? row.instructor
+        : (paid.find((p) => p.instructor_id === line.instructorId)
+            ?.instructor ?? null);
+    late.push({ line, row, instructor });
+  }
+  return late.sort((a, b) => byLessonStart(a.line, b.line));
 }
 
 function toAdjustment(row: PayrollLineRow): PayrollAdjustment {
@@ -302,15 +355,24 @@ export class PayrollService {
         live.map((line) => line.classId),
       );
       classLines = markAlreadyPaid(live, new Set(paidElsewhere));
+      const current = await this.repo.currentPeriod(this.today());
+      if (current?.id === period.id) {
+        const late = await lateClassLines(this.repo);
+        for (const { line, row, instructor } of late) {
+          if (instructor) names.set(line.instructorId, instructor);
+          if (row.lesson_type_id && row.lesson_type) {
+            zhNames.set(row.lesson_type_id, row.lesson_type.name_zh);
+          }
+        }
+        classLines = [...classLines, ...late.map(({ line }) => line)].sort(
+          byLessonStart,
+        );
+      }
     } else {
       classLines = rows
         .filter((row) => row.kind === 'class')
         .map(storedLine)
-        .sort(
-          (a, b) =>
-            a.startsAt.localeCompare(b.startsAt) ||
-            a.classId.localeCompare(b.classId),
-        );
+        .sort(byLessonStart);
     }
     const adjustments = rows
       .filter((row) => row.kind === 'adjustment')

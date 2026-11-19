@@ -9,6 +9,8 @@ import { localDate } from './payroll-time';
 
 export const NEEDS_RATE = 'needs_rate';
 export const ALREADY_PAID = 'already_paid';
+export const LATE = 'late';
+export const LATE_CANCEL = 'late_cancel';
 export const DEFAULT_CURRENCY = 'CAD';
 
 export interface PayableClass {
@@ -138,6 +140,49 @@ export function classLinesFor(
     );
 }
 
+function isPayingLine(line: ClassLine): boolean {
+  return (
+    !line.flags.includes(ALREADY_PAID) && !line.flags.includes(LATE_CANCEL)
+  );
+}
+
+export function lateLine(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  rates: readonly PayableRate[],
+): ClassLine | null {
+  const netCents = paid.reduce((sum, line) => sum + toCents(line.amount), 0);
+  const firstPaid = paid.find(isPayingLine);
+  const owed = isPaid(cls.status) ? (firstPaid ?? classLine(cls, rates)) : null;
+  const needsRate =
+    !firstPaid && owed !== null && owed.flags.includes(NEEDS_RATE);
+  const diffCents = (owed ? toCents(owed.amount) : 0) - netCents;
+  if (diffCents === 0 && !needsRate) {
+    return null;
+  }
+  const reference =
+    owed ?? [...paid].reverse().find(isPayingLine) ?? paid[paid.length - 1];
+  return {
+    classId: cls.id,
+    instructorId: owed ? cls.instructorId : reference.instructorId,
+    lessonTypeId: cls.lessonTypeId,
+    description: cls.lessonTypeName,
+    classStatus: cls.status,
+    startsAt: cls.startsAt,
+    endsAt: cls.endsAt,
+    customerNames: cls.customerNames,
+    minutes: reference.minutes,
+    hourlyRate: reference.hourlyRate,
+    rateUnit: reference.rateUnit,
+    currency: reference.currency,
+    amount: fromCents(diffCents),
+    flags: [
+      diffCents < 0 ? LATE_CANCEL : LATE,
+      ...(needsRate ? [NEEDS_RATE] : []),
+    ],
+  };
+}
+
 export interface AmountLine {
   instructorId: string;
   currency: string;
@@ -188,8 +233,9 @@ export function instructorTotals(
     if (line.flags.includes(ALREADY_PAID)) {
       continue;
     }
-    total.lessons += 1;
-    total.minutes += line.minutes;
+    const sign = line.flags.includes(LATE_CANCEL) ? -1 : 1;
+    total.lessons += sign;
+    total.minutes += sign * line.minutes;
     total.lessonCents += toCents(line.amount);
     if (line.flags.includes(NEEDS_RATE)) {
       total.needsRate += 1;

@@ -30,6 +30,10 @@ export const PAYROLL_CLASS_COLUMNS = [
   'lesson_type:lesson_types(name_en, name_zh)',
   'participants:class_participants(customer:customers(first_name, last_name))',
 ].join(', ');
+export const LATE_CLASS_COLUMNS = [
+  PAYROLL_CLASS_COLUMNS,
+  'location:teaching_locations(name)',
+].join(', ');
 
 export const INSTRUCTOR_APPROVAL_COLUMNS = 'id, approval_status, is_active';
 export const INSTRUCTOR_CLASS_COLUMNS = [
@@ -110,6 +114,10 @@ export interface PayrollClassRow {
     | null;
 }
 
+export interface LateClassRow extends PayrollClassRow {
+  location: { name: string } | null;
+}
+
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export interface InstructorApprovalRow {
@@ -184,6 +192,10 @@ export abstract class PayrollRepository {
     periodId: string,
     classIds: string[],
   ): Promise<string[]>;
+  abstract currentPeriod(today: string): Promise<PayrollPeriodRow | null>;
+  abstract unsettledClassIds(): Promise<string[]>;
+  abstract classesByIds(ids: string[]): Promise<LateClassRow[]>;
+  abstract classLines(classIds: string[]): Promise<PayrollLineRow[]>;
   abstract insertAdjustment(input: AdjustmentInsert): Promise<PayrollLineRow>;
   abstract deleteAdjustment(
     periodId: string,
@@ -350,6 +362,59 @@ export class SupabasePayrollRepository extends PayrollRepository {
       paid.push(...(data ?? []).map((row) => row.class_id));
     }
     return paid;
+  }
+
+  async currentPeriod(today: string): Promise<PayrollPeriodRow | null> {
+    const { data, error } = (await this.supabase
+      .from(PAYROLL_PERIODS_TABLE)
+      .select(PAYROLL_PERIOD_COLUMNS)
+      .eq('status', 'open')
+      .gte('ends_on', today)
+      .order('starts_on', { ascending: true })
+      .limit(1)) as DbResult<PayrollPeriodRow[]>;
+    check(error, 'load current payroll period');
+    return data?.[0] ?? null;
+  }
+
+  async unsettledClassIds(): Promise<string[]> {
+    const { data, error } = (await this.supabase.rpc(
+      'payroll_unsettled_class_ids',
+    )) as DbResult<{ class_id: string }[]>;
+    check(error, 'load unsettled payroll classes');
+    return (data ?? []).map((row) => row.class_id);
+  }
+
+  async classesByIds(ids: string[]): Promise<LateClassRow[]> {
+    const rows: LateClassRow[] = [];
+    for (let i = 0; i < ids.length; i += CLASS_ID_CHUNK) {
+      const { data, error } = (await this.supabase
+        .from('classes')
+        .select(LATE_CLASS_COLUMNS)
+        .in('id', ids.slice(i, i + CLASS_ID_CHUNK))) as unknown as DbResult<
+        LateClassRow[]
+      >;
+      check(error, 'load unsettled payroll classes');
+      rows.push(...(data ?? []));
+    }
+    return rows;
+  }
+
+  async classLines(classIds: string[]): Promise<PayrollLineRow[]> {
+    const rows: PayrollLineRow[] = [];
+    for (let i = 0; i < classIds.length; i += CLASS_ID_CHUNK) {
+      const { data, error } = (await this.supabase
+        .from(PAYROLL_LINES_TABLE)
+        .select(PAYROLL_LINE_COLUMNS)
+        .eq('kind', 'class')
+        .in('class_id', classIds.slice(i, i + CLASS_ID_CHUNK))
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })) as unknown as DbResult<
+        PayrollLineRow[]
+      >;
+      check(error, 'load payroll lines for classes');
+      rows.push(...(data ?? []));
+    }
+    return rows;
   }
 
   async insertAdjustment(input: AdjustmentInsert): Promise<PayrollLineRow> {

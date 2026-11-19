@@ -725,6 +725,250 @@ describe('payroll admin HTTP', () => {
     });
   });
 
+  describe('late lessons and late cancels', () => {
+    let previous: PayrollPeriod;
+    let current: PayrollPeriod;
+    let next: PayrollPeriod;
+    let later: PayrollPeriod;
+    const detailOf = async (period: PayrollPeriod) =>
+      (await get(`/admin/payroll/periods/${period.id}`).expect(200))
+        .body as PayrollPeriodDetail;
+    const finalize = (period: PayrollPeriod, body: object = {}) =>
+      post(`/admin/payroll/periods/${period.id}/finalize`, body).expect(200);
+    const netPaid = (classId: string) =>
+      ctx.repo.lineRows
+        .filter((l) => l.class_id === classId)
+        .reduce((sum, l) => sum + Math.round(Number(l.amount) * 100), 0) / 100;
+    const summary = (detail: PayrollPeriodDetail) =>
+      detail.lines.map((l) => [l.date, l.amount, l.classStatus, l.flags]);
+
+    beforeEach(async () => {
+      ctx = await build();
+      ctx.repo.addRate({ hourlyRate: 40, from: '2025-01-01' });
+      [, previous, current, next, later] = await periodsAround();
+    });
+
+    it('pays a lesson booked after its period was finalized in the current period with its real date', async () => {
+      ctx.repo.addClass({ startsAt: '2026-01-02T15:00:00Z' });
+      await finalize(previous);
+      const booked = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      const live = await detailOf(current);
+      expect(
+        live.lines.map((l) => [l.classId, l.date, l.amount, l.flags]),
+      ).toEqual([
+        [booked.id, '2025-12-20', 60, ['late']],
+        [ctx.repo.classes[0].id, '2026-01-02', 60, []],
+      ]);
+      expect(live.instructors).toEqual([
+        expect.objectContaining({
+          instructorName: 'Ada Lin',
+          lessons: 2,
+          minutes: 180,
+          total: 120,
+        }),
+      ]);
+      expect(live.totals).toEqual([
+        { currency: 'CAD', lessons: 2, minutes: 180, amount: 120 },
+      ]);
+      expect((await detailOf(previous)).lines).toEqual([]);
+      expect((await detailOf(next)).lines).toEqual([]);
+    });
+
+    it('reverses what was paid for a lesson cancelled after its period was finalized', async () => {
+      const cancelled = ctx.repo.addClass({
+        startsAt: '2025-12-20T15:00:00Z',
+      });
+      await finalize(previous);
+      ctx.repo.rates[0].hourly_rate = 50;
+      cancelled.status = 'cancelled';
+      ctx.repo.addClass({ startsAt: '2026-01-02T15:00:00Z' });
+      const live = await detailOf(current);
+      expect(live.lines).toEqual([
+        expect.objectContaining({
+          classId: cancelled.id,
+          date: '2025-12-20',
+          classStatus: 'cancelled',
+          hourlyRate: 40,
+          minutes: 90,
+          amount: -60,
+          flags: ['late_cancel'],
+          instructorName: 'Ada Lin',
+          lessonTypeNameZh: '私教90分钟',
+        }),
+        expect.objectContaining({ date: '2026-01-02', amount: 75, flags: [] }),
+      ]);
+      expect(live.instructors[0]).toMatchObject({
+        lessons: 0,
+        minutes: 0,
+        lessonAmount: 15,
+        total: 15,
+      });
+      expect(live.totals).toEqual([
+        { currency: 'CAD', lessons: 0, minutes: 0, amount: 15 },
+      ]);
+      expect((await detailOf(previous)).lines.map((l) => l.amount)).toEqual([
+        60,
+      ]);
+    });
+
+    it('takes a late cancel back from the instructor who was paid', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.instructor_id = BO_ID;
+      cls.instructor = ctx.repo.instructorNames.get(BO_ID) ?? null;
+      cls.status = 'cancelled';
+      const live = await detailOf(current);
+      expect(
+        live.lines.map((l) => [l.instructorId, l.instructorName, l.amount]),
+      ).toEqual([[ADA_ID, 'Ada Lin', -60]]);
+      expect(live.instructors.map((i) => [i.instructorName, i.total])).toEqual([
+        ['Ada Lin', -60],
+      ]);
+    });
+
+    it('drops the reversal when the lesson is restored before the current period is finalized', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      cls.status = 'cancelled';
+      expect((await detailOf(current)).lines).toHaveLength(1);
+      cls.status = 'completed';
+      expect((await detailOf(current)).lines).toEqual([]);
+    });
+
+    it('does not repeat a finalized late line in the next period', async () => {
+      const cancelled = ctx.repo.addClass({
+        instructorId: BO_ID,
+        startsAt: '2025-12-21T15:00:00Z',
+      });
+      await finalize(previous);
+      const booked = ctx.repo.addClass({ startsAt: '2025-12-22T15:00:00Z' });
+      cancelled.status = 'cancelled';
+      const frozen = (await finalize(current)).body as PayrollPeriodDetail;
+      expect(summary(frozen)).toEqual([
+        ['2025-12-21', -60, 'cancelled', ['late_cancel']],
+        ['2025-12-22', 60, 'completed', ['late']],
+      ]);
+      expect(
+        frozen.instructors.map((i) => [i.instructorName, i.total]),
+      ).toEqual([
+        ['Ada Lin', 60],
+        ['Bo Chen', -60],
+      ]);
+      const nextDetail = await detailOf(next);
+      expect(nextDetail.lines).toEqual([]);
+      expect(nextDetail.totals).toEqual([]);
+      expect(netPaid(booked.id)).toBe(60);
+      expect(netPaid(cancelled.id)).toBe(0);
+    });
+
+    it('keeps the net right when a lesson is cancelled, restored and cancelled again across finalizes', async () => {
+      const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      expect(netPaid(cls.id)).toBe(60);
+
+      cls.status = 'cancelled';
+      await finalize(current);
+      expect(netPaid(cls.id)).toBe(0);
+      expect((await detailOf(next)).lines).toEqual([]);
+
+      cls.status = 'completed';
+      ctx.repo.rates[0].hourly_rate = 50;
+      expect(summary(await detailOf(next))).toEqual([
+        ['2025-12-20', 60, 'completed', ['late']],
+      ]);
+      await finalize(next);
+      expect(netPaid(cls.id)).toBe(60);
+      expect((await detailOf(later)).lines).toEqual([]);
+
+      cls.status = 'cancelled';
+      expect(summary(await detailOf(later))).toEqual([
+        ['2025-12-20', -60, 'cancelled', ['late_cancel']],
+      ]);
+      await finalize(later);
+      expect(netPaid(cls.id)).toBe(0);
+
+      const reopened = (
+        await post(`/admin/payroll/periods/${later.id}/reopen`).expect(200)
+      ).body as PayrollPeriodDetail;
+      expect(summary(reopened)).toEqual([
+        ['2025-12-20', -60, 'cancelled', ['late_cancel']],
+      ]);
+      cls.status = 'no_show';
+      expect((await detailOf(later)).lines).toEqual([]);
+    });
+
+    it('does not pay a rate change on a lesson already paid', async () => {
+      ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      await finalize(previous);
+      ctx.repo.rates[0].hourly_rate = 50;
+      expect((await detailOf(current)).lines).toEqual([]);
+    });
+
+    it('shows late lines only in the current period, or the next open one once it is finalized', async () => {
+      await finalize(previous);
+      ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+      expect((await detailOf(next)).lines).toEqual([]);
+      await post(`/admin/payroll/periods/${current.id}/finalize`, {}).expect(
+        200,
+      );
+      ctx.repo.addClass({ startsAt: '2025-12-21T15:00:00Z' });
+      expect(summary(await detailOf(next))).toEqual([
+        ['2025-12-21', 60, 'completed', ['late']],
+      ]);
+      expect((await detailOf(later)).lines).toEqual([]);
+    });
+
+    it('needs a rate for a late lesson before finalizing unless zero rates are accepted', async () => {
+      await finalize(previous);
+      const booked = ctx.repo.addClass({
+        startsAt: '2025-12-20T15:00:00Z',
+        lessonTypeId: GROUP_60,
+      });
+      const live = await detailOf(current);
+      expect(summary(live)).toEqual([
+        ['2025-12-20', 0, 'completed', ['late', 'needs_rate']],
+      ]);
+      expect(live.needsRateCount).toBe(1);
+      await post(`/admin/payroll/periods/${current.id}/finalize`).expect(409);
+      await finalize(current, { acceptZeroRate: true });
+      expect(netPaid(booked.id)).toBe(0);
+      ctx.repo.addRate({
+        lessonTypeId: GROUP_60,
+        hourlyRate: 40,
+        from: '2025-01-01',
+      });
+      expect((await detailOf(next)).lines).toEqual([]);
+    });
+
+    it('labels late lessons and late cancels in both exports', async () => {
+      const cancelled = ctx.repo.addClass({
+        startsAt: '2025-12-20T15:00:00Z',
+      });
+      await finalize(previous);
+      cancelled.status = 'cancelled';
+      ctx.repo.addClass({ startsAt: '2025-12-21T15:00:00Z', minutes: 60 });
+      ctx.repo.addClass({ startsAt: '2026-01-02T15:00:00Z' });
+      const detail = await get(
+        `/admin/payroll/periods/${current.id}/export.csv?detail=1`,
+      ).expect(200);
+      expect(detail.text.slice(1).split('\r\n')).toEqual([
+        'Instructor,Date,Time,Type,Lesson type / description,Customers,Status,Minutes,Rate,Rate unit,Amount,Currency,Flags',
+        'Ada Lin,2025-12-20,10:00,late cancel,Private 90,,cancelled,90,40.00,hour,-60.00,CAD,late_cancel',
+        'Ada Lin,2025-12-21,10:00,late lesson,Private 90,,completed,60,40.00,hour,40.00,CAD,late',
+        'Ada Lin,2026-01-02,10:00,lesson,Private 90,,completed,90,40.00,hour,60.00,CAD,',
+        '',
+      ]);
+      const sheet = await get(
+        `/admin/payroll/periods/${current.id}/export.csv`,
+      ).expect(200);
+      expect(sheet.text.slice(1).split('\r\n')).toEqual([
+        'Instructor,Instructor (中文),Email,Lessons,Hours,Rate unit,Amount,Currency',
+        'Ada Lin,林艾达,ada@example.com,1,1.00,hour,40.00,CAD',
+        '',
+      ]);
+    });
+  });
+
   describe('export', () => {
     let period: PayrollPeriod;
     beforeEach(async () => {

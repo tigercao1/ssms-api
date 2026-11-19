@@ -6,6 +6,7 @@ import {
   INSTRUCTOR_APPROVAL_COLUMNS,
   INSTRUCTOR_CLASS_COLUMNS,
   INSTRUCTOR_LINE_COLUMNS,
+  LATE_CLASS_COLUMNS,
   PAGE_SIZE,
   PAYROLL_CLASS_COLUMNS,
   PAYROLL_LINE_COLUMNS,
@@ -319,5 +320,77 @@ describe('SupabasePayrollRepository', () => {
     await expect(repo.periodsStartingOn(['2025-12-29'])).rejects.toThrow(
       'boom',
     );
+  });
+
+  it('finds the current open period on or after today', async () => {
+    const { client, calls } = recordingPayrollSupabase({
+      payroll_periods: [ok([{ id: ID }]), ok([]), fail],
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.currentPeriod('2026-01-07')).resolves.toEqual({ id: ID });
+    await expect(repo.currentPeriod('2026-01-07')).resolves.toBeNull();
+    await expect(repo.currentPeriod('2026-01-07')).rejects.toThrow('boom');
+    expect(calls[0].ops).toEqual([
+      ['select', PAYROLL_PERIOD_COLUMNS],
+      ['eq', 'status', 'open'],
+      ['gte', 'ends_on', '2026-01-07'],
+      ['order', 'starts_on', { ascending: true }],
+      ['limit', 1],
+    ]);
+  });
+
+  it('loads unsettled classes with their lines in chunks', async () => {
+    const ids = Array.from({ length: CLASS_ID_CHUNK + 1 }, (_, i) => `c${i}`);
+    const { client, calls } = recordingPayrollSupabase({
+      'rpc:payroll_unsettled_class_ids': [ok([{ class_id: 'c1' }]), ok(null)],
+      classes: [ok([{ id: 'c1' }]), ok(null)],
+      payroll_lines: [ok([{ id: ID }]), ok(null)],
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.unsettledClassIds()).resolves.toEqual(['c1']);
+    await expect(repo.unsettledClassIds()).resolves.toEqual([]);
+    await expect(repo.classesByIds(ids)).resolves.toEqual([{ id: 'c1' }]);
+    await expect(repo.classLines(ids)).resolves.toEqual([{ id: ID }]);
+    expect(calls.map((c) => [c.target, c.ops])).toEqual([
+      ['rpc:payroll_unsettled_class_ids', [['args', undefined]]],
+      ['rpc:payroll_unsettled_class_ids', [['args', undefined]]],
+      [
+        'classes',
+        [
+          ['select', LATE_CLASS_COLUMNS],
+          ['in', 'id', ids.slice(0, CLASS_ID_CHUNK)],
+        ],
+      ],
+      [
+        'classes',
+        expect.arrayContaining([['in', 'id', [ids[CLASS_ID_CHUNK]]]]),
+      ],
+      [
+        'payroll_lines',
+        [
+          ['select', PAYROLL_LINE_COLUMNS],
+          ['eq', 'kind', 'class'],
+          ['in', 'class_id', ids.slice(0, CLASS_ID_CHUNK)],
+          ['order', 'created_at', { ascending: true }],
+          ['order', 'id', { ascending: true }],
+        ],
+      ],
+      [
+        'payroll_lines',
+        expect.arrayContaining([['in', 'class_id', [ids[CLASS_ID_CHUNK]]]]),
+      ],
+    ]);
+  });
+
+  it('surfaces errors from the unsettled class reads', async () => {
+    const { client } = recordingPayrollSupabase({
+      'rpc:payroll_unsettled_class_ids': fail,
+      classes: fail,
+      payroll_lines: fail,
+    });
+    const repo = new SupabasePayrollRepository(client);
+    await expect(repo.unsettledClassIds()).rejects.toThrow('boom');
+    await expect(repo.classesByIds([ID])).rejects.toThrow('boom');
+    await expect(repo.classLines([ID])).rejects.toThrow('boom');
   });
 });

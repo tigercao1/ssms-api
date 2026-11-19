@@ -9,6 +9,10 @@ import { localDate } from './payroll-time';
 
 export const NEEDS_RATE = 'needs_rate';
 export const ALREADY_PAID = 'already_paid';
+export const LATE = 'late';
+export const LATE_CANCEL = 'late_cancel';
+export const CORRECTION = 'correction';
+export const REASSIGNED = 'reassigned';
 export const DEFAULT_CURRENCY = 'CAD';
 
 export interface PayableClass {
@@ -107,15 +111,74 @@ export function classLine(
   };
 }
 
-export function markAlreadyPaid(
+function isMarker(line: ClassLine): boolean {
+  return line.flags.includes(ALREADY_PAID);
+}
+
+function groupBy<T>(items: readonly T[], key: (item: T) => string) {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    groups.set(key(item), [...(groups.get(key(item)) ?? []), item]);
+  }
+  return groups;
+}
+
+function netCents(lines: readonly ClassLine[]): number {
+  return lines.reduce((sum, line) => sum + toCents(line.amount), 0);
+}
+
+function paidTerms(lines: readonly ClassLine[]): ClassLine | null {
+  return lines.find((line) => !isMarker(line)) ?? null;
+}
+
+function termsCents(line: ClassLine): number {
+  return line.hourlyRate === null
+    ? 0
+    : rateAmountCents(line.hourlyRate, line.rateUnit, line.minutes);
+}
+
+function othersHold(
+  instructorId: string,
   lines: readonly ClassLine[],
-  paidClassIds: ReadonlySet<string>,
+): boolean {
+  return [
+    ...groupBy(
+      lines.filter((line) => line.instructorId !== instructorId),
+      (line) => line.instructorId,
+    ).values(),
+  ].some((theirs) => netCents(theirs) !== 0);
+}
+
+function alreadyPaid(line: ClassLine): ClassLine {
+  return { ...line, amount: 0, flags: [ALREADY_PAID] };
+}
+
+export function settledLine(
+  line: ClassLine,
+  elsewhere: readonly ClassLine[],
+): ClassLine {
+  const mine = elsewhere.filter((l) => l.instructorId === line.instructorId);
+  return paidTerms(mine) || othersHold(line.instructorId, elsewhere)
+    ? alreadyPaid(line)
+    : line;
+}
+
+export function settleLines(
+  lines: readonly ClassLine[],
+  elsewhere: readonly ClassLine[],
 ): ClassLine[] {
+  const byClass = groupBy(elsewhere, (line) => line.classId);
   return lines.map((line) =>
-    paidClassIds.has(line.classId)
-      ? { ...line, amount: 0, flags: [ALREADY_PAID] }
-      : line,
+    settledLine(line, byClass.get(line.classId) ?? []),
   );
+}
+
+export function notSettledBy(
+  settlements: readonly ClassLine[],
+): (line: ClassLine) => boolean {
+  const pair = (line: ClassLine) => `${line.classId}|${line.instructorId}`;
+  const settled = new Set(settlements.map(pair));
+  return (line) => !settled.has(pair(line));
 }
 
 export function classLinesFor(
@@ -136,6 +199,104 @@ export function classLinesFor(
         a.startsAt.localeCompare(b.startsAt) ||
         a.classId.localeCompare(b.classId),
     );
+}
+
+function settlementLine(
+  cls: PayableClass,
+  reference: ClassLine,
+  cents: number,
+  flags: string[],
+): ClassLine {
+  return {
+    classId: cls.id,
+    instructorId: reference.instructorId,
+    lessonTypeId: cls.lessonTypeId,
+    description: cls.lessonTypeName,
+    classStatus: cls.status,
+    startsAt: cls.startsAt,
+    endsAt: cls.endsAt,
+    customerNames: cls.customerNames,
+    minutes: reference.minutes,
+    hourlyRate: reference.hourlyRate,
+    rateUnit: reference.rateUnit,
+    currency: reference.currency,
+    amount: fromCents(cents),
+    flags,
+  };
+}
+
+function reversalLine(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  extraFlags: string[],
+): ClassLine | null {
+  const net = netCents(paid);
+  if (net === 0) {
+    return null;
+  }
+  const reference = paidTerms(paid) ?? paid[paid.length - 1];
+  return settlementLine(cls, reference, -net, [
+    LATE_CANCEL,
+    ...(net < 0 ? [CORRECTION] : []),
+    ...extraFlags,
+  ]);
+}
+
+function owedLine(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  rates: readonly PayableRate[],
+  reassigned: boolean,
+  late: boolean,
+): ClassLine | null {
+  const terms = paidTerms(paid);
+  if (!terms && !late) {
+    return null;
+  }
+  const reference = terms ?? classLine(cls, rates);
+  const needsRate = !terms && reference.flags.includes(NEEDS_RATE);
+  const owed = terms ? termsCents(terms) : toCents(reference.amount);
+  const diff = owed - netCents(paid);
+  if (diff === 0 && !needsRate) {
+    return null;
+  }
+  return settlementLine(
+    cls,
+    { ...reference, instructorId: cls.instructorId },
+    diff,
+    [
+      LATE,
+      ...(diff < 0 ? [CORRECTION] : []),
+      ...(reassigned ? [REASSIGNED] : []),
+      ...(needsRate ? [NEEDS_RATE] : []),
+    ],
+  );
+}
+
+export function lateLines(
+  cls: PayableClass,
+  paid: readonly ClassLine[],
+  rates: readonly PayableRate[],
+  ownPeriodFinalized: boolean,
+): ClassLine[] {
+  const byInstructor = groupBy(paid, (line) => line.instructorId);
+  const mine = byInstructor.get(cls.instructorId) ?? [];
+  byInstructor.delete(cls.instructorId);
+  const lines = [
+    isPaid(cls.status)
+      ? owedLine(
+          cls,
+          mine,
+          rates,
+          byInstructor.size > 0,
+          ownPeriodFinalized || othersHold(cls.instructorId, paid),
+        )
+      : reversalLine(cls, mine, []),
+    ...[...byInstructor.values()].map((theirs) =>
+      reversalLine(cls, theirs, [REASSIGNED]),
+    ),
+  ];
+  return lines.filter((line): line is ClassLine => line !== null);
 }
 
 export interface AmountLine {
@@ -188,8 +349,13 @@ export function instructorTotals(
     if (line.flags.includes(ALREADY_PAID)) {
       continue;
     }
-    total.lessons += 1;
-    total.minutes += line.minutes;
+    const sign = line.flags.includes(CORRECTION)
+      ? 0
+      : line.flags.includes(LATE_CANCEL)
+        ? -1
+        : 1;
+    total.lessons += sign;
+    total.minutes += sign * line.minutes;
     total.lessonCents += toCents(line.amount);
     if (line.flags.includes(NEEDS_RATE)) {
       total.needsRate += 1;

@@ -17,21 +17,38 @@ import {
   type AmountLine,
   type ClassLine,
   classLine,
+  CORRECTION,
   instructorTotals,
+  LATE,
+  LATE_CANCEL,
   NEEDS_RATE,
+  notSettledBy,
+  REASSIGNED,
+  settledLine,
 } from './payroll-lines';
 import { localDate, localTime, periodContaining } from './payroll-time';
 import {
   type InstructorClassRow,
   type InstructorLineRow,
+  type LateClassRow,
   type ParticipantEmbed,
+  type PayrollLineRow,
   type PayrollPeriodRow,
   PayrollRepository,
 } from './payroll.repository';
-import { PAYROLL_CLOCK, storedLine, toPayable } from './payroll.service';
+import {
+  lateClassLines,
+  PAYROLL_CLOCK,
+  storedLine,
+  toPayable,
+} from './payroll.service';
 
 export type LockReason = OnboardingLockReason;
-export type MyLessonStatus = 'scheduled' | 'completed' | 'no_show';
+export type MyLessonStatus =
+  | 'scheduled'
+  | 'completed'
+  | 'no_show'
+  | 'cancelled';
 
 export interface MyLesson {
   classId: string;
@@ -51,6 +68,10 @@ export interface MyLesson {
   currency: string;
   amount: number | null;
   needsRate: boolean;
+  late: boolean;
+  lateCancel: boolean;
+  correction: boolean;
+  reassigned: boolean;
 }
 
 export interface MyAdjustment {
@@ -155,7 +176,7 @@ function toLesson(
     endTime: localTime(line.endsAt),
     startsAt: line.startsAt,
     endsAt: line.endsAt,
-    status: line.classStatus as MyLessonStatus,
+    status: line.classStatus,
     ...details,
     minutes: line.minutes,
     rate: line.hourlyRate,
@@ -163,10 +184,14 @@ function toLesson(
     currency: line.currency,
     amount: projected && needsRate ? null : line.amount,
     needsRate,
+    late: line.flags.includes(LATE),
+    lateCancel: line.flags.includes(LATE_CANCEL),
+    correction: line.flags.includes(CORRECTION),
+    reassigned: line.flags.includes(REASSIGNED),
   };
 }
 
-function classDetails(row: InstructorClassRow): LessonDetails {
+function classDetails(row: InstructorClassRow | LateClassRow): LessonDetails {
   return {
     lessonTypeNameEn: row.lesson_type?.name_en ?? null,
     lessonTypeNameZh: row.lesson_type?.name_zh ?? null,
@@ -261,11 +286,16 @@ export class MeLessonsService {
       };
     }
     const now = this.now().getTime();
-    const [settings, classes, lines] = await Promise.all([
+    const [settings, classes, lines, current, late] = await Promise.all([
       this.repo.settings(),
       this.repo.classesForInstructor(instructor.id),
       this.repo.linesForInstructor(instructor.id),
+      this.repo.currentPeriod(localDate(this.now())),
+      lateClassLines(this.repo),
     ]);
+    const myLate = late.filter(
+      ({ line }) => line.instructorId === instructor.id,
+    );
     const lessonTypeIds = [
       ...new Set(
         classes
@@ -273,31 +303,38 @@ export class MeLessonsService {
           .filter((id): id is string => id !== null),
       ),
     ];
-    const [rateRows, classLinePeriods] = await Promise.all([
+    const [rateRows, paidRows] = await Promise.all([
       this.repo.ratesFor(lessonTypeIds),
-      this.repo.classLinePeriods(classes.map((c) => c.id)),
+      this.repo.classLines(classes.map((c) => c.id)),
     ]);
     const rates = rateRows.map(toPayRate);
-    const paidIn = new Map<string, Set<string>>();
-    for (const { class_id, period_id } of classLinePeriods) {
-      const periods = paidIn.get(class_id) ?? new Set<string>();
-      periods.add(period_id);
-      paidIn.set(class_id, periods);
+    const paidByClass = new Map<string, PayrollLineRow[]>();
+    for (const paid of paidRows) {
+      const classId = paid.class_id as string;
+      paidByClass.set(classId, [...(paidByClass.get(classId) ?? []), paid]);
     }
-    const paidOutside = (classId: string, periodId: string | null) =>
-      [...(paidIn.get(classId) ?? [])].some((id) => id !== periodId);
 
-    const project = (row: InstructorClassRow) => ({
-      line: classLine(toPayable(row), rates),
+    const project = (row: InstructorClassRow, periodId: string | null) => ({
+      line: settledLine(
+        classLine(toPayable(row), rates),
+        (paidByClass.get(row.id) ?? [])
+          .filter((paid) => paid.period_id !== periodId)
+          .map(storedLine),
+      ),
       details: classDetails(row),
     });
+    const notSettled = notSettledBy(
+      current ? myLate.map(({ line }) => line) : [],
+    );
+    const unpaid = ({ line }: { line: ClassLine }) =>
+      !line.flags.includes(ALREADY_PAID) && notSettled(line);
 
     const upcoming = EMPTY_UPCOMING();
     if (lockReason === null) {
       const projected = classes
         .filter((c) => Date.parse(c.starts_at) >= now)
-        .filter((c) => !paidOutside(c.id, null))
-        .map(project);
+        .map((c) => project(c, null))
+        .filter(unpaid);
       upcoming.lessons = projected
         .map(({ line, details }) => toLesson(line, details, true))
         .sort(byStart);
@@ -329,6 +366,9 @@ export class MeLessonsService {
     for (const line of lines) {
       if (line.period) periodRows.set(line.period.starts_on, line.period);
     }
+    if (current && myLate.length > 0) {
+      periodRows.set(current.starts_on, current);
+    }
     const missing = [...pastByPeriod.keys()].filter(
       (startsOn) => !periodRows.has(startsOn),
     );
@@ -356,9 +396,17 @@ export class MeLessonsService {
           toLesson(line, details, false),
         );
       } else {
-        const live = (pastByPeriod.get(startsOn) ?? [])
-          .filter((c) => !paidOutside(c.id, row?.id ?? null))
-          .map(project);
+        const live = [
+          ...(pastByPeriod.get(startsOn) ?? [])
+            .map((c) => project(c, row?.id ?? null))
+            .filter(unpaid),
+          ...(row && row.id === current?.id
+            ? myLate.map(({ line, row: cls }) => ({
+                line,
+                details: classDetails(cls),
+              }))
+            : []),
+        ];
         classLines = live.map(({ line }) => line);
         lessons = live.map(({ line, details }) =>
           toLesson(line, details, true),

@@ -343,6 +343,10 @@ describe('GET /me/lessons', () => {
               currency: 'CAD',
               amount: 180,
               needsRate: false,
+              late: false,
+              lateCancel: false,
+              correction: false,
+              reassigned: false,
             },
           ],
           projected: [{ currency: 'CAD', amount: 180, lessons: 1 }],
@@ -684,6 +688,187 @@ describe('GET /me/lessons', () => {
         before,
       );
       expect(ctx.repo.periods).toEqual([]);
+    });
+
+    describe('late lessons and late cancels', () => {
+      beforeEach(async () => {
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-12', ends_on: '2026-01-25' },
+        ]);
+      });
+
+      it('shows them in the current open period with their real dates and counts them in the totals', async () => {
+        const cancelled = ctx.repo.addClass({
+          startsAt: '2026-01-05T15:00:00Z',
+          location: 'Moonstone',
+          customers: [['Kai', 'Wong']],
+        });
+        await finalize('2025-12-29');
+        cancelled.status = 'cancelled';
+        const booked = ctx.repo.addClass({
+          startsAt: '2026-01-06T15:00:00Z',
+          minutes: 60,
+        });
+        ctx.repo.addClass({
+          instructorId: BO_ID,
+          startsAt: '2026-01-07T15:00:00Z',
+        });
+        ctx.repo.addClass({ startsAt: '2026-01-13T15:00:00Z' });
+        const [open, paid] = (await mine()).periods;
+        expect(open).toMatchObject({
+          startsOn: '2026-01-12',
+          status: 'awaiting',
+          totals: [
+            {
+              currency: 'CAD',
+              lessons: 1,
+              minutes: 60,
+              lessonAmount: 90,
+              adjustmentAmount: 0,
+              total: 90,
+              needsRateCount: 0,
+            },
+          ],
+        });
+        expect(
+          open.lessons.map((l) => [
+            l.classId,
+            l.date,
+            l.status,
+            l.amount,
+            l.late,
+            l.lateCancel,
+          ]),
+        ).toEqual([
+          [cancelled.id, '2026-01-05', 'cancelled', -135, false, true],
+          [booked.id, '2026-01-06', 'completed', 90, true, false],
+          [expect.any(String), '2026-01-13', 'completed', 135, false, false],
+        ]);
+        expect(open.lessons[0]).toMatchObject({
+          locationName: 'Moonstone',
+          students: ['Kai W.'],
+          lessonTypeNameEn: 'Private 90',
+        });
+        expect(paid).toMatchObject({ startsOn: '2025-12-29', status: 'paid' });
+        expect(paid.lessons.map((l) => l.amount)).toEqual([135]);
+      });
+
+      it('shows the current period for a late lesson alone and keeps the flags once it is finalized', async () => {
+        await finalize('2025-12-29');
+        ctx.repo.addClass({ startsAt: '2026-01-06T15:00:00Z' });
+        const [open] = (await mine()).periods;
+        expect(open.startsOn).toBe('2026-01-12');
+        expect(open.lessons.map((l) => [l.date, l.late])).toEqual([
+          ['2026-01-06', true],
+        ]);
+        await finalize('2026-01-12');
+        const { periods } = await mine();
+        expect(
+          periods.map((p) => [
+            p.startsOn,
+            p.status,
+            p.lessons.map((l) => [l.date, l.late, l.amount]),
+          ]),
+        ).toEqual([['2026-01-12', 'paid', [['2026-01-06', true, 135]]]]);
+      });
+
+      it('shows each instructor their side of a reassigned paid lesson', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        await finalize('2025-12-29');
+        cls.instructor_id = BO_ID;
+        cls.instructor = ctx.repo.instructorNames.get(BO_ID) ?? null;
+        const flagsOf = async () =>
+          (await mine()).periods[0].lessons.map((l) => [
+            l.amount,
+            l.late,
+            l.lateCancel,
+            l.correction,
+            l.reassigned,
+          ]);
+        expect(await flagsOf()).toEqual([[-135, false, true, false, true]]);
+        ctx.repo.addInstructorUser(INSTRUCTOR_USER_ID, BO_ID, 'approved');
+        expect(await flagsOf()).toEqual([[135, true, false, false, true]]);
+      });
+
+      it('flags a refund on a cancelled lesson as a correction', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        const paid = await finalize('2025-12-29');
+        cls.status = 'cancelled';
+        await finalize('2026-01-12');
+        await ctx.payroll.reopen(paid.id, ACTOR);
+        await ctx.payroll.finalize(paid.id, {}, ACTOR);
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-26', ends_on: '2026-02-08' },
+        ]);
+        const [open] = (await mine()).periods;
+        expect(open.startsOn).toBe('2026-01-26');
+        expect(open.lessons).toEqual([
+          expect.objectContaining({
+            amount: 135,
+            lateCancel: true,
+            correction: true,
+          }),
+        ]);
+        expect(open.totals[0]).toMatchObject({ lessons: 0, minutes: 0 });
+      });
+
+      it('repays a restored lesson moved into the open period as a late line in the current period', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        await finalize('2025-12-29');
+        cls.status = 'cancelled';
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-26', ends_on: '2026-02-08' },
+        ]);
+        await finalize('2026-01-12');
+        cls.status = 'completed';
+        cls.starts_at = '2026-01-27T15:00:00.000Z';
+        cls.ends_at = '2026-01-27T16:30:00.000Z';
+        const { upcoming, periods } = await mine();
+        expect(upcoming.lessons).toEqual([]);
+        expect(periods[0]).toMatchObject({
+          startsOn: '2026-01-26',
+          lessons: [
+            expect.objectContaining({
+              classId: cls.id,
+              amount: 135,
+              late: true,
+            }),
+          ],
+        });
+      });
+
+      it('counts a future lesson booked into a finalized period once, as a late line in the current period', async () => {
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-26', ends_on: '2026-02-08' },
+        ]);
+        await finalize('2026-01-12');
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-22T15:00:00Z' });
+        const { upcoming, periods } = await mine();
+        expect(upcoming).toEqual({
+          lessons: [],
+          projected: [],
+          needsRateCount: 0,
+        });
+        expect(
+          periods.map((p) => [
+            p.startsOn,
+            p.status,
+            p.lessons.map((l) => [l.classId, l.amount, l.late]),
+            p.totals.map((t) => [t.lessons, t.total]),
+          ]),
+        ).toEqual([
+          ['2026-01-26', 'awaiting', [[cls.id, 135, true]], [[1, 135]]],
+        ]);
+      });
+
+      it('leaves out other instructors’ late lines', async () => {
+        await finalize('2025-12-29');
+        ctx.repo.addClass({
+          instructorId: BO_ID,
+          startsAt: '2026-01-06T15:00:00Z',
+        });
+        expect((await mine()).periods).toEqual([]);
+      });
     });
   });
 });

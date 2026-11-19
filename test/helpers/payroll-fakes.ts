@@ -5,15 +5,16 @@ import {
 import type { ClassStatus } from '../../src/lessons/lessons.types';
 import type { RateUnit } from '../../src/lessons/pay-rates';
 import type { PayRateRow } from '../../src/lessons/pay-rates.repository';
-import { daysBetween } from '../../src/payroll/payroll-time';
+import { rateAmountCents } from '../../src/payroll/payroll-lines';
+import { daysBetween, localDate } from '../../src/payroll/payroll-time';
 import {
   type AdjustmentInsert,
   type ApprovalStatus,
-  type ClassLinePeriod,
   type InstructorApprovalRow,
   type InstructorClassRow,
   type InstructorLineRow,
   type InstructorEmbed,
+  type LateClassRow,
   type PayrollClassRow,
   type PayrollLineRow,
   PayrollRepository,
@@ -226,20 +227,76 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     );
   }
 
-  classesPaidElsewhere(
-    periodId: string,
-    classIds: string[],
-  ): Promise<string[]> {
+  currentPeriod(today: string): Promise<PayrollPeriodRow | null> {
+    const period = this.periods
+      .filter((p) => p.status === 'open' && p.ends_on >= today)
+      .sort((a, b) => a.starts_on.localeCompare(b.starts_on))[0];
+    return Promise.resolve(period ? { ...period } : null);
+  }
+
+  unsettledClassIds(): Promise<string[]> {
+    const cents = (amount: string | number) => Math.round(Number(amount) * 100);
+    const net = (lines: PayrollLineRow[]) =>
+      lines.reduce((sum, l) => sum + cents(l.amount), 0);
+    const owed = (lines: PayrollLineRow[]) => {
+      const terms = lines.find((l) => !l.flags.includes('already_paid'));
+      if (!terms) return null;
+      return terms.hourly_rate === null
+        ? 0
+        : rateAmountCents(
+            terms.hourly_rate,
+            terms.rate_unit,
+            terms.minutes ?? 0,
+          );
+    };
+    const ids = this.classes
+      .filter((c) => {
+        const byInstructor = new Map<string, PayrollLineRow[]>();
+        for (const l of this.lineRows) {
+          if (l.kind !== 'class' || l.class_id !== c.id) continue;
+          byInstructor.set(l.instructor_id, [
+            ...(byInstructor.get(l.instructor_id) ?? []),
+            l,
+          ]);
+        }
+        const reversals = [...byInstructor].some(
+          ([id, lines]) =>
+            (c.status === 'cancelled' || id !== c.instructor_id) &&
+            net(lines) !== 0,
+        );
+        if (reversals) return true;
+        if (c.status === 'cancelled') return false;
+        const mine = byInstructor.get(c.instructor_id) ?? [];
+        const due = owed(mine);
+        if (due !== null) return net(mine) !== due;
+        const date = localDate(c.starts_at);
+        return this.periods.some(
+          (p) =>
+            p.status === 'finalized' &&
+            p.starts_on <= date &&
+            date <= p.ends_on,
+        );
+      })
+      .map((c) => c.id);
+    return Promise.resolve(ids);
+  }
+
+  classesByIds(ids: string[]): Promise<LateClassRow[]> {
+    return Promise.resolve(
+      this.classes.filter((c) => ids.includes(c.id)).map((c) => ({ ...c })),
+    );
+  }
+
+  classLines(classIds: string[]): Promise<PayrollLineRow[]> {
     return Promise.resolve(
       this.lineRows
         .filter(
           (l) =>
             l.kind === 'class' &&
-            l.period_id !== periodId &&
             l.class_id !== null &&
             classIds.includes(l.class_id),
         )
-        .map((l) => l.class_id as string),
+        .map((l) => ({ ...l })),
     );
   }
 
@@ -308,6 +365,14 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     }
     if (period.status !== 'open') {
       throw prerequisite('payroll period is finalized');
+    }
+    const keys = lines.map((l) => `${l.class_id}|${l.instructor_id}`);
+    if (new Set(keys).size !== keys.length) {
+      throw new DatabaseError(
+        'finalize',
+        '23505',
+        'duplicate payroll line for a class and instructor',
+      );
     }
     this.lineRows = this.lineRows.filter(
       (l) => !(l.period_id === periodId && l.kind === 'class'),
@@ -398,22 +463,6 @@ export class InMemoryPayrollRepository extends PayrollRepository {
       this.periods
         .filter((p) => startsOn.includes(p.starts_on))
         .map((p) => ({ ...p })),
-    );
-  }
-
-  classLinePeriods(classIds: string[]): Promise<ClassLinePeriod[]> {
-    return Promise.resolve(
-      this.lineRows
-        .filter(
-          (l) =>
-            l.kind === 'class' &&
-            l.class_id !== null &&
-            classIds.includes(l.class_id),
-        )
-        .map((l) => ({
-          class_id: l.class_id as string,
-          period_id: l.period_id,
-        })),
     );
   }
 }

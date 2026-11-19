@@ -25,6 +25,8 @@ begin
     raise exception 'a 20 minute slot was accepted';
   exception when check_violation then null;
   end;
+  update booking_settings set slot_minutes = 5;
+  update booking_settings set slot_minutes = 30;
   begin
     update booking_settings set day_end_time = '07:00';
     raise exception 'a day ending before it starts was accepted';

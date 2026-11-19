@@ -25,6 +25,8 @@ import {
   LESSON_TYPE_NOT_FOUND,
   LOCATION_NOT_FOUND,
   REFERENCE_NOT_FOUND,
+  START_NOT_ALIGNED,
+  START_NOT_ALIGNED_MESSAGE,
 } from './booking.service';
 import { type BookedClass, toBookedClass } from './calendar-sync.service';
 import type { BatchBookingDto, BookingRowDto } from './dto/booking.dto';
@@ -48,6 +50,7 @@ const CODES: Record<string, string> = {
   [FUTURE_STATUS]: 'FUTURE_STATUS',
   [REFERENCE_NOT_FOUND]: 'REFERENCE_NOT_FOUND',
   [GOOGLE_WRITE_FAILED]: 'GOOGLE_WRITE_FAILED',
+  [START_NOT_ALIGNED_MESSAGE]: START_NOT_ALIGNED,
 };
 
 export interface BatchRowCreated {

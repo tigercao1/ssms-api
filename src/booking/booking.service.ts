@@ -19,7 +19,8 @@ import {
   type BookingClock,
   BookingCalendarsService,
 } from './booking-calendars.service';
-import { addDays, localParts, zonedInstant } from './booking-time';
+import { BOOKING_START_STEP_MINUTES } from './booking-settings.service';
+import { addDays, isOnStep, localParts, zonedInstant } from './booking-time';
 import {
   type BatchRowCommit,
   type BatchRowKey,
@@ -61,6 +62,8 @@ export const FUTURE_STATUS = 'A lesson in the future must be scheduled';
 export const NOTHING_TO_UPDATE = 'Nothing to update';
 export const REFERENCE_NOT_FOUND = 'A referenced record no longer exists';
 export const GOOGLE_WRITE_FAILED = 'Google Calendar request failed';
+export const START_NOT_ALIGNED = 'START_NOT_ALIGNED';
+export const START_NOT_ALIGNED_MESSAGE = `Lessons must start on a ${BOOKING_START_STEP_MINUTES}-minute boundary`;
 export const BOOKING_CONFLICT_CODE = 'SB409';
 export const PG_NO_DATA_FOUND = 'P0002';
 
@@ -172,6 +175,9 @@ export class BookingService {
     actor: AuditActor,
   ): Promise<BookingPlan> {
     const start = new Date(dto.startsAt);
+    if (!isOnStep(start, BOOKING_START_STEP_MINUTES)) {
+      throw misaligned();
+    }
     const past = start.getTime() < this.clock.now();
     if (past && dto.repeat) {
       throw new BadRequestException(PAST_REPEAT);
@@ -280,6 +286,12 @@ export class BookingService {
   ): Promise<BookedClass> {
     if (Object.values(dto).every((v) => v === undefined)) {
       throw new BadRequestException(NOTHING_TO_UPDATE);
+    }
+    if (
+      dto.startsAt &&
+      !isOnStep(new Date(dto.startsAt), BOOKING_START_STEP_MINUTES)
+    ) {
+      throw misaligned();
     }
     const current = await this.loadClass(id);
     if (current.status === 'cancelled') {
@@ -663,6 +675,15 @@ function busy(conflicts: BookingConflict[]): ConflictException {
     error: 'Conflict',
     message: INSTRUCTOR_BUSY,
     conflicts,
+  });
+}
+
+function misaligned(): BadRequestException {
+  return new BadRequestException({
+    statusCode: 400,
+    error: 'Bad Request',
+    message: START_NOT_ALIGNED_MESSAGE,
+    code: START_NOT_ALIGNED,
   });
 }
 

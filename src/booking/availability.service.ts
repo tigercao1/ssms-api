@@ -7,12 +7,16 @@ import {
   BookingCalendarsService,
 } from './booking-calendars.service';
 import {
-  type BookingSettings,
   BookingSettingsService,
   type DayWindow,
   windowFor,
 } from './booking-settings.service';
-import { addMinutes, SCHOOL_TIME_ZONE, zonedInstant } from './booking-time';
+import {
+  addMinutes,
+  ceilToStep,
+  SCHOOL_TIME_ZONE,
+  zonedInstant,
+} from './booking-time';
 import {
   type BookingInstructorRow,
   BookingRepository,
@@ -67,6 +71,7 @@ export interface AvailabilityQuery {
   date: string;
   lessonTypeId: string;
   instructorIds?: string[];
+  slotMinutes?: number;
 }
 
 interface Candidate {
@@ -97,12 +102,13 @@ export class AvailabilityService {
     }
     const settings = await this.settings.get();
     const window = windowFor(settings, query.date);
+    const slotMinutes = query.slotMinutes ?? settings.slotMinutes;
     const base: Availability = {
       date: query.date,
       timeZone: SCHOOL_TIME_ZONE,
       lessonTypeId: lessonType.id,
       durationMin: lessonType.duration_min,
-      slotMinutes: settings.slotMinutes,
+      slotMinutes,
       window,
       slots: [],
       instructors: [],
@@ -118,7 +124,7 @@ export class AvailabilityService {
       ),
     );
     const { from, to } = dayBounds(query.date, window);
-    base.slots = grid(from, to, settings);
+    base.slots = grid(from, to, slotMinutes);
     const { candidates, unavailable } = await this.candidates(
       instructors,
       links,
@@ -268,12 +274,12 @@ export function overlapsAny(slot: Interval, busy: Interval[]): boolean {
   return busy.some((b) => b.start < slot.end && b.end > slot.start);
 }
 
-function grid(from: Date, to: Date, settings: BookingSettings): string[] {
+function grid(from: Date, to: Date, slotMinutes: number): string[] {
   const slots: string[] = [];
   for (
-    let t = from;
+    let t = ceilToStep(from, slotMinutes);
     t.getTime() < to.getTime();
-    t = addMinutes(t, settings.slotMinutes)
+    t = addMinutes(t, slotMinutes)
   ) {
     slots.push(t.toISOString());
   }

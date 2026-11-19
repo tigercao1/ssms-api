@@ -13,13 +13,11 @@ import { AUDIT_ACTIONS } from '../audit/audit.types';
 import {
   ApiTokenAuthenticator,
   type ApiTokenRoute,
+  isWellFormedApiToken,
 } from '../auth/api-token-authenticator';
 import type { SupabaseJwtPayload } from '../auth/jwt-payload.interface';
 import { ApiKeyRateLimiter } from '../public-api/api-key-rate-limiter';
-import {
-  hashAdminApiToken,
-  isWellFormedAdminApiToken,
-} from './admin-api-token.secret';
+import { hashAdminApiToken } from './admin-api-token.secret';
 import { AdminApiTokenOwners } from './admin-api-token-owners';
 import { AdminApiTokensRepository } from './admin-api-tokens.repository';
 import {
@@ -62,7 +60,7 @@ export class AdminApiTokenAuthenticator extends ApiTokenAuthenticator {
     token: string,
     route: ApiTokenRoute,
   ): Promise<SupabaseJwtPayload> {
-    const row = isWellFormedAdminApiToken(token)
+    const row = isWellFormedApiToken(token)
       ? await this.lookup(hashAdminApiToken(token))
       : null;
     if (row === null) {

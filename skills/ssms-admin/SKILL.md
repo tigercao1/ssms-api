@@ -120,6 +120,7 @@ Wait for an explicit yes for that call. A yes covers that call only, not similar
 | 403 | The route is session-only (`x-session-only` in the spec: token management, role change, instructor email change, Google connect), or the route is not an admin route. | Tell Tiger it needs the admin site, signed in. Do not look for a workaround. |
 | 404 | The id does not exist. | Re-check the id with a GET. |
 | 429 | More than 120 requests a minute with this token. | Wait about a minute, then go on more slowly. Batch reads with `limit`. |
+| 429 with `Retry-After`, after a run of 401s | Too many failed authentications from this IP (60 a minute); requests without a valid-looking token are refused until the window ends. | Fix the `Authorization` header (`Bearer ssms_pat_...`), wait `Retry-After` seconds, then retry once. Do not loop on 401. |
 | 503 | The token or its owner could not be checked. | Retry once after a short wait, then tell Tiger. |
 
 ## 8. Rotating or revoking the token

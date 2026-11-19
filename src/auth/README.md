@@ -20,6 +20,14 @@ Supabase Auth; the client then sends `Authorization: Bearer <supabase-jwt>`.
   rotation. Requires **Node ≥ 22.12** (jwks-rsa `require()`s ESM `jose@6`);
   pinned via `package.json` engines + `.nvmrc` (24).
 - `SupabaseAuthGuard` — `@UseGuards(SupabaseAuthGuard)`; bad/missing token → 401.
+- `AuthFailureLimiter` — counts the guard's 401s per client IP (`Fly-Client-IP`,
+  else the socket address; never `X-Forwarded-For`), in memory, per machine, at
+  most 10,000 IPs (oldest evicted). After `ADMIN_AUTH_FAIL_LIMIT` (default 60)
+  failures inside `ADMIN_AUTH_FAIL_WINDOW_SECONDS` (default 60), requests from
+  that IP with no credential, or one that is neither a JWT-shaped bearer nor a
+  well-formed `ssms_pat_` token, get 429 with `Retry-After` before any lookup.
+  Well-formed credentials are still verified, so valid callers behind the same
+  IP keep working. One warning a minute at most, with the IP and counts.
 - Admin API tokens — `SupabaseAuthGuard` also accepts `Authorization: Bearer
   ssms_pat_<43 chars>`, a personal admin API token (`src/admin-api-tokens`).
   Only its SHA-256 hash is stored. The guard rejects revoked, expired and

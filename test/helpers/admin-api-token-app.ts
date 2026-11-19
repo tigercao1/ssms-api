@@ -25,6 +25,7 @@ import { AdminInstructorEmailService } from '../../src/admin/admin-instructor-em
 import { AdminRepository } from '../../src/admin/admin.repository';
 import { AdminService } from '../../src/admin/admin.service';
 import { AuditService } from '../../src/audit/audit.service';
+import { AUTH_FAILURE_CLOCK } from '../../src/auth/auth-failure-limiter';
 import { AuthModule } from '../../src/auth/auth.module';
 import { CurrentUser } from '../../src/auth/current-user.decorator';
 import type { SupabaseJwtPayload } from '../../src/auth/jwt-payload.interface';
@@ -183,6 +184,8 @@ export async function startAdminApiTokenApp() {
     .overrideProvider(AdminApiTokensRepository)
     .useValue(repo)
     .overrideProvider(ADMIN_API_TOKEN_CLOCK)
+    .useValue(clock)
+    .overrideProvider(AUTH_FAILURE_CLOCK)
     .useValue(clock)
     .compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();

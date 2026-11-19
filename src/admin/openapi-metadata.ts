@@ -1075,6 +1075,7 @@ export default async () => {
                 type: () => [String],
                 format: 'uuid',
               },
+              slotMinutes: { required: false, type: () => Number },
             },
             RepeatDto: {
               weekly: { required: true, type: () => Boolean },

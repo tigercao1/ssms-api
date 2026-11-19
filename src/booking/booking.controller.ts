@@ -76,6 +76,7 @@ export class BookingController {
       date: query.date,
       lessonTypeId: query.lessonTypeId,
       instructorIds: query.instructorIds,
+      slotMinutes: query.slotMinutes,
     });
   }
 

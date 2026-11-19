@@ -1,4 +1,11 @@
-import { addDays, localParts, weekdayOf, zonedInstant } from './booking-time';
+import {
+  addDays,
+  ceilToStep,
+  isOnStep,
+  localParts,
+  weekdayOf,
+  zonedInstant,
+} from './booking-time';
 
 describe('booking time in America/Toronto', () => {
   it.each([
@@ -31,5 +38,31 @@ describe('booking time in America/Toronto', () => {
     expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
     expect(weekdayOf('2026-12-14')).toBe('mon');
     expect(weekdayOf('2026-12-12')).toBe('sat');
+  });
+
+  it.each([
+    [5, '2026-12-12T14:03:00.000Z', '2026-12-12T14:05:00.000Z'],
+    [15, '2026-12-12T14:03:00.000Z', '2026-12-12T14:15:00.000Z'],
+    [30, '2026-12-12T14:31:00.000Z', '2026-12-12T15:00:00.000Z'],
+    [60, '2026-12-12T14:01:00.000Z', '2026-12-12T15:00:00.000Z'],
+    [60, '2026-07-04T13:20:00.000Z', '2026-07-04T14:00:00.000Z'],
+    [15, '2026-07-04T13:00:00.001Z', '2026-07-04T13:15:00.000Z'],
+    [30, '2026-12-12T14:30:00.000Z', '2026-12-12T14:30:00.000Z'],
+  ])('rounds up to the next %i-minute step: %s → %s', (step, from, to) => {
+    expect(ceilToStep(new Date(from), step).toISOString()).toBe(to);
+  });
+
+  it.each([
+    [5, '2026-12-12T14:05:00.000Z', true],
+    [5, '2026-12-12T14:07:00.000Z', false],
+    [5, '2026-12-12T14:05:30.000Z', false],
+    [15, '2026-12-12T14:45:00.000Z', true],
+    [15, '2026-12-12T14:50:00.000Z', false],
+    [30, '2026-07-04T14:30:00.000Z', true],
+    [30, '2026-07-04T14:15:00.000Z', false],
+    [60, '2026-07-04T14:00:00.000Z', true],
+    [60, '2026-07-04T14:30:00.000Z', false],
+  ])('checks %i-minute alignment of %s', (step, instant, aligned) => {
+    expect(isOnStep(new Date(instant), step)).toBe(aligned);
   });
 });

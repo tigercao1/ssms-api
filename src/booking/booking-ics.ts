@@ -6,17 +6,21 @@ export interface IcsPerson {
 }
 
 export interface IcsEvent {
-  method: IcsMethod;
   uid: string;
   sequence: number;
-  stamp: Date;
   start: Date;
   end: Date;
   summary: string;
   description?: string | null;
   location?: string | null;
-  organizer: IcsPerson;
   attendees: IcsPerson[];
+}
+
+export interface IcsCalendar {
+  method: IcsMethod;
+  stamp: Date;
+  organizer: IcsPerson;
+  events: IcsEvent[];
 }
 
 export const ICS_CONTENT_TYPE = 'text/calendar';
@@ -32,17 +36,25 @@ export function icsContentType(method: IcsMethod): string {
   return `${ICS_CONTENT_TYPE}; charset=utf-8; method=${method}`;
 }
 
-export function buildIcs(event: IcsEvent): string {
+export function buildIcs(calendar: IcsCalendar): string {
   const lines = [
     'BEGIN:VCALENDAR',
     `PRODID:${PRODID}`,
     'VERSION:2.0',
     'CALSCALE:GREGORIAN',
-    `METHOD:${event.method}`,
+    `METHOD:${calendar.method}`,
+    ...calendar.events.flatMap((event) => eventLines(calendar, event)),
+    'END:VCALENDAR',
+  ];
+  return lines.map(fold).join('\r\n') + '\r\n';
+}
+
+function eventLines(calendar: IcsCalendar, event: IcsEvent): string[] {
+  return [
     'BEGIN:VEVENT',
     `UID:${escapeText(event.uid)}`,
     `SEQUENCE:${Math.max(0, Math.trunc(event.sequence))}`,
-    `DTSTAMP:${utc(event.stamp)}`,
+    `DTSTAMP:${utc(calendar.stamp)}`,
     `DTSTART:${utc(event.start)}`,
     `DTEND:${utc(event.end)}`,
     `SUMMARY:${escapeText(event.summary)}`,
@@ -50,17 +62,15 @@ export function buildIcs(event: IcsEvent): string {
       ? [`DESCRIPTION:${escapeText(event.description)}`]
       : []),
     ...(event.location ? [`LOCATION:${escapeText(event.location)}`] : []),
-    `STATUS:${event.method === 'CANCEL' ? 'CANCELLED' : 'CONFIRMED'}`,
+    `STATUS:${calendar.method === 'CANCEL' ? 'CANCELLED' : 'CONFIRMED'}`,
     'TRANSP:OPAQUE',
-    `ORGANIZER${nameParam(event.organizer)}:mailto:${event.organizer.email}`,
+    `ORGANIZER${nameParam(calendar.organizer)}:mailto:${calendar.organizer.email}`,
     ...event.attendees.map(
       (a) =>
         `ATTENDEE${nameParam(a)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:${a.email}`,
     ),
     'END:VEVENT',
-    'END:VCALENDAR',
   ];
-  return lines.map(fold).join('\r\n') + '\r\n';
 }
 
 export function utc(date: Date): string {

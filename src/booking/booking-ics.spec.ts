@@ -3,6 +3,7 @@ import {
   classUid,
   escapeText,
   fold,
+  type IcsCalendar,
   icsContentType,
   type IcsEvent,
   utc,
@@ -10,16 +11,15 @@ import {
 
 const CLASS_ID = 'c0000000-0000-4000-8000-000000000001';
 
+const CLASS_B = 'c0000000-0000-4000-8000-000000000002';
+
 const event = (overrides: Partial<IcsEvent> = {}): IcsEvent => ({
-  method: 'REQUEST',
   uid: classUid(CLASS_ID),
   sequence: 0,
-  stamp: new Date('2026-12-10T17:00:00.000Z'),
   start: new Date('2026-12-12T15:00:00.000Z'),
   end: new Date('2026-12-12T16:00:00.000Z'),
   summary: 'Private 1h with Amy',
   location: 'Blue Mountain',
-  organizer: { email: 'noreply@contact.ssnow.club', name: 'Serendipity Snow' },
   attendees: [
     { email: 'mei@example.com', name: 'Mei Wang' },
     { email: 'amy@example.com', name: 'Amy' },
@@ -27,11 +27,22 @@ const event = (overrides: Partial<IcsEvent> = {}): IcsEvent => ({
   ...overrides,
 });
 
+const calendar = (
+  overrides: Partial<IcsEvent> = {},
+  calendarOverrides: Partial<IcsCalendar> = {},
+): IcsCalendar => ({
+  method: 'REQUEST',
+  stamp: new Date('2026-12-10T17:00:00.000Z'),
+  organizer: { email: 'noreply@contact.ssnow.club', name: 'Serendipity Snow' },
+  events: [event(overrides)],
+  ...calendarOverrides,
+});
+
 const lines = (ics: string) => ics.replace(/\r\n /g, '').split('\r\n');
 
 describe('buildIcs', () => {
   it('writes a REQUEST with UTC times, organizer and attendees', () => {
-    const ics = buildIcs(event());
+    const ics = buildIcs(calendar());
     expect(ics.endsWith('\r\n')).toBe(true);
     expect(ics).not.toMatch(/[^\r]\n/);
     expect(lines(ics)).toEqual([
@@ -60,7 +71,9 @@ describe('buildIcs', () => {
   });
 
   it('writes a CANCEL with the same UID and a higher SEQUENCE', () => {
-    const ics = lines(buildIcs(event({ method: 'CANCEL', sequence: 3 })));
+    const ics = lines(
+      buildIcs(calendar({ sequence: 3 }, { method: 'CANCEL' })),
+    );
     expect(ics).toContain('METHOD:CANCEL');
     expect(ics).toContain('STATUS:CANCELLED');
     expect(ics).toContain('SEQUENCE:3');
@@ -70,12 +83,14 @@ describe('buildIcs', () => {
   it('omits empty optional fields and names', () => {
     const ics = lines(
       buildIcs(
-        event({
-          location: null,
-          description: null,
-          organizer: { email: 'info@ssnow.club' },
-          attendees: [{ email: 'leo@example.com', name: '  ' }],
-        }),
+        calendar(
+          {
+            location: null,
+            description: null,
+            attendees: [{ email: 'leo@example.com', name: '  ' }],
+          },
+          { organizer: { email: 'info@ssnow.club' } },
+        ),
       ),
     );
     expect(ics.some((l) => l.startsWith('LOCATION'))).toBe(false);
@@ -89,7 +104,7 @@ describe('buildIcs', () => {
   it('escapes text values and strips quotes from names', () => {
     const ics = lines(
       buildIcs(
-        event({
+        calendar({
           summary: 'Group; kids, level 1\\2',
           description: 'Line one\nLine two',
           attendees: [{ email: 'a@example.com', name: 'A "Ace" B' }],
@@ -99,6 +114,40 @@ describe('buildIcs', () => {
     expect(ics).toContain('SUMMARY:Group\\; kids\\, level 1\\\\2');
     expect(ics).toContain('DESCRIPTION:Line one\\nLine two');
     expect(ics.find((l) => l.startsWith('ATTENDEE'))).toContain('CN="A Ace B"');
+  });
+
+  it('writes one VCALENDAR with one VEVENT per lesson, each with its own UID and SEQUENCE', () => {
+    const ics = lines(
+      buildIcs(
+        calendar(
+          {},
+          {
+            events: [
+              event(),
+              event({
+                uid: classUid(CLASS_B),
+                sequence: 2,
+                start: new Date('2026-12-19T15:00:00.000Z'),
+                end: new Date('2026-12-19T16:00:00.000Z'),
+              }),
+            ],
+          },
+        ),
+      ),
+    );
+    expect(ics.filter((l) => l === 'BEGIN:VCALENDAR')).toHaveLength(1);
+    expect(ics.filter((l) => l.startsWith('METHOD:'))).toEqual([
+      'METHOD:REQUEST',
+    ]);
+    expect(ics.filter((l) => l === 'BEGIN:VEVENT')).toHaveLength(2);
+    expect(ics.filter((l) => /^(UID|SEQUENCE|DTSTART):/.test(l))).toEqual([
+      `UID:class-${CLASS_ID}@ssnow.club`,
+      'SEQUENCE:0',
+      'DTSTART:20261212T150000Z',
+      `UID:class-${CLASS_B}@ssnow.club`,
+      'SEQUENCE:2',
+      'DTSTART:20261219T150000Z',
+    ]);
   });
 
   it('folds long lines at 75 octets without splitting characters', () => {

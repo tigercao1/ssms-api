@@ -7,6 +7,7 @@ import {
   BookingCalendarsService,
 } from './booking-calendars.service';
 import { BookingBatchService } from './booking-batch.service';
+import { BookingEmailQueue } from './booking-email-queue';
 import { BookingEmailsService } from './booking-emails.service';
 import { BookingController } from './booking.controller';
 import {
@@ -25,6 +26,7 @@ import { CalendarSyncWorker } from './calendar-sync.worker';
     { provide: BookingRepository, useClass: SupabaseBookingRepository },
     { provide: BOOKING_CLOCK, useValue: { now: () => Date.now() } },
     BookingCalendarsService,
+    BookingEmailQueue,
     BookingEmailsService,
     BookingSettingsService,
     AvailabilityService,

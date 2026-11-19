@@ -11,6 +11,7 @@ import {
   BEN_ID,
   BLUE_ID,
   fakeBookingGoogle,
+  IMMEDIATE_BOOKING_EMAILS,
   InMemoryBookingRepository,
   LEO_ID,
   MEI_ID,
@@ -67,6 +68,7 @@ async function build(google = fakeBookingGoogle()) {
         BookingService,
         BookingBatchService,
         BookingEmailsService,
+        ...IMMEDIATE_BOOKING_EMAILS,
         AvailabilityService,
         BookingSettingsService,
         BookingCalendarsService,
@@ -233,20 +235,45 @@ describe('booking emails HTTP', () => {
       ]);
     });
 
-    it('sends one email per person for a weekly series, with one ICS per lesson', async () => {
+    it('sends one email per person for a weekly series, with one ICS holding every lesson', async () => {
       const res = await post(
         booking({ repeat: { weekly: true, count: 3 } }),
       ).expect(201);
       expect(ctx.mailer.sent).toHaveLength(2);
       const [customer] = ctx.mailer.sent;
       expect(customer.attachments!.map((a) => a.filename)).toEqual([
-        'lesson-1.ics',
-        'lesson-2.ics',
-        'lesson-3.ics',
+        'lessons.ics',
       ]);
-      created(res).forEach((lesson, index) => {
-        expect(ics(customer, index)).toContain(`UID:class-${lesson.id}@`);
-      });
+      const calendar = ics(customer);
+      expect(calendar.match(/BEGIN:VCALENDAR/g)).toHaveLength(1);
+      expect(calendar.match(/METHOD:REQUEST/g)).toHaveLength(1);
+      expect(calendar.match(/BEGIN:VEVENT/g)).toHaveLength(3);
+      expect(calendar.match(/^UID:.*$/gm)).toEqual(
+        created(res).map((lesson) => `UID:class-${lesson.id}@ssnow.club`),
+      );
+      expect(calendar.match(/^SEQUENCE:.*$/gm)).toEqual([
+        'SEQUENCE:0',
+        'SEQUENCE:0',
+        'SEQUENCE:0',
+      ]);
+    });
+
+    it('keeps the idempotency key of a 12-lesson series within 256 characters', async () => {
+      await post(booking({ repeat: { weekly: true, count: 12 } })).expect(201);
+      const keys = ctx.mailer.sent.map((m) => [m.template, m.idempotencyKey]);
+      expect(keys).toEqual([
+        ['booking.confirmed.customer', expect.any(String)],
+        ['booking.confirmed.instructor', expect.any(String)],
+      ]);
+      for (const [, key] of keys) {
+        expect(key!.length).toBeLessThanOrEqual(256);
+      }
+      expect(keys[0][1]).toMatch(
+        new RegExp(`^booking:confirmed:customer:${MEI_ID}:[0-9a-f]{64}$`),
+      );
+      expect(keys[1][1]).toMatch(
+        new RegExp(`^booking:confirmed:instructor:${AMY_ID}:[0-9a-f]{64}$`),
+      );
     });
 
     it('still books when the email lookup fails', async () => {
@@ -344,13 +371,33 @@ describe('booking emails HTTP', () => {
         ['booking.confirmed.customer', 'ann@example.com', 'en'],
       ]);
       expect(ics(ctx.mailer.sent[0])).toContain('METHOD:CANCEL');
-      expect(ics(ctx.mailer.sent[0])).toContain('SEQUENCE:1');
+      expect(ics(ctx.mailer.sent[0])).toContain('SEQUENCE:2');
       expect(one(res).warnings).toEqual([
         expect.objectContaining({
           code: 'customer_email_missing',
           customerId: LEO_ID,
         }),
       ]);
+    });
+
+    it('re-invites a removed customer with a higher SEQUENCE and a new idempotency key', async () => {
+      const [lesson] = created(
+        await post(booking({ instructorId: BEN_ID })).expect(201),
+      );
+      await patch(lesson.id, { customerIds: [LEO_ID] }).expect(200);
+      await patch(lesson.id, { customerIds: [MEI_ID] }).expect(200);
+      const mei = ctx.mailer.sent.filter((m) => m.to === 'mei@example.com');
+      expect(mei.map((m) => m.template)).toEqual([
+        'booking.confirmed.customer',
+        'booking.cancelled.customer',
+        'booking.confirmed.customer',
+      ]);
+      const sequences = mei.map((m) =>
+        Number(/^SEQUENCE:(\d+)$/m.exec(ics(m))![1]),
+      );
+      expect(sequences[1]).toBeGreaterThan(sequences[0]);
+      expect(sequences[2]).toBeGreaterThan(sequences[1]);
+      expect(new Set(mei.map((m) => m.idempotencyKey)).size).toBe(3);
     });
 
     it('sends nothing for a notes-only edit or when sendEmails is false', async () => {

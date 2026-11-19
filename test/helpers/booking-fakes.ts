@@ -1,4 +1,8 @@
 import {
+  BOOKING_EMAIL_PACING,
+  BookingEmailQueue,
+} from '../../src/booking/booking-email-queue';
+import {
   type BatchRowCommit,
   type BatchRowKey,
   type BatchRowRecord,
@@ -31,6 +35,14 @@ import type {
 import type { GoogleCalendarClient } from '../../src/google/google-calendar.client';
 import type { ClassRow } from '../../src/lessons/classes.repository';
 import type { ClassStatus } from '../../src/lessons/lessons.types';
+
+export const IMMEDIATE_BOOKING_EMAILS = [
+  BookingEmailQueue,
+  {
+    provide: BOOKING_EMAIL_PACING,
+    useValue: { intervalMs: 0, concurrency: Number.POSITIVE_INFINITY },
+  },
+];
 
 export const AMY_ID = '0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d';
 export const BEN_ID = '1b2c3d4e-5f6a-4b7c-9d8e-9f0a1b2c3d4e';
@@ -551,6 +563,7 @@ export class InMemoryBookingRepository extends BookingRepository {
       row.customer_ids = customerIds;
     }
     this.bumpIcs(before, row);
+    this.bumpMembership(before, row);
     row.updated_at = this.stamp();
     return Promise.resolve();
   }
@@ -734,6 +747,16 @@ export class InMemoryBookingRepository extends BookingRepository {
     if (ICS_FIELDS.some((field) => before[field] !== row[field])) {
       row.ics_sequence = before.ics_sequence + 1;
     }
+  }
+
+  private bumpMembership(before: FakeClass, row: FakeClass): void {
+    const removed = before.customer_ids.some(
+      (id) => !row.customer_ids.includes(id),
+    );
+    const added = row.customer_ids.some(
+      (id) => !before.customer_ids.includes(id),
+    );
+    row.ics_sequence += Number(removed) + Number(added);
   }
 
   private notice(row: FakeClass): ClassNoticeRow {

@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type {
@@ -8,6 +9,7 @@ import type {
   EmailTemplate,
 } from '../mailer/mailer.types';
 import { BOOKING_CLOCK, type BookingClock } from './booking-calendars.service';
+import { BookingEmailQueue } from './booking-email-queue';
 import {
   buildIcs,
   classUid,
@@ -64,6 +66,7 @@ export class BookingEmailsService {
   constructor(
     private readonly repo: BookingRepository,
     private readonly mailer: MailerService,
+    private readonly queue: BookingEmailQueue,
     @Inject(BOOKING_CLOCK) private readonly clock: BookingClock,
   ) {}
 
@@ -156,11 +159,11 @@ export class BookingEmailsService {
   private deliverAll(deliveries: Delivery[]): BookingWarning[] {
     const warnings: BookingWarning[] = [];
     for (const delivery of deliveries) {
-      const { recipient } = delivery;
-      if (recipient.email) {
-        void this.deliver(delivery, recipient.email);
+      const to = delivery.recipient.email;
+      if (to) {
+        this.queue.enqueue(() => this.deliver(delivery, to));
       } else {
-        warnings.push(missingEmail(recipient));
+        warnings.push(missingEmail(delivery.recipient));
       }
     }
     return warnings;
@@ -191,34 +194,46 @@ export class BookingEmailsService {
           ? { customerId: recipient.id }
           : {}),
       },
-      idempotencyKey: [
-        'booking',
-        kind,
-        recipient.audience,
-        recipient.id,
-        ...notices.map((n) => `${n.id}.${delivery.sequence ?? n.ics_sequence}`),
-      ].join(':'),
-      attachments: notices.map((notice, index) => ({
-        filename: notices.length > 1 ? `lesson-${index + 1}.ics` : 'lesson.ics',
-        contentType: icsContentType(method),
-        content: Buffer.from(
-          buildIcs({
-            method,
-            uid: classUid(notice.id),
-            sequence: delivery.sequence ?? notice.ics_sequence,
-            stamp,
-            start: new Date(notice.starts_at),
-            end: new Date(notice.ends_at),
-            summary: summaryFor(recipient.audience, notice),
-            location: notice.location?.name ?? null,
-            organizer,
-            attendees: attendeesOf(notice),
-          }),
-          'utf8',
-        ),
-      })),
+      idempotencyKey: idempotencyKey(delivery),
+      attachments: [
+        {
+          filename: notices.length > 1 ? 'lessons.ics' : 'lesson.ics',
+          contentType: icsContentType(method),
+          content: Buffer.from(
+            buildIcs({
+              method,
+              stamp,
+              organizer,
+              events: notices.map((notice) => ({
+                uid: classUid(notice.id),
+                sequence: sequenceOf(delivery, notice),
+                start: new Date(notice.starts_at),
+                end: new Date(notice.ends_at),
+                summary: summaryFor(recipient.audience, notice),
+                location: notice.location?.name ?? null,
+                attendees: attendeesOf(notice),
+              })),
+            }),
+            'utf8',
+          ),
+        },
+      ],
     });
   }
+}
+
+function sequenceOf(delivery: Delivery, notice: ClassNoticeRow): number {
+  return delivery.sequence ?? notice.ics_sequence;
+}
+
+function idempotencyKey(delivery: Delivery): string {
+  const { kind, recipient, notices } = delivery;
+  const lessons = notices
+    .map((n) => `${n.id}.${sequenceOf(delivery, n)}`)
+    .sort()
+    .join(',');
+  const digest = createHash('sha256').update(lessons).digest('hex');
+  return ['booking', kind, recipient.audience, recipient.id, digest].join(':');
 }
 
 function recipientsOf(notice: ClassNoticeRow): Recipient[] {

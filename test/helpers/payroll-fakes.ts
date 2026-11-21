@@ -236,7 +236,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
   owedFor(
     c: PayrollClassRow,
     lines: PayrollLineRow[],
-  ): { currency: string; cents: number } {
+  ): { currency: string; cents: number; needsRate: boolean } {
     const minutes = Math.max(
       0,
       Math.round((Date.parse(c.ends_at) - Date.parse(c.starts_at)) / 60_000),
@@ -262,11 +262,14 @@ export class InMemoryPayrollRepository extends PayrollRepository {
         }
       : (effective.find((r) => r.instructor_id === c.instructor_id) ??
         effective.find((r) => r.instructor_id === null));
-    if (!rate) return { currency: 'CAD', cents: 0 };
-    if (rate.hourly_rate === null) return { currency: rate.currency, cents: 0 };
+    if (!rate) return { currency: 'CAD', cents: 0, needsRate: true };
+    if (rate.hourly_rate === null) {
+      return { currency: rate.currency, cents: 0, needsRate: false };
+    }
     const rateCents = Math.round(Number(rate.hourly_rate) * 100);
     return {
       currency: rate.currency,
+      needsRate: false,
       cents:
         rate.rate_unit === 'day'
           ? rateCents
@@ -301,6 +304,7 @@ export class InMemoryPayrollRepository extends PayrollRepository {
         if (paid) {
           const owed = this.owedFor(c, lines);
           return (
+            owed.needsRate ||
             [...net].some(
               ([key, amount]) =>
                 key.startsWith(`${c.instructor_id}|`) &&

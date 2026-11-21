@@ -1474,6 +1474,53 @@ describe('payroll admin HTTP', () => {
         expect((await detailOf(next)).lines).toEqual([]);
       });
 
+      it('flags a paid lesson that was cancelled and comes back on a lesson type without a rate as needs rate, and pays it once the rate is set', async () => {
+        ctx.repo.rates.splice(1, 1);
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        cls.status = 'cancelled';
+        await finalize(current);
+        retype(cls, GROUP_60, 60);
+        cls.status = 'completed';
+        const live = await detailOf(next);
+        expect(adjusted(live)).toEqual([
+          ['2025-12-20', 0, 60, null, ['late', 'needs_rate']],
+        ]);
+        expect(live.needsRateCount).toBe(1);
+        await post(`/admin/payroll/periods/${next.id}/finalize`).expect(409);
+        ctx.repo.addRate({
+          lessonTypeId: GROUP_60,
+          hourlyRate: 30,
+          from: '2025-01-01',
+        });
+        const priced = await detailOf(next);
+        expect(adjusted(priced)).toEqual([
+          ['2025-12-20', 30, 60, 30, ['late']],
+        ]);
+        expect(priced.needsRateCount).toBe(0);
+        await finalize(next);
+        expect(netPaid(cls.id)).toBe(30);
+        expect((await detailOf(later)).lines).toEqual([]);
+      });
+
+      it('flags a paid lesson that was reassigned away and comes back on a lesson type without a rate as needs rate', async () => {
+        ctx.repo.rates.splice(1, 1);
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        reassign(cls, BO_ID);
+        await finalize(current);
+        reassign(cls, ADA_ID);
+        retype(cls, GROUP_60, 60);
+        const live = await detailOf(next);
+        expect(byInstructor(live)).toEqual([
+          ['Ada Lin', 0, ['late', 'reassigned', 'needs_rate']],
+          ['Bo Chen', -60, ['late_cancel', 'reassigned']],
+        ]);
+        expect(live.needsRateCount).toBe(1);
+        await finalize(next, { acceptZeroRate: true });
+        expect((await detailOf(later)).lines).toEqual([]);
+      });
+
       it('moves the pay into the new currency when the new lesson type is paid in another currency', async () => {
         ctx.repo.rates[1].currency = 'USD';
         const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });

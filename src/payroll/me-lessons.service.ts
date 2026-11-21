@@ -194,10 +194,7 @@ function toLesson(
     rate: line.hourlyRate,
     rateUnit: line.rateUnit,
     currency: line.currency,
-    amount:
-      projected && needsRate && !line.flags.includes(ADJUSTED)
-        ? null
-        : line.amount,
+    amount: projected && needsRate && line.amount === 0 ? null : line.amount,
     needsRate,
     late: line.flags.includes(LATE),
     lateCancel: line.flags.includes(LATE_CANCEL),

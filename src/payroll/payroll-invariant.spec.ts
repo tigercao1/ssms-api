@@ -15,6 +15,7 @@ import {
   CORRECTION,
   LATE,
   LATE_CANCEL,
+  NEEDS_RATE,
   REASSIGNED,
 } from './payroll-lines';
 import {
@@ -27,6 +28,7 @@ import type { PayrollPeriodRow } from './payroll.repository';
 import { PayrollService } from './payroll.service';
 
 const CY_ID = '6bcfac7e-8a9d-4ebf-8a3b-4c5d6e7f8a9b';
+const TRIAL_45 = '7cdfbd8f-9b0e-4fcb-8b4c-5d6e7f8a9b0c';
 const INSTRUCTORS = [ADA_ID, BO_ID, CY_ID];
 const RATES = [30, 40, 45.5, 50, 80, 33.33];
 const MINUTES = [45, 60, 90, 120];
@@ -34,11 +36,13 @@ const LESSON_TYPES: (string | null)[] = [
   PRIVATE_90,
   PRIVATE_90,
   GROUP_60,
+  TRIAL_45,
   null,
 ];
 const TYPE_MINUTES = new Map([
   [PRIVATE_90, 90],
   [GROUP_60, 60],
+  [TRIAL_45, 45],
 ]);
 const HOURS = [0, 10.5, 23.5];
 const SEQUENCES = 500;
@@ -87,6 +91,7 @@ class Model {
       display_name_zh: null,
       email: 'cy@example.com',
     });
+    this.repo.lessonTypes.set(TRIAL_45, { name_en: 'Trial 45', name_zh: null });
     this.service = new PayrollService(
       this.repo,
       recordingAudit() as unknown as AuditService,
@@ -383,7 +388,9 @@ class Model {
 
   editRate() {
     const instructorId = this.rand() < 0.25 ? null : this.pick(INSTRUCTORS);
-    const lessonTypeId = this.rand() < 0.7 ? PRIVATE_90 : GROUP_60;
+    const roll = this.rand();
+    const lessonTypeId =
+      roll < 0.65 ? PRIVATE_90 : roll < 0.95 ? GROUP_60 : TRIAL_45;
     const hourlyRate = this.pick(RATES);
     const rateUnit = this.rand() < 0.2 ? 'day' : 'hour';
     const currency = this.rand() < 0.1 ? 'USD' : 'CAD';
@@ -447,8 +454,18 @@ class Model {
     const problems: string[] = this.problems.splice(0);
     const current = await this.currentPeriod();
     const shown = new Map<string, number>();
+    const needsRate = new Set<string>();
     for (const period of this.repo.periods.filter((p) => p.status === 'open')) {
-      const { lines } = await this.service.detail(period.id);
+      const { lines, needsRateCount } = await this.service.detail(period.id);
+      const flagged = lines.filter((l) => l.flags.includes(NEEDS_RATE));
+      if (needsRateCount !== flagged.length) {
+        problems.push(
+          `needsRateCount ${needsRateCount} != ${flagged.length} needs rate lines in ${period.starts_on}`,
+        );
+      }
+      for (const line of flagged) {
+        needsRate.add(`${line.classId}|${line.instructorId}`);
+      }
       const seen = new Set<string>();
       for (const line of lines) {
         const key = moneyKey(line.classId, line.instructorId, line.currency);
@@ -512,6 +529,20 @@ class Model {
             problems.push(`late ${key} ${line.amount} correction mismatch`);
           }
         }
+      }
+    }
+    for (const cls of this.repo.classes) {
+      if (
+        cls.status !== 'cancelled' &&
+        !this.paidAt.has(
+          rateKey(cls.id, cls.instructor_id, cls.lesson_type_id),
+        ) &&
+        this.tableRate(cls) === null &&
+        !needsRate.has(`${cls.id}|${cls.instructor_id}`)
+      ) {
+        problems.push(
+          `unpriced ${cls.id}|${cls.instructor_id} has no needs rate line`,
+        );
       }
     }
     problems.push(...this.compare(shown, () => true, ''));

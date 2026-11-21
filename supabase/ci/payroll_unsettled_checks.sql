@@ -96,7 +96,10 @@ insert into expected values
   (48, 'paid, new type priced on the lesson date',                 'ada', '2025-12-18 20:00 America/Toronto', 'completed', true,  'other', 90),
   (49, 'new type settled at its rate on the lesson date',          'ada', '2025-12-18 21:00 America/Toronto', 'completed', false, 'other', 90),
   (50, 'new type settled, then back to the first type',            'ada', '2025-12-18 22:00 America/Toronto', 'completed', true,  'p90', 90),
-  (51, 'new type settled on the lesson date at a rate since moved', 'ada', '2025-12-19 11:00 America/Toronto', 'completed', false, 'other', 90);
+  (51, 'new type settled on the lesson date at a rate since moved', 'ada', '2025-12-19 11:00 America/Toronto', 'completed', false, 'other', 90),
+  (52, 'paid, late cancel reversed, restored on a type with no rate', 'ada', '2025-12-19 12:00 America/Toronto', 'completed', true,  'none', 60),
+  (53, 'paid, reassigned away and back on a type with no rate',    'ada', '2025-12-19 13:00 America/Toronto', 'completed', true,  'none', 60),
+  (54, 'reversed, back on a type with no rate, accepted at zero',  'ada', '2025-12-19 14:00 America/Toronto', 'completed', false, 'none', 60);
 
 insert into classes (id, instructor_id, lesson_type_id, starts_at, ends_at, status)
 select ('55555555-5555-4555-8555-' || lpad(n::text, 12, '0'))::uuid,
@@ -209,7 +212,16 @@ insert into seeded (seq, n, instructor, period, amount, flags, rate, rate_unit, 
   (73, 50, 'ada', 1,   60, '{}', 40, 'hour', 90, 'CAD', null),
   (74, 50, 'ada', 2,  -15, '{adjusted,changed_lesson_type}', 30, 'hour', 0, 'CAD', 'other'),
   (75, 51, 'ada', 1,   60, '{}', 40, 'hour', 90, 'CAD', 'p90'),
-  (76, 51, 'ada', 2,   30, '{adjusted,changed_lesson_type}', 60, 'hour', 0, 'CAD', null);
+  (76, 51, 'ada', 2,   30, '{adjusted,changed_lesson_type}', 60, 'hour', 0, 'CAD', null),
+  (77, 52, 'ada', 1,   60, '{}', 40, 'hour', 90, 'CAD', 'p90'),
+  (78, 52, 'ada', 2,  -60, '{late_cancel}', 40, 'hour', 90, 'CAD', 'p90'),
+  (79, 53, 'ada', 1,   60, '{}', 40, 'hour', 90, 'CAD', 'p90'),
+  (80, 53, 'ada', 2,  -60, '{late_cancel,reassigned}', 40, 'hour', 90, 'CAD', 'p90'),
+  (81, 53, 'bo',  2,  120, '{late,reassigned}', 80, 'hour', 90, 'CAD', null),
+  (82, 53, 'bo',  4, -120, '{late_cancel,reassigned}', 80, 'hour', 90, 'CAD', null),
+  (83, 54, 'ada', 1,   60, '{}', 40, 'hour', 90, 'CAD', 'p90'),
+  (84, 54, 'ada', 2,  -60, '{late_cancel}', 40, 'hour', 90, 'CAD', 'p90'),
+  (85, 54, 'ada', 4,    0, '{late,needs_rate}', null, 'hour', 60, 'CAD', null);
 
 insert into payroll_lines (
   period_id, instructor_id, class_id, kind, lesson_type_id, amount, flags, minutes,

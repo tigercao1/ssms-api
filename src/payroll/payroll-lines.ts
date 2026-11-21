@@ -347,7 +347,7 @@ function owedLines(
     const paid = groups.get(currency) ?? [];
     const owing = currency === target.currency;
     const diff = (owing ? toCents(target.amount) : 0) - netCents(paid);
-    if (diff === 0) {
+    if (diff === 0 && !(owing && needsRate)) {
       continue;
     }
     const reference = owing ? target : (latestTerms(paid) ?? paid[0]);

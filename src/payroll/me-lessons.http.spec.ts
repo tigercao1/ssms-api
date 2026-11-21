@@ -863,6 +863,53 @@ describe('GET /me/lessons', () => {
         ]);
       });
 
+      it('shows a paid lesson that was cancelled and comes back on a lesson type without a rate as needing a rate', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        await finalize('2025-12-29');
+        cls.status = 'cancelled';
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-26', ends_on: '2026-02-08' },
+        ]);
+        await finalize('2026-01-12');
+        cls.status = 'completed';
+        cls.lesson_type_id = GROUP_60;
+        const [open] = (await mine()).periods;
+        expect(open.startsOn).toBe('2026-01-26');
+        expect(open.lessons).toEqual([
+          expect.objectContaining({
+            classId: cls.id,
+            amount: null,
+            needsRate: true,
+            late: true,
+          }),
+        ]);
+        expect(open.totals[0]).toMatchObject({ needsRateCount: 1, total: 0 });
+      });
+
+      it('shows the amount of a late lesson that needs a rate when it is not zero', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        const paid = await finalize('2025-12-29');
+        cls.status = 'cancelled';
+        await ctx.repo.ensurePeriods([
+          { starts_on: '2026-01-26', ends_on: '2026-02-08' },
+        ]);
+        await finalize('2026-01-12');
+        await ctx.payroll.reopen(paid.id, ACTOR);
+        cls.status = 'completed';
+        cls.lesson_type_id = GROUP_60;
+        const [open] = (await mine()).periods;
+        expect(open.startsOn).toBe('2026-01-26');
+        expect(open.lessons).toEqual([
+          expect.objectContaining({
+            classId: cls.id,
+            amount: 135,
+            needsRate: true,
+            late: true,
+          }),
+        ]);
+        expect(open.totals[0]).toMatchObject({ needsRateCount: 1, total: 135 });
+      });
+
       it('leaves out other instructors’ late lines', async () => {
         await finalize('2025-12-29');
         ctx.repo.addClass({

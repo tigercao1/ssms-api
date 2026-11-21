@@ -48,7 +48,8 @@ as $$
                * greatest(0, round(extract(epoch from c.ends_at - c.starts_at) / 60))
                / 60
              ) / 100
-           end as amount
+           end as amount,
+           paid_at.class_id is null and r.hourly_rate is null as needs_rate
       from classes c
       join paying
         on paying.class_id = c.id
@@ -84,7 +85,8 @@ as $$
   union
   select owed.class_id
     from owed
-   where owed.amount <> coalesce((
+   where owed.needs_rate
+      or owed.amount <> coalesce((
            select paid.net
              from paid
             where paid.class_id = owed.class_id

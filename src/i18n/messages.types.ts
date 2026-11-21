@@ -189,7 +189,10 @@ export interface EmailMessages {
     labels: EmailBookingLabels;
     confirmed: EmailBookingAudienceCopy;
     rescheduled: EmailBookingAudienceCopy;
-    updated: { instructor: EmailBookingUpdatedCopy };
+    updated: {
+      customer: EmailBookingCustomerUpdatedCopy;
+      instructor: EmailBookingUpdatedCopy;
+    };
     cancelled: EmailBookingAudienceCopy;
     reminder: EmailBookingAudienceCopy;
   };
@@ -200,13 +203,20 @@ export interface EmailBookingAudienceCopy {
   instructor: EmailCopy;
 }
 
-/** Change lines use `{names}` (added, removed) and `{previous}` (location, lessonType). */
-export interface EmailBookingUpdatedCopy extends EmailCopy {
-  added: string;
-  removed: string;
+/** Change lines use `{names}` (added, removed) and `{previous}` (location, lessonType, instructor). */
+export interface EmailBookingDetailChangeCopy extends EmailCopy {
   location: string;
   lessonType: string;
   notSet: string;
+}
+
+export interface EmailBookingUpdatedCopy extends EmailBookingDetailChangeCopy {
+  added: string;
+  removed: string;
+}
+
+export interface EmailBookingCustomerUpdatedCopy extends EmailBookingDetailChangeCopy {
+  instructor: string;
 }
 
 export interface EmailBookingLabels {

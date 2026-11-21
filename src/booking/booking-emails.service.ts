@@ -9,6 +9,8 @@ import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type {
   BookingEmailVars,
+  BookingCustomerUpdateChanges,
+  BookingDetailChanges,
   BookingLessonTime,
   BookingUpdateChanges,
   EmailLanguage,
@@ -60,7 +62,7 @@ interface Delivery {
   notices: ClassNoticeRow[];
   sequence?: number;
   previous?: ClassNoticeRow;
-  changes?: BookingUpdateChanges;
+  changes?: BookingUpdateChanges | BookingCustomerUpdateChanges;
 }
 
 interface PendingEmail {
@@ -156,12 +158,19 @@ export class BookingEmailsService implements OnModuleDestroy {
           notices: [after],
           changes: changesOf(before, after),
         });
+      } else if (moved && sameTime(before, after)) {
+        deliveries.push({
+          kind: 'updated',
+          recipient,
+          notices: [after],
+          changes: customerChangesOf(before, after),
+        });
       } else if (moved) {
         deliveries.push({
           kind: 'rescheduled',
           recipient,
           notices: [after],
-          previous: sameTime(before, after) ? undefined : before,
+          previous: before,
         });
       }
     }
@@ -353,7 +362,7 @@ function emailVars(
   delivery: Delivery,
 ): BookingEmailVars & {
   previous?: BookingLessonTime[];
-  changes?: BookingUpdateChanges;
+  changes?: BookingUpdateChanges | BookingCustomerUpdateChanges;
 } {
   return {
     ...lessonVars(recipient, delivery.notices),
@@ -400,13 +409,11 @@ function customerNames(
     .filter((n): n is string => Boolean(n));
 }
 
-function changesOf(
+function detailChangesOf(
   before: ClassNoticeRow,
   after: ClassNoticeRow,
-): BookingUpdateChanges {
+): BookingDetailChanges {
   return {
-    addedCustomers: customerNames(after, before),
-    removedCustomers: customerNames(before, after),
     ...(before.location?.name !== after.location?.name
       ? { location: { previous: before.location?.name ?? null } }
       : {}),
@@ -415,6 +422,34 @@ function changesOf(
           lessonType: {
             previousEn: before.lesson_type?.name_en ?? DEFAULT_LESSON_NAME,
             previousZh: before.lesson_type?.name_zh ?? null,
+          },
+        }
+      : {}),
+  };
+}
+
+function changesOf(
+  before: ClassNoticeRow,
+  after: ClassNoticeRow,
+): BookingUpdateChanges {
+  return {
+    addedCustomers: customerNames(after, before),
+    removedCustomers: customerNames(before, after),
+    ...detailChangesOf(before, after),
+  };
+}
+
+function customerChangesOf(
+  before: ClassNoticeRow,
+  after: ClassNoticeRow,
+): BookingCustomerUpdateChanges {
+  return {
+    ...detailChangesOf(before, after),
+    ...(before.instructor_id !== after.instructor_id
+      ? {
+          instructor: {
+            previousEn: before.instructor?.display_name_en ?? '',
+            previousZh: before.instructor?.display_name_zh ?? null,
           },
         }
       : {}),
@@ -487,7 +522,5 @@ function messageOf(err: unknown): string {
 }
 
 function templateOf({ kind, recipient }: Delivery): EmailTemplate {
-  return kind === 'updated'
-    ? 'booking.updated.instructor'
-    : (`booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate);
+  return `booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate;
 }

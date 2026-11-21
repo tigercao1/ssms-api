@@ -535,6 +535,22 @@ export const en: MessageCatalog = {
         },
       },
       updated: {
+        customer: {
+          subject: 'Your lesson was updated: {lesson}',
+          preheader:
+            'Your {lesson} with {instructor} was updated. The time has not changed.',
+          heading: 'Your lesson was updated',
+          paragraphs: [
+            'Your {lesson} with {instructor} was updated. The time has not changed:',
+            'If the new details do not work for you, just reply to this email.',
+          ],
+          finePrint:
+            "The attached calendar file updates the lesson in your calendar. You're receiving this because a lesson was booked for you with Serendipity Snow Club.",
+          location: 'Location changed (previously {previous}).',
+          lessonType: 'Lesson type changed (previously {previous}).',
+          instructor: 'Instructor changed (previously {previous}).',
+          notSet: 'not set',
+        },
         instructor: {
           subject: 'Lesson updated: {lesson}',
           preheader:

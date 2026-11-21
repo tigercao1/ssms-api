@@ -512,6 +512,21 @@ export const zhCN: MessageCatalog = {
         },
       },
       updated: {
+        customer: {
+          subject: '课程已更新：{lesson}',
+          preheader: '您与 {instructor} 的{lesson}信息已更新，上课时间不变。',
+          heading: '课程已更新',
+          paragraphs: [
+            '您与 {instructor} 的{lesson}信息已更新，上课时间不变：',
+            '如果新的安排不方便，请直接回复这封邮件。',
+          ],
+          finePrint:
+            '附件中的日历文件会更新您日历中的课程。您收到这封邮件，是因为有人在 SSnow 为您预约了课程。',
+          location: '地点已更改（原地点：{previous}）。',
+          lessonType: '课程类型已更改（原课程：{previous}）。',
+          instructor: '教练已更换（原教练：{previous}）。',
+          notSet: '未设置',
+        },
         instructor: {
           subject: '课程已更新：{lesson}',
           preheader: '您的一节课程信息已更新，上课时间不变。',

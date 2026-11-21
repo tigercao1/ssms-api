@@ -414,9 +414,6 @@ function detailChangesOf(
   after: ClassNoticeRow,
 ): BookingDetailChanges {
   return {
-    ...(before.location?.name !== after.location?.name
-      ? { location: { previous: before.location?.name ?? null } }
-      : {}),
     ...(before.lesson_type?.name_en !== after.lesson_type?.name_en
       ? {
           lessonType: {

@@ -546,7 +546,6 @@ export const en: MessageCatalog = {
           ],
           finePrint:
             "The attached calendar file updates the lesson in your calendar. You're receiving this because a lesson was booked for you with Serendipity Snow Club.",
-          location: 'Location changed (previously {previous}).',
           lessonType: 'Lesson type changed (previously {previous}).',
           instructor: 'Instructor changed (previously {previous}).',
           notSet: 'not set',
@@ -564,9 +563,7 @@ export const en: MessageCatalog = {
             "The attached calendar file updates the lesson in your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
           added: 'Added: {names}',
           removed: 'Removed: {names}',
-          location: 'Location changed (previously {previous}).',
           lessonType: 'Lesson type changed (previously {previous}).',
-          notSet: 'not set',
         },
       },
       cancelled: {

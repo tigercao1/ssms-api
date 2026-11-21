@@ -115,7 +115,6 @@ describe('booking emails', () => {
       changes: {
         addedCustomers: ['Leo Chen'],
         removedCustomers: ['Ann Li'],
-        location: { previous: 'Blue Mountain' },
         lessonType: { previousEn: 'Group 90', previousZh: null },
       },
     });
@@ -130,9 +129,6 @@ describe('booking emails', () => {
     );
     expect(email.text).toContain('Added: Leo Chen');
     expect(email.text).toContain('Removed: Ann Li');
-    expect(email.text).toContain(
-      'Location changed (previously Blue Mountain).',
-    );
     expect(email.text).toContain('Lesson type changed (previously Group 90).');
     expect(email.text).toContain('Location: Mount St. Louis');
   });
@@ -143,7 +139,6 @@ describe('booking emails', () => {
       changes: {
         addedCustomers: [],
         removedCustomers: ['Ann Li'],
-        location: { previous: null },
       },
     });
     expect(email.subject).toBe('课程已更新：私教1小时');
@@ -151,7 +146,6 @@ describe('booking emails', () => {
     expect(email.text).toContain('您的私教1小时信息已更新，上课时间不变：');
     expect(email.text).toContain('移除学员：Ann Li');
     expect(email.text).not.toContain('新增学员');
-    expect(email.text).toContain('地点已更改（原地点：未设置）。');
     expect(email.text).not.toContain('课程类型已更改');
   });
 
@@ -186,16 +180,15 @@ describe('booking emails', () => {
     const email = renderer.render('booking.updated.customer', 'zh-CN', {
       ...vars,
       customerNames: [],
-      changes: { location: { previous: '  ' } },
+      changes: { instructor: { previousEn: '  ', previousZh: null } },
     });
     expect(email.subject).toBe('课程已更新：私教1小时');
     expect(email.text).not.toContain('改期');
     expect(email.text).toContain(
       '您与 艾米 的私教1小时信息已更新，上课时间不变：',
     );
-    expect(email.text).toContain('地点已更改（原地点：未设置）。');
+    expect(email.text).toContain('教练已更换（原教练：未设置）。');
     expect(email.text).not.toContain('课程类型已更改');
-    expect(email.text).not.toContain('教练已更换');
     expect(email.text).toContain('是因为有人在 SSnow 为您预约了课程。');
   });
 

@@ -311,17 +311,10 @@ function bookingTemplate<T extends EmailTemplate>(
 
 function detailChangeLines(
   copy: EmailBookingDetailChangeCopy,
-  { location, lessonType }: BookingDetailChanges,
+  { lessonType }: BookingDetailChanges,
   language: SupportedLanguage,
 ): string[] {
   return [
-    ...(location
-      ? [
-          interpolate(copy.location, {
-            previous: location.previous?.trim() || copy.notSet,
-          }),
-        ]
-      : []),
     ...(lessonType
       ? [
           interpolate(copy.lessonType, {
@@ -411,7 +404,6 @@ function sampleUpdate(): BookingUpdatedVars {
     changes: {
       addedCustomers: ['Leo Chen'],
       removedCustomers: ['Ann Li'],
-      location: { previous: 'Mount St. Louis Moonstone' },
     },
   };
 }

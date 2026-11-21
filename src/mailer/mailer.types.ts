@@ -116,7 +116,6 @@ export interface BookingRescheduledVars extends BookingEmailVars {
 }
 
 export interface BookingDetailChanges {
-  location?: { previous: string | null };
   lessonType?: { previousEn: string; previousZh: string | null };
 }
 

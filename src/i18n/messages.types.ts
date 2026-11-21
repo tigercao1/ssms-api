@@ -203,11 +203,9 @@ export interface EmailBookingAudienceCopy {
   instructor: EmailCopy;
 }
 
-/** Change lines use `{names}` (added, removed) and `{previous}` (location, lessonType, instructor). */
+/** Change lines use `{names}` (added, removed) and `{previous}` (lessonType, instructor). */
 export interface EmailBookingDetailChangeCopy extends EmailCopy {
-  location: string;
   lessonType: string;
-  notSet: string;
 }
 
 export interface EmailBookingUpdatedCopy extends EmailBookingDetailChangeCopy {
@@ -217,6 +215,7 @@ export interface EmailBookingUpdatedCopy extends EmailBookingDetailChangeCopy {
 
 export interface EmailBookingCustomerUpdatedCopy extends EmailBookingDetailChangeCopy {
   instructor: string;
+  notSet: string;
 }
 
 export interface EmailBookingLabels {

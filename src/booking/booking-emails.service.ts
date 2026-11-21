@@ -128,6 +128,7 @@ export class BookingEmailsService implements OnModuleDestroy {
     const previous = new Map(recipientsOf(before).map((r) => [keyOf(r), r]));
     const current = new Map(recipientsOf(after).map((r) => [keyOf(r), r]));
     const moved = changed(before, after);
+    const regrouped = !sameCustomers(before, after);
     const deliveries: Delivery[] = [];
     for (const [key, recipient] of previous) {
       if (!current.has(key)) {
@@ -142,7 +143,7 @@ export class BookingEmailsService implements OnModuleDestroy {
     for (const [key, recipient] of current) {
       if (!previous.has(key)) {
         deliveries.push({ kind: 'confirmed', recipient, notices: [after] });
-      } else if (moved) {
+      } else if (moved || (regrouped && recipient.audience === 'instructor')) {
         deliveries.push({
           kind: 'rescheduled',
           recipient,
@@ -386,6 +387,19 @@ function sameTime(before: ClassNoticeRow, after: ClassNoticeRow): boolean {
     Date.parse(before.starts_at) === Date.parse(after.starts_at) &&
     Date.parse(before.ends_at) === Date.parse(after.ends_at)
   );
+}
+
+function sameCustomers(before: ClassNoticeRow, after: ClassNoticeRow): boolean {
+  const previous = new Set(customerIdsOf(before));
+  const current = customerIdsOf(after);
+  return (
+    previous.size === new Set(current).size &&
+    current.every((id) => previous.has(id))
+  );
+}
+
+function customerIdsOf(notice: ClassNoticeRow): string[] {
+  return (notice.participants ?? []).map((p) => p.customer_id);
 }
 
 function changed(before: ClassNoticeRow, after: ClassNoticeRow): boolean {

@@ -88,4 +88,47 @@ describe('MailerConfig', () => {
       'noreply@contact.ssnow.club',
     );
   });
+
+  it('uses MAIL_FROM_WAIVERS with the default Reply-To for waiver templates only', () => {
+    const config = new MailerConfig(
+      configWith({
+        MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+        MAIL_FROM_BOOKINGS: 'Bookings <bookings@contact.ssnow.club>',
+        MAIL_REPLY_TO_BOOKINGS: 'bookings@ssnow.club',
+        MAIL_FROM_WAIVERS:
+          ' Serendipity Snow Club Waivers <waivers@contact.ssnow.club> ',
+      }),
+    );
+    for (const template of [
+      'documents.assigned',
+      'documents.reminder',
+      'documents.completed',
+    ] as const) {
+      expect(config.mailboxFor(template)).toEqual({
+        from: 'Serendipity Snow Club Waivers <waivers@contact.ssnow.club>',
+      });
+      expect(config.senderAddressFor(template)).toBe(
+        'waivers@contact.ssnow.club',
+      );
+    }
+    expect(config.mailboxFor('booking.confirmed.customer')).toEqual({
+      from: 'Bookings <bookings@contact.ssnow.club>',
+      replyTo: 'bookings@ssnow.club',
+    });
+    expect(config.mailboxFor('certification.expiring')).toEqual({});
+  });
+
+  it('falls back to MAIL_FROM for waiver templates when MAIL_FROM_WAIVERS is unset', () => {
+    const config = new MailerConfig(
+      configWith({
+        MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+        MAIL_FROM_BOOKINGS: 'Bookings <bookings@contact.ssnow.club>',
+        MAIL_FROM_WAIVERS: ' ',
+      }),
+    );
+    expect(config.mailboxFor('documents.completed')).toEqual({});
+    expect(config.senderAddressFor('documents.completed')).toBe(
+      'noreply@contact.ssnow.club',
+    );
+  });
 });

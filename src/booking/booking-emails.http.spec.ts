@@ -493,6 +493,7 @@ describe('booking emails HTTP', () => {
       expect(sent(ctx.mailer)).toEqual([
         ['booking.cancelled.customer', 'mei@example.com', 'en'],
         ['booking.confirmed.customer', 'ann@example.com', 'en'],
+        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
       ]);
       expect(ics(ctx.mailer.sent[0])).toContain('METHOD:CANCEL');
       expect(ics(ctx.mailer.sent[0])).toContain('SEQUENCE:2');
@@ -502,6 +503,58 @@ describe('booking emails HTTP', () => {
           customerId: LEO_ID,
         }),
       ]);
+    });
+
+    const instructorInvite = () => {
+      const amy = ctx.mailer.sent.find((m) => m.to === 'amy@example.com')!;
+      expect(amy.template).toBe('booking.rescheduled.instructor');
+      expect(amy.vars).not.toHaveProperty('previous');
+      const calendar = ics(amy);
+      expect(calendar).toContain('METHOD:REQUEST');
+      expect(calendar).toContain(`UID:class-${CLASS_A}@ssnow.club`);
+      expect(calendar).toContain('SEQUENCE:1');
+      expect(calendar).toContain('DTSTART:20261212T150000Z');
+      return { vars: amy.vars, calendar };
+    };
+
+    it('sends the instructor an updated invite when a patch only adds a customer', async () => {
+      ctx.repo.customers.find((c) => c.id === LEO_ID)!.email =
+        'leo@example.com';
+      await patch(CLASS_A, { customerIds: [MEI_ID, LEO_ID] }).expect(200);
+      expect(sent(ctx.mailer)).toEqual([
+        ['booking.confirmed.customer', 'leo@example.com', 'en'],
+        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
+      ]);
+      const { vars, calendar } = instructorInvite();
+      expect(vars).toMatchObject({ customerNames: ['Mei Wang', 'Leo Chen'] });
+      expect(calendar).toContain('mailto:mei@example.com');
+      expect(calendar).toContain('mailto:leo@example.com');
+    });
+
+    it('sends the instructor an updated invite when a patch only removes a customer', async () => {
+      ctx.repo.customers.find((c) => c.id === LEO_ID)!.email =
+        'leo@example.com';
+      ctx.repo.classes.find((c) => c.id === CLASS_A)!.customer_ids = [
+        MEI_ID,
+        LEO_ID,
+      ];
+      await patch(CLASS_A, { customerIds: [MEI_ID] }).expect(200);
+      expect(sent(ctx.mailer)).toEqual([
+        ['booking.cancelled.customer', 'leo@example.com', 'en'],
+        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
+      ]);
+      const { vars, calendar } = instructorInvite();
+      expect(vars).toMatchObject({ customerNames: ['Mei Wang'] });
+      expect(calendar).toContain('mailto:mei@example.com');
+      expect(calendar).not.toContain('leo@example.com');
+    });
+
+    it('sends nothing when a patch only changes customers with sendEmails false', async () => {
+      await patch(CLASS_A, {
+        customerIds: [LEO_ID],
+        sendEmails: false,
+      }).expect(200);
+      expect(ctx.mailer.sent).toEqual([]);
     });
 
     it('re-invites a removed customer with a higher SEQUENCE and a new idempotency key', async () => {
@@ -624,6 +677,21 @@ describe('booking emails HTTP', () => {
         sendEmails: true,
       }).expect(200);
       expect(one(res)).toMatchObject({ startsAt: PAST, warnings: [] });
+      expect(ctx.mailer.sent).toEqual([]);
+    });
+
+    it('changes the customers of a past lesson without emails or warnings', async () => {
+      ctx.repo.add({
+        id: CLASS_A,
+        status: 'completed',
+        starts_at: PAST,
+        ends_at: '2026-12-01T16:00:00.000Z',
+        customer_ids: [MEI_ID],
+      });
+      const res = await patch(CLASS_A, {
+        customerIds: [MEI_ID, LEO_ID],
+      }).expect(200);
+      expect(one(res)).toMatchObject({ warnings: [] });
       expect(ctx.mailer.sent).toEqual([]);
     });
 

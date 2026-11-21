@@ -11,6 +11,7 @@ export {
   type MessageCatalog,
   type SupportedLanguage,
   type EmailButtonCopy,
+  type EmailBookingDetailChangeCopy,
   type EmailCopy,
   type EmailGenericCopy,
   type EmailLayoutCopy,

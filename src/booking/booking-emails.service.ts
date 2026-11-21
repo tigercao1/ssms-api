@@ -9,7 +9,10 @@ import { resolveEmailLanguage } from '../mailer/email-language';
 import { MailerService } from '../mailer/mailer.service';
 import type {
   BookingEmailVars,
+  BookingCustomerUpdateChanges,
+  BookingDetailChanges,
   BookingLessonTime,
+  BookingUpdateChanges,
   EmailLanguage,
   EmailTemplate,
   SendEmailRequest,
@@ -41,7 +44,7 @@ export const CUSTOMER_EMAIL_MISSING =
 export const INSTRUCTOR_EMAIL_MISSING =
   'The instructor has no email address, so no booking email was sent';
 
-type BookingEmailKind = 'confirmed' | 'rescheduled' | 'cancelled';
+type BookingEmailKind = 'confirmed' | 'rescheduled' | 'updated' | 'cancelled';
 export type Audience = 'customer' | 'instructor';
 
 export interface Recipient {
@@ -59,6 +62,7 @@ interface Delivery {
   notices: ClassNoticeRow[];
   sequence?: number;
   previous?: ClassNoticeRow;
+  changes?: BookingUpdateChanges | BookingCustomerUpdateChanges;
 }
 
 interface PendingEmail {
@@ -128,6 +132,7 @@ export class BookingEmailsService implements OnModuleDestroy {
     const previous = new Map(recipientsOf(before).map((r) => [keyOf(r), r]));
     const current = new Map(recipientsOf(after).map((r) => [keyOf(r), r]));
     const moved = changed(before, after);
+    const regrouped = !sameCustomers(before, after);
     const deliveries: Delivery[] = [];
     for (const [key, recipient] of previous) {
       if (!current.has(key)) {
@@ -142,12 +147,30 @@ export class BookingEmailsService implements OnModuleDestroy {
     for (const [key, recipient] of current) {
       if (!previous.has(key)) {
         deliveries.push({ kind: 'confirmed', recipient, notices: [after] });
+      } else if (
+        recipient.audience === 'instructor' &&
+        sameTime(before, after) &&
+        (moved || regrouped)
+      ) {
+        deliveries.push({
+          kind: 'updated',
+          recipient,
+          notices: [after],
+          changes: changesOf(before, after),
+        });
+      } else if (moved && sameTime(before, after)) {
+        deliveries.push({
+          kind: 'updated',
+          recipient,
+          notices: [after],
+          changes: customerChangesOf(before, after),
+        });
       } else if (moved) {
         deliveries.push({
           kind: 'rescheduled',
           recipient,
           notices: [after],
-          previous: sameTime(before, after) ? undefined : before,
+          previous: before,
         });
       }
     }
@@ -337,10 +360,14 @@ function attendeesOf(
 function emailVars(
   recipient: Recipient,
   delivery: Delivery,
-): BookingEmailVars & { previous?: BookingLessonTime[] } {
+): BookingEmailVars & {
+  previous?: BookingLessonTime[];
+  changes?: BookingUpdateChanges | BookingCustomerUpdateChanges;
+} {
   return {
     ...lessonVars(recipient, delivery.notices),
     ...(delivery.previous ? { previous: [timeOf(delivery.previous)] } : {}),
+    ...(delivery.changes ? { changes: delivery.changes } : {}),
   };
 }
 
@@ -371,10 +398,59 @@ function summaryFor(audience: Audience, notice: ClassNoticeRow): string {
   return other ? `${lesson} · ${other}` : lesson;
 }
 
-function customerNames(notice: ClassNoticeRow): string[] {
+function customerNames(
+  notice: ClassNoticeRow,
+  excluding: ClassNoticeRow | null = null,
+): string[] {
+  const skip = new Set(excluding ? customerIdsOf(excluding) : []);
   return (notice.participants ?? [])
+    .filter((p) => !skip.has(p.customer_id))
     .map((p) => (p.customer ? fullName(p.customer) : null))
     .filter((n): n is string => Boolean(n));
+}
+
+function detailChangesOf(
+  before: ClassNoticeRow,
+  after: ClassNoticeRow,
+): BookingDetailChanges {
+  return {
+    ...(before.lesson_type?.name_en !== after.lesson_type?.name_en
+      ? {
+          lessonType: {
+            previousEn: before.lesson_type?.name_en ?? DEFAULT_LESSON_NAME,
+            previousZh: before.lesson_type?.name_zh ?? null,
+          },
+        }
+      : {}),
+  };
+}
+
+function changesOf(
+  before: ClassNoticeRow,
+  after: ClassNoticeRow,
+): BookingUpdateChanges {
+  return {
+    addedCustomers: customerNames(after, before),
+    removedCustomers: customerNames(before, after),
+    ...detailChangesOf(before, after),
+  };
+}
+
+function customerChangesOf(
+  before: ClassNoticeRow,
+  after: ClassNoticeRow,
+): BookingCustomerUpdateChanges {
+  return {
+    ...detailChangesOf(before, after),
+    ...(before.instructor_id !== after.instructor_id
+      ? {
+          instructor: {
+            previousEn: before.instructor?.display_name_en ?? '',
+            previousZh: before.instructor?.display_name_zh ?? null,
+          },
+        }
+      : {}),
+  };
 }
 
 function timeOf(notice: ClassNoticeRow): BookingLessonTime {
@@ -386,6 +462,19 @@ function sameTime(before: ClassNoticeRow, after: ClassNoticeRow): boolean {
     Date.parse(before.starts_at) === Date.parse(after.starts_at) &&
     Date.parse(before.ends_at) === Date.parse(after.ends_at)
   );
+}
+
+function sameCustomers(before: ClassNoticeRow, after: ClassNoticeRow): boolean {
+  const previous = new Set(customerIdsOf(before));
+  const current = customerIdsOf(after);
+  return (
+    previous.size === new Set(current).size &&
+    current.every((id) => previous.has(id))
+  );
+}
+
+function customerIdsOf(notice: ClassNoticeRow): string[] {
+  return (notice.participants ?? []).map((p) => p.customer_id);
 }
 
 function changed(before: ClassNoticeRow, after: ClassNoticeRow): boolean {

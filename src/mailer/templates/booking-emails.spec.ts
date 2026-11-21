@@ -108,6 +108,90 @@ describe('booking emails', () => {
     expect(email.text).not.toContain('Previously:');
   });
 
+  it('says what changed and keeps the unchanged time on an update', () => {
+    const email = renderer.render('booking.updated.instructor', 'en', {
+      ...vars,
+      location: 'Mount St. Louis',
+      changes: {
+        addedCustomers: ['Leo Chen'],
+        removedCustomers: ['Ann Li'],
+        lessonType: { previousEn: 'Group 90', previousZh: null },
+      },
+    });
+    expect(email.subject).toBe('Lesson updated: Private 1h');
+    expect(email.text).not.toMatch(/reschedul/i);
+    expect(email.text).not.toContain('Previously:');
+    expect(email.text).toContain(
+      'Your Private 1h was updated. The time has not changed:',
+    );
+    expect(email.text).toContain(
+      `• ${bookingTime(LESSON, 'en')} (Toronto time)`,
+    );
+    expect(email.text).toContain('Added: Leo Chen');
+    expect(email.text).toContain('Removed: Ann Li');
+    expect(email.text).toContain('Lesson type changed (previously Group 90).');
+    expect(email.text).toContain('Location: Mount St. Louis');
+  });
+
+  it('renders the update in zh-CN and leaves out empty change lines', () => {
+    const email = renderer.render('booking.updated.instructor', 'zh-CN', {
+      ...vars,
+      changes: {
+        addedCustomers: [],
+        removedCustomers: ['Ann Li'],
+      },
+    });
+    expect(email.subject).toBe('课程已更新：私教1小时');
+    expect(email.text).not.toContain('改期');
+    expect(email.text).toContain('您的私教1小时信息已更新，上课时间不变：');
+    expect(email.text).toContain('移除学员：Ann Li');
+    expect(email.text).not.toContain('新增学员');
+    expect(email.text).not.toContain('课程类型已更改');
+  });
+
+  it('tells a customer what changed without naming other customers', () => {
+    const email = renderer.render('booking.updated.customer', 'en', {
+      ...vars,
+      customerNames: [],
+      instructorNameEn: 'Ben',
+      instructorNameZh: null,
+      changes: {
+        lessonType: { previousEn: 'Group 90', previousZh: null },
+        instructor: { previousEn: 'Amy', previousZh: '艾米' },
+      },
+    });
+    expect(email.subject).toBe('Your lesson was updated: Private 1h');
+    expect(email.text).not.toMatch(/reschedul/i);
+    expect(email.text).not.toContain('Previously:');
+    expect(email.text).toContain(
+      'Your Private 1h with Ben was updated. The time has not changed:',
+    );
+    expect(email.text).toContain(
+      `• ${bookingTime(LESSON, 'en')} (Toronto time)`,
+    );
+    expect(email.text).toContain('Lesson type changed (previously Group 90).');
+    expect(email.text).toContain('Instructor changed (previously Amy).');
+    expect(email.text).toContain('Instructor: Ben');
+    expect(email.text).not.toMatch(/Added|Removed|Students/);
+    expect(email.text).not.toContain('Leo');
+  });
+
+  it('renders the customer update in zh-CN with the SSnow brand', () => {
+    const email = renderer.render('booking.updated.customer', 'zh-CN', {
+      ...vars,
+      customerNames: [],
+      changes: { instructor: { previousEn: '  ', previousZh: null } },
+    });
+    expect(email.subject).toBe('课程已更新：私教1小时');
+    expect(email.text).not.toContain('改期');
+    expect(email.text).toContain(
+      '您与 艾米 的私教1小时信息已更新，上课时间不变：',
+    );
+    expect(email.text).toContain('教练已更换（原教练：未设置）。');
+    expect(email.text).not.toContain('课程类型已更改');
+    expect(email.text).toContain('是因为有人在 SSnow 为您预约了课程。');
+  });
+
   it('renders zh-CN with the Chinese lesson and instructor names', () => {
     const email = renderer.render('booking.confirmed.customer', 'zh-CN', vars);
     expect(email.subject).toBe('课程已预约：私教1小时');

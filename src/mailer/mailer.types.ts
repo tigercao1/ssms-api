@@ -48,6 +48,8 @@ export type EmailTemplate =
   | 'booking.confirmed.instructor'
   | 'booking.rescheduled.customer'
   | 'booking.rescheduled.instructor'
+  | 'booking.updated.customer'
+  | 'booking.updated.instructor'
   | 'booking.cancelled.customer'
   | 'booking.cancelled.instructor'
   | 'booking.reminder.customer'
@@ -113,6 +115,27 @@ export interface BookingRescheduledVars extends BookingEmailVars {
   previous: BookingLessonTime[];
 }
 
+export interface BookingDetailChanges {
+  lessonType?: { previousEn: string; previousZh: string | null };
+}
+
+export interface BookingUpdateChanges extends BookingDetailChanges {
+  addedCustomers: string[];
+  removedCustomers: string[];
+}
+
+export interface BookingCustomerUpdateChanges extends BookingDetailChanges {
+  instructor?: { previousEn: string; previousZh: string | null };
+}
+
+export interface BookingUpdatedVars extends BookingEmailVars {
+  changes: BookingUpdateChanges;
+}
+
+export interface BookingCustomerUpdatedVars extends BookingEmailVars {
+  changes: BookingCustomerUpdateChanges;
+}
+
 /** Variables each template needs, keyed by template. */
 export interface EmailTemplateVars {
   approved: GreetingVars & { loginUrl: string };
@@ -167,6 +190,8 @@ export interface EmailTemplateVars {
   'booking.confirmed.instructor': BookingEmailVars;
   'booking.rescheduled.customer': BookingRescheduledVars;
   'booking.rescheduled.instructor': BookingRescheduledVars;
+  'booking.updated.customer': BookingCustomerUpdatedVars;
+  'booking.updated.instructor': BookingUpdatedVars;
   'booking.cancelled.customer': BookingEmailVars;
   'booking.cancelled.instructor': BookingEmailVars;
   'booking.reminder.customer': BookingEmailVars;

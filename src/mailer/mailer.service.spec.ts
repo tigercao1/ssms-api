@@ -314,6 +314,48 @@ describe('MailerService', () => {
     );
   });
 
+  it('sends waiver emails from MAIL_FROM_WAIVERS with the default Reply-To', async () => {
+    const { client } = makeSupabase();
+    const send = jest.fn().mockResolvedValue({ id: 'msg-waiver' });
+    const waiversConfig = new MailerConfig({
+      get: (key: string) =>
+        ({
+          PORTAL_URL: 'https://portal.example.com/',
+          MAIL_FROM: 'Snow <noreply@contact.ssnow.club>',
+          MAIL_REPLY_TO_BOOKINGS: 'bookings@ssnow.club',
+          MAIL_FROM_WAIVERS: 'Waivers <waivers@contact.ssnow.club>',
+        })[key],
+    } as unknown as ConfigService);
+    const mailer = new MailerService(
+      { isConfigured: () => true, send },
+      new EmailRenderer(waiversConfig),
+      waiversConfig,
+      client,
+    );
+
+    const waiver: SendEmailRequest<'documents.reminder'> = {
+      template: 'documents.reminder',
+      to: 'jane@example.com',
+      language: 'en',
+      vars: {
+        displayName: 'Jane',
+        documents: [{ titleEn: 'Liability waiver' }],
+        onboardingUrl: 'https://portal.example.com/onboarding',
+      },
+      mode: 'background',
+      instructorId: 'instr-1',
+      authUserId: 'auth-1',
+    };
+    expect(await mailer.send(waiver)).toBe('sent');
+    expect(await mailer.send(request())).toBe('sent');
+    const [waiverMessage, defaultMessage] = (
+      send.mock.calls as [Record<string, unknown>][]
+    ).map(([m]) => m);
+    expect(waiverMessage.from).toBe('Waivers <waivers@contact.ssnow.club>');
+    expect(waiverMessage).not.toHaveProperty('replyTo');
+    expect(defaultMessage).not.toHaveProperty('from');
+  });
+
   it('sends the same idempotency key on every attempt, and none when unset', async () => {
     const { client } = makeSupabase();
     const send = jest

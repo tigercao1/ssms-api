@@ -27,6 +27,9 @@ const TOO_MANY_REQUESTS = 429;
  *     `Serendipity Snow Club Bookings <bookings@contact.ssnow.club>`; unset
  *     falls back to `MAIL_FROM` / `MAIL_REPLY_TO`. MailerService passes them
  *     per message.
+ *   - `MAIL_FROM_WAIVERS` — optional From for waiver and signing emails, e.g.
+ *     `Serendipity Snow Club Waivers <waivers@contact.ssnow.club>`; unset
+ *     falls back to `MAIL_FROM`. Reply-To stays `MAIL_REPLY_TO`.
  *
  * Attachments are sent base64-encoded; over 30 MB (before base64) in
  * total throws before any request is made.

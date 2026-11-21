@@ -1,6 +1,7 @@
 import { SCHOOL_TIME_ZONE } from '../../booking/booking-time';
 import {
   interpolate,
+  type EmailBookingDetailChangeCopy,
   type EmailButtonCopy,
   type EmailCopy,
   type MessageCatalog,
@@ -10,6 +11,9 @@ import type { Vars } from '../../i18n';
 import type {
   BookingEmailVars,
   BookingLessonTime,
+  BookingCustomerUpdatedVars,
+  BookingDetailChanges,
+  BookingUpdatedVars,
   EmailDocumentTitle,
   EmailTemplate,
   EmailTemplateVars,
@@ -243,13 +247,14 @@ export function bookingTime(
 
 function bookingBlocks(
   catalog: MessageCatalog,
-  kind: BookingKind,
+  copy: EmailCopy,
   audience: BookingAudience,
   vars: BookingEmailVars & { previous?: BookingLessonTime[] },
   language: SupportedLanguage,
+  changes: string[] = [],
 ): EmailBlocks {
   const labels = catalog.email.booking.labels;
-  const blocks = fill(catalog.email.booking[kind][audience], {
+  const blocks = fill(copy, {
     lesson: localized(vars.lessonNameEn, vars.lessonNameZh, language),
     instructor: localized(
       vars.instructorNameEn,
@@ -271,6 +276,7 @@ function bookingBlocks(
       ...(vars.previous?.length
         ? [labels.previously, ...vars.previous.map(line)]
         : []),
+      ...changes,
       ...(audience === 'instructor' && students
         ? [`${labels.students} ${students}`]
         : []),
@@ -294,13 +300,78 @@ function bookingTemplate<T extends EmailTemplate>(
     build: (catalog, vars, language) =>
       bookingBlocks(
         catalog,
-        kind,
+        catalog.email.booking[kind][audience],
         audience,
         vars as BookingEmailVars & { previous?: BookingLessonTime[] },
         language,
       ),
     sample,
   };
+}
+
+function detailChangeLines(
+  copy: EmailBookingDetailChangeCopy,
+  { lessonType }: BookingDetailChanges,
+  language: SupportedLanguage,
+): string[] {
+  return [
+    ...(lessonType
+      ? [
+          interpolate(copy.lessonType, {
+            previous: localized(
+              lessonType.previousEn,
+              lessonType.previousZh,
+              language,
+            ),
+          }),
+        ]
+      : []),
+  ];
+}
+
+function bookingUpdatedBlocks(
+  catalog: MessageCatalog,
+  vars: BookingUpdatedVars,
+  language: SupportedLanguage,
+): EmailBlocks {
+  const copy = catalog.email.booking.updated.instructor;
+  const { addedCustomers, removedCustomers } = vars.changes;
+  const names = (list: string[]) =>
+    list
+      .map((n) => n.trim())
+      .filter((n) => n)
+      .join(', ');
+  const added = names(addedCustomers);
+  const removed = names(removedCustomers);
+  const changes = [
+    ...(added ? [interpolate(copy.added, { names: added })] : []),
+    ...(removed ? [interpolate(copy.removed, { names: removed })] : []),
+    ...detailChangeLines(copy, vars.changes, language),
+  ];
+  return bookingBlocks(catalog, copy, 'instructor', vars, language, changes);
+}
+
+function bookingCustomerUpdatedBlocks(
+  catalog: MessageCatalog,
+  vars: BookingCustomerUpdatedVars,
+  language: SupportedLanguage,
+): EmailBlocks {
+  const copy = catalog.email.booking.updated.customer;
+  const { instructor } = vars.changes;
+  const previousInstructor = instructor
+    ? localized(instructor.previousEn, instructor.previousZh, language).trim()
+    : '';
+  const changes = [
+    ...detailChangeLines(copy, vars.changes, language),
+    ...(instructor
+      ? [
+          interpolate(copy.instructor, {
+            previous: previousInstructor || copy.notSet,
+          }),
+        ]
+      : []),
+  ];
+  return bookingBlocks(catalog, copy, 'customer', vars, language, changes);
 }
 
 function sampleBooking(audience: BookingAudience): BookingEmailVars {
@@ -322,6 +393,31 @@ function sampleBooking(audience: BookingAudience): BookingEmailVars {
         endsAt: '2026-12-19T16:00:00.000Z',
       },
     ],
+  };
+}
+
+function sampleUpdate(): BookingUpdatedVars {
+  const booking = sampleBooking('instructor');
+  return {
+    ...booking,
+    lessons: booking.lessons.slice(0, 1),
+    changes: {
+      addedCustomers: ['Leo Chen'],
+      removedCustomers: ['Ann Li'],
+    },
+  };
+}
+
+function sampleCustomerUpdate(): BookingCustomerUpdatedVars {
+  const booking = sampleBooking('customer');
+  return {
+    ...booking,
+    customerNames: [],
+    lessons: booking.lessons.slice(0, 1),
+    changes: {
+      lessonType: { previousEn: 'Group 2h', previousZh: '小组课2小时' },
+      instructor: { previousEn: 'Ben Zhao', previousZh: '赵本' },
+    },
   };
 }
 
@@ -723,6 +819,14 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     'instructor',
     () => sampleReschedule('instructor'),
   ),
+  'booking.updated.customer': {
+    build: bookingCustomerUpdatedBlocks,
+    sample: sampleCustomerUpdate,
+  },
+  'booking.updated.instructor': {
+    build: bookingUpdatedBlocks,
+    sample: sampleUpdate,
+  },
   'booking.cancelled.customer': bookingTemplate('cancelled', 'customer', () =>
     sampleBooking('customer'),
   ),

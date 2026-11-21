@@ -265,6 +265,31 @@ describe('lessons admin HTTP', () => {
         .expect(409);
     });
 
+    it('accepts a duration in 5-minute steps and rejects any other, on create and update', async () => {
+      const created = await create({ nameEn: 'Short', durationMin: 45 }).expect(
+        201,
+      );
+      expect(created.body).toMatchObject({ durationMin: 45 });
+      const rejected = await create({ nameEn: 'Odd', durationMin: 47 }).expect(
+        400,
+      );
+      expect((rejected.body as { message: string[] }).message).toContain(
+        'durationMin must be a multiple of 5 minutes',
+      );
+      const type = ctx.lessonTypes.seed();
+      await http()
+        .patch(`/admin/lesson-types/${type.id}`)
+        .set('Authorization', admin)
+        .send({ durationMin: 47 })
+        .expect(400);
+      const updated = await http()
+        .patch(`/admin/lesson-types/${type.id}`)
+        .set('Authorization', admin)
+        .send({ durationMin: 45 })
+        .expect(200);
+      expect(updated.body).toMatchObject({ durationMin: 45 });
+    });
+
     it.each([
       [{ durationMin: 60 }],
       [{ nameEn: '', durationMin: 60 }],

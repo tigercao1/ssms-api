@@ -7,6 +7,26 @@ export const DEFAULT_EMAIL_LOGO_URL = 'https://app.ssnow.club/email-logo.png';
 export const DEFAULT_PORTAL_URL = 'https://app.ssnow.club';
 export const DEV_PORTAL_URL = 'http://localhost:5173';
 
+interface MailboxRoute {
+  prefix: string;
+  fromKey: string;
+  replyToKey?: string;
+}
+
+const MAILBOX_ROUTES: readonly MailboxRoute[] = [
+  {
+    prefix: 'booking.',
+    fromKey: 'MAIL_FROM_BOOKINGS',
+    replyToKey: 'MAIL_REPLY_TO_BOOKINGS',
+  },
+  { prefix: 'documents.', fromKey: 'MAIL_FROM_WAIVERS' },
+];
+
+interface Mailbox {
+  from?: string;
+  replyTo?: string;
+}
+
 /**
  * Mailer settings read from env, all optional at boot:
  *   - `PORTAL_URL`     — portal base for links in emails. Defaults to
@@ -16,6 +36,8 @@ export const DEV_PORTAL_URL = 'http://localhost:5173';
  *     attachments (falls back to the Reply-To address).
  *   - `MAIL_FROM_BOOKINGS` / `MAIL_REPLY_TO_BOOKINGS` — From and Reply-To for
  *     `booking.*` templates, falling back to `MAIL_FROM` / `MAIL_REPLY_TO`.
+ *   - `MAIL_FROM_WAIVERS` — From for `documents.*` (waiver and signing)
+ *     templates, falling back to `MAIL_FROM`; Reply-To stays `MAIL_REPLY_TO`.
  *   - `EMAIL_LOGO_URL` — PNG logo in the email header.
  */
 @Injectable()
@@ -24,8 +46,7 @@ export class MailerConfig {
   readonly replyTo: string;
   readonly logoUrl: string;
   readonly senderAddress: string;
-  private readonly bookingsFrom?: string;
-  private readonly bookingsReplyTo?: string;
+  private readonly mailboxes: { prefix: string; mailbox: Mailbox }[];
 
   constructor(config: ConfigService) {
     const fallbackPortal =
@@ -40,19 +61,22 @@ export class MailerConfig {
       readOptional(config, 'EMAIL_LOGO_URL') ?? DEFAULT_EMAIL_LOGO_URL;
     this.senderAddress =
       addressOf(readOptional(config, 'MAIL_FROM')) ?? addressOf(this.replyTo)!;
-    this.bookingsFrom = readOptional(config, 'MAIL_FROM_BOOKINGS');
-    this.bookingsReplyTo = readOptional(config, 'MAIL_REPLY_TO_BOOKINGS');
+    this.mailboxes = MAILBOX_ROUTES.map(({ prefix, fromKey, replyToKey }) => {
+      const from = readOptional(config, fromKey);
+      const replyTo = replyToKey ? readOptional(config, replyToKey) : undefined;
+      return {
+        prefix,
+        mailbox: { ...(from ? { from } : {}), ...(replyTo ? { replyTo } : {}) },
+      };
+    });
   }
 
   /** From / Reply-To overrides for `template`; empty means the sender's defaults. */
-  mailboxFor(template: string): { from?: string; replyTo?: string } {
-    if (!isBookingTemplate(template)) {
-      return {};
-    }
-    return {
-      ...(this.bookingsFrom ? { from: this.bookingsFrom } : {}),
-      ...(this.bookingsReplyTo ? { replyTo: this.bookingsReplyTo } : {}),
-    };
+  mailboxFor(template: string): Mailbox {
+    return (
+      this.mailboxes.find(({ prefix }) => template.startsWith(prefix))
+        ?.mailbox ?? {}
+    );
   }
 
   /** The address `template` is sent from, for the ICS organizer. */
@@ -64,10 +88,6 @@ export class MailerConfig {
   portalLink(path: string): string {
     return `${this.portalUrl}${path.startsWith('/') ? path : `/${path}`}`;
   }
-}
-
-export function isBookingTemplate(template: string): boolean {
-  return template.startsWith('booking.');
 }
 
 export function addressOf(mailbox: string | undefined): string | undefined {

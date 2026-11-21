@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsDivisibleBy,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -14,6 +15,11 @@ import {
 export const LESSON_TYPE_NAME_MAX_LENGTH = 200;
 export const LESSON_TYPE_MAX_DURATION_MIN = 1440;
 export const LESSON_TYPE_MAX_GROUP_SIZE = 100;
+export const LESSON_TYPE_DURATION_STEP_MIN = 5;
+
+const durationStep = {
+  message: `durationMin must be a multiple of ${LESSON_TYPE_DURATION_STEP_MIN} minutes`,
+};
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -48,6 +54,7 @@ export class CreateLessonTypeDto {
   @IsInt()
   @Min(1)
   @Max(LESSON_TYPE_MAX_DURATION_MIN)
+  @IsDivisibleBy(LESSON_TYPE_DURATION_STEP_MIN, durationStep)
   durationMin!: number;
 
   @IsOptional()
@@ -89,6 +96,7 @@ export class UpdateLessonTypeDto {
   @IsInt()
   @Min(1)
   @Max(LESSON_TYPE_MAX_DURATION_MIN)
+  @IsDivisibleBy(LESSON_TYPE_DURATION_STEP_MIN, durationStep)
   durationMin?: number;
 
   @IsOptional()

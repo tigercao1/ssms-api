@@ -28,6 +28,12 @@ begin
     raise exception 'a duplicate lesson type name was accepted';
   exception when unique_violation then null;
   end;
+  insert into lesson_types (name_en, duration_min) values ('CI 45min', 45);
+  begin
+    insert into lesson_types (name_en, duration_min) values ('CI 47min', 47);
+    raise exception 'a lesson type duration off the 5-minute step was accepted';
+  exception when check_violation then null;
+  end;
 end
 $$;
 

@@ -13,6 +13,9 @@ export const LATE = 'late';
 export const LATE_CANCEL = 'late_cancel';
 export const CORRECTION = 'correction';
 export const REASSIGNED = 'reassigned';
+export const ADJUSTED = 'adjusted';
+export const CHANGED_LENGTH = 'changed_length';
+export const CHANGED_LESSON_TYPE = 'changed_lesson_type';
 export const DEFAULT_CURRENCY = 'CAD';
 
 export interface PayableClass {
@@ -131,10 +134,38 @@ function paidTerms(lines: readonly ClassLine[]): ClassLine | null {
   return lines.find((line) => !isMarker(line)) ?? null;
 }
 
-function termsCents(line: ClassLine): number {
-  return line.hourlyRate === null
-    ? 0
-    : rateAmountCents(line.hourlyRate, line.rateUnit, line.minutes);
+function latestTerms(lines: readonly ClassLine[]): ClassLine | null {
+  return lines.filter((line) => !isMarker(line)).at(-1) ?? null;
+}
+
+function lessonCount(line: ClassLine): number {
+  if (
+    isMarker(line) ||
+    line.flags.includes(CORRECTION) ||
+    line.flags.includes(ADJUSTED)
+  ) {
+    return 0;
+  }
+  return line.flags.includes(LATE_CANCEL) ? -1 : 1;
+}
+
+function minuteCount(line: ClassLine): number {
+  return line.flags.includes(ADJUSTED)
+    ? line.minutes
+    : lessonCount(line) * line.minutes;
+}
+
+function heldLessons(lines: readonly ClassLine[]): number {
+  return lines.reduce((sum, line) => sum + lessonCount(line), 0);
+}
+
+function heldMinutes(lines: readonly ClassLine[]): number {
+  const paying = lines.filter((line) => !isMarker(line));
+  const base = paying.findLastIndex((line) => !line.flags.includes(ADJUSTED));
+  const adjustments = paying
+    .slice(base + 1)
+    .reduce((sum, line) => sum + line.minutes, 0);
+  return (base >= 0 ? paying[base].minutes : 0) + adjustments;
 }
 
 function othersHold(
@@ -144,7 +175,7 @@ function othersHold(
   return [
     ...groupBy(
       lines.filter((line) => line.instructorId !== instructorId),
-      (line) => line.instructorId,
+      (line) => `${line.instructorId}|${line.currency}`,
     ).values(),
   ].some((theirs) => netCents(theirs) !== 0);
 }
@@ -210,8 +241,8 @@ function settlementLine(
   return {
     classId: cls.id,
     instructorId: reference.instructorId,
-    lessonTypeId: cls.lessonTypeId,
-    description: cls.lessonTypeName,
+    lessonTypeId: reference.lessonTypeId,
+    description: reference.description,
     classStatus: cls.status,
     startsAt: cls.startsAt,
     endsAt: cls.endsAt,
@@ -225,6 +256,10 @@ function settlementLine(
   };
 }
 
+function byCurrency(lines: readonly ClassLine[]): ClassLine[][] {
+  return [...groupBy(lines, (line) => line.currency).values()];
+}
+
 function reversalLine(
   cls: PayableClass,
   paid: readonly ClassLine[],
@@ -234,43 +269,111 @@ function reversalLine(
   if (net === 0) {
     return null;
   }
-  const reference = paidTerms(paid) ?? paid[paid.length - 1];
-  return settlementLine(cls, reference, -net, [
-    LATE_CANCEL,
-    ...(net < 0 ? [CORRECTION] : []),
-    ...extraFlags,
-  ]);
+  const reference = latestTerms(paid) ?? paid[paid.length - 1];
+  return settlementLine(
+    cls,
+    { ...reference, minutes: Math.max(0, heldMinutes(paid)) },
+    -net,
+    [LATE_CANCEL, ...(net < 0 ? [CORRECTION] : []), ...extraFlags],
+  );
 }
 
-function owedLine(
+function changes(
+  target: ClassLine,
+  held: ClassLine,
+  mine: readonly ClassLine[],
+): string[] {
+  return [
+    ...(target.minutes !== heldMinutes(mine) ? [CHANGED_LENGTH] : []),
+    ...(target.lessonTypeId !== held.lessonTypeId ? [CHANGED_LESSON_TYPE] : []),
+  ];
+}
+
+function owedTarget(
   cls: PayableClass,
-  paid: readonly ClassLine[],
+  mine: readonly ClassLine[],
+  rates: readonly PayableRate[],
+): ClassLine {
+  const live = { ...classLine(cls, rates), instructorId: cls.instructorId };
+  const paidAt = mine.find(
+    (line) => !isMarker(line) && line.lessonTypeId === cls.lessonTypeId,
+  );
+  if (!paidAt) {
+    return live;
+  }
+  return {
+    ...live,
+    hourlyRate: paidAt.hourlyRate,
+    rateUnit: paidAt.rateUnit,
+    currency: paidAt.currency,
+    amount:
+      paidAt.hourlyRate === null
+        ? 0
+        : fromCents(
+            rateAmountCents(paidAt.hourlyRate, paidAt.rateUnit, live.minutes),
+          ),
+    flags: [],
+  };
+}
+
+function owedLines(
+  cls: PayableClass,
+  mine: readonly ClassLine[],
   rates: readonly PayableRate[],
   reassigned: boolean,
   late: boolean,
-): ClassLine | null {
-  const terms = paidTerms(paid);
-  if (!terms && !late) {
-    return null;
+): ClassLine[] {
+  const target = owedTarget(cls, mine, rates);
+  const needsRate = target.flags.includes(NEEDS_RATE);
+  const terms = latestTerms(mine);
+  if (!terms) {
+    return late && (needsRate || toCents(target.amount) !== 0)
+      ? [
+          settlementLine(cls, target, toCents(target.amount), [
+            LATE,
+            ...(reassigned ? [REASSIGNED] : []),
+            ...(needsRate ? [NEEDS_RATE] : []),
+          ]),
+        ]
+      : [];
   }
-  const reference = terms ?? classLine(cls, rates);
-  const needsRate = !terms && reference.flags.includes(NEEDS_RATE);
-  const owed = terms ? termsCents(terms) : toCents(reference.amount);
-  const diff = owed - netCents(paid);
-  if (diff === 0 && !needsRate) {
-    return null;
+  const held = heldLessons(mine);
+  const adjusting = held === 1 || (held === 0 && netCents(mine) > 0);
+  const reasons = changes(target, terms, mine);
+  const groups = groupBy(mine, (line) => line.currency);
+  const currencies = new Set([target.currency, ...groups.keys()]);
+  const lines: ClassLine[] = [];
+  for (const currency of currencies) {
+    const paid = groups.get(currency) ?? [];
+    const owing = currency === target.currency;
+    const diff = (owing ? toCents(target.amount) : 0) - netCents(paid);
+    if (diff === 0) {
+      continue;
+    }
+    const reference = owing ? target : (latestTerms(paid) ?? paid[0]);
+    const flags = adjusting
+      ? [ADJUSTED, ...reasons]
+      : [
+          LATE,
+          ...(diff < 0 ? [CORRECTION] : []),
+          ...(reassigned ? [REASSIGNED] : []),
+        ];
+    lines.push(
+      settlementLine(
+        cls,
+        {
+          ...reference,
+          instructorId: cls.instructorId,
+          minutes: adjusting
+            ? (owing ? target.minutes : 0) - heldMinutes(paid)
+            : Math.max(0, reference.minutes),
+        },
+        diff,
+        [...flags, ...(owing && needsRate ? [NEEDS_RATE] : [])],
+      ),
+    );
   }
-  return settlementLine(
-    cls,
-    { ...reference, instructorId: cls.instructorId },
-    diff,
-    [
-      LATE,
-      ...(diff < 0 ? [CORRECTION] : []),
-      ...(reassigned ? [REASSIGNED] : []),
-      ...(needsRate ? [NEEDS_RATE] : []),
-    ],
-  );
+  return lines;
 }
 
 export function lateLines(
@@ -283,17 +386,17 @@ export function lateLines(
   const mine = byInstructor.get(cls.instructorId) ?? [];
   byInstructor.delete(cls.instructorId);
   const lines = [
-    isPaid(cls.status)
-      ? owedLine(
+    ...(isPaid(cls.status)
+      ? owedLines(
           cls,
           mine,
           rates,
           byInstructor.size > 0,
           ownPeriodFinalized || othersHold(cls.instructorId, paid),
         )
-      : reversalLine(cls, mine, []),
-    ...[...byInstructor.values()].map((theirs) =>
-      reversalLine(cls, theirs, [REASSIGNED]),
+      : byCurrency(mine).map((group) => reversalLine(cls, group, []))),
+    ...[...byInstructor.values()].flatMap((theirs) =>
+      byCurrency(theirs).map((group) => reversalLine(cls, group, [REASSIGNED])),
     ),
   ];
   return lines.filter((line): line is ClassLine => line !== null);
@@ -349,13 +452,8 @@ export function instructorTotals(
     if (line.flags.includes(ALREADY_PAID)) {
       continue;
     }
-    const sign = line.flags.includes(CORRECTION)
-      ? 0
-      : line.flags.includes(LATE_CANCEL)
-        ? -1
-        : 1;
-    total.lessons += sign;
-    total.minutes += sign * line.minutes;
+    total.lessons += lessonCount(line);
+    total.minutes += minuteCount(line);
     total.lessonCents += toCents(line.amount);
     if (line.flags.includes(NEEDS_RATE)) {
       total.needsRate += 1;

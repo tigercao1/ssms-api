@@ -13,8 +13,11 @@ import {
 import type { RateUnit } from '../lessons/pay-rates';
 import { toPayRate } from '../lessons/pay-rates.service';
 import {
+  ADJUSTED,
   ALREADY_PAID,
   type AmountLine,
+  CHANGED_LENGTH,
+  CHANGED_LESSON_TYPE,
   type ClassLine,
   classLine,
   CORRECTION,
@@ -72,7 +75,16 @@ export interface MyLesson {
   lateCancel: boolean;
   correction: boolean;
   reassigned: boolean;
+  adjusted: boolean;
+  changes: MyLessonChange[];
 }
+
+export type MyLessonChange = 'length' | 'lesson_type';
+
+const CHANGES: [string, MyLessonChange][] = [
+  [CHANGED_LENGTH, 'length'],
+  [CHANGED_LESSON_TYPE, 'lesson_type'],
+];
 
 export interface MyAdjustment {
   id: string;
@@ -182,12 +194,19 @@ function toLesson(
     rate: line.hourlyRate,
     rateUnit: line.rateUnit,
     currency: line.currency,
-    amount: projected && needsRate ? null : line.amount,
+    amount:
+      projected && needsRate && !line.flags.includes(ADJUSTED)
+        ? null
+        : line.amount,
     needsRate,
     late: line.flags.includes(LATE),
     lateCancel: line.flags.includes(LATE_CANCEL),
     correction: line.flags.includes(CORRECTION),
     reassigned: line.flags.includes(REASSIGNED),
+    adjusted: line.flags.includes(ADJUSTED),
+    changes: CHANGES.filter(([flag]) => line.flags.includes(flag)).map(
+      ([, change]) => change,
+    ),
   };
 }
 

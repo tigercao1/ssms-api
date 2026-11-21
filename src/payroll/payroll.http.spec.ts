@@ -11,6 +11,7 @@ import {
   BO_ID,
   GROUP_60,
   InMemoryPayrollRepository,
+  PRIVATE_90,
 } from '../../test/helpers/payroll-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
@@ -1235,6 +1236,327 @@ describe('payroll admin HTTP', () => {
         'Ada Lin,林艾达,ada@example.com,1,1.00,hour,40.00,CAD',
         '',
       ]);
+    });
+
+    describe('when a paid lesson changes', () => {
+      const resize = (
+        cls: { starts_at: string; ends_at: string },
+        minutes: number,
+      ) => {
+        cls.ends_at = new Date(
+          Date.parse(cls.starts_at) + minutes * 60_000,
+        ).toISOString();
+      };
+      const retype = (
+        cls: Parameters<typeof resize>[0] & {
+          lesson_type_id: string | null;
+          lesson_type: { name_en: string; name_zh: string | null } | null;
+        },
+        lessonTypeId: string,
+        minutes: number,
+      ) => {
+        cls.lesson_type_id = lessonTypeId;
+        cls.lesson_type = ctx.repo.lessonTypes.get(lessonTypeId) ?? null;
+        resize(cls, minutes);
+      };
+      const adjusted = (detail: PayrollPeriodDetail) =>
+        detail.lines.map((l) => [
+          l.date,
+          l.amount,
+          l.minutes,
+          l.hourlyRate,
+          l.flags,
+        ]);
+      const counts = (detail: PayrollPeriodDetail) =>
+        detail.instructors.map((i) => [i.lessons, i.minutes, i.total]);
+
+      beforeEach(() => {
+        ctx.repo.addRate({
+          lessonTypeId: GROUP_60,
+          hourlyRate: 30,
+          from: '2025-01-01',
+        });
+      });
+
+      it('pays a past lesson made longer by the extra minutes in the current period', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        resize(cls, 120);
+        const live = await detailOf(current);
+        expect(adjusted(live)).toEqual([
+          ['2025-12-20', 20, 30, 40, ['adjusted', 'changed_length']],
+        ]);
+        expect(counts(live)).toEqual([[0, 30, 20]]);
+        const csv = await get(
+          `/admin/payroll/periods/${current.id}/export.csv?detail=1`,
+        ).expect(200);
+        expect(csv.text.slice(1).split('\r\n')[1]).toBe(
+          'Ada Lin,2025-12-20,10:00,adjusted lesson (length),Private 90,,completed,30,40.00,hour,20.00,CAD,adjusted; changed_length',
+        );
+        await finalize(current);
+        expect(netPaid(cls.id)).toBe(80);
+        expect((await detailOf(next)).lines).toEqual([]);
+      });
+
+      it('takes back the missing minutes of a past lesson made shorter', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        resize(cls, 60);
+        const live = await detailOf(current);
+        expect(adjusted(live)).toEqual([
+          ['2025-12-20', -20, -30, 40, ['adjusted', 'changed_length']],
+        ]);
+        expect(counts(live)).toEqual([[0, -30, -20]]);
+        await finalize(current);
+        expect(netPaid(cls.id)).toBe(40);
+        resize(cls, 90);
+        expect(adjusted(await detailOf(next))).toEqual([
+          ['2025-12-20', 20, 30, 40, ['adjusted', 'changed_length']],
+        ]);
+      });
+
+      it('settles a future lesson changed after its period was finalized early, both ways', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-09T15:00:00Z' });
+        await finalize(current);
+        resize(cls, 120);
+        expect(adjusted(await detailOf(next))).toEqual([
+          ['2026-01-09', 20, 30, 40, ['adjusted', 'changed_length']],
+        ]);
+        await finalize(next);
+        resize(cls, 45);
+        expect(adjusted(await detailOf(later))).toEqual([
+          ['2026-01-09', -50, -75, 40, ['adjusted', 'changed_length']],
+        ]);
+        await finalize(later);
+        expect(netPaid(cls.id)).toBe(30);
+      });
+
+      it('settles a future lesson in a finalized later period in the current period', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-13T15:00:00Z' });
+        await finalize(next);
+        resize(cls, 60);
+        expect(adjusted(await detailOf(current))).toEqual([
+          ['2026-01-13', -20, -30, 40, ['adjusted', 'changed_length']],
+        ]);
+        expect((await detailOf(later)).lines).toEqual([]);
+        await finalize(current);
+        expect(netPaid(cls.id)).toBe(40);
+      });
+
+      it('settles a lesson type change at the new type’s rate and length, both ways', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        retype(cls, GROUP_60, 60);
+        const live = await detailOf(current);
+        expect(
+          live.lines.map((l) => [
+            l.description,
+            l.amount,
+            l.minutes,
+            l.hourlyRate,
+            l.flags,
+          ]),
+        ).toEqual([
+          [
+            'Group 60',
+            -30,
+            -30,
+            30,
+            ['adjusted', 'changed_length', 'changed_lesson_type'],
+          ],
+        ]);
+        await finalize(current);
+        expect(netPaid(cls.id)).toBe(30);
+        retype(cls, PRIVATE_90, 90);
+        expect(adjusted(await detailOf(next))).toEqual([
+          [
+            '2025-12-20',
+            30,
+            30,
+            40,
+            ['adjusted', 'changed_length', 'changed_lesson_type'],
+          ],
+        ]);
+      });
+
+      it('leaves paid lessons alone when the rate table changes and prices unpaid ones with it', async () => {
+        const past = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        const future = ctx.repo.addClass({ startsAt: '2026-01-13T15:00:00Z' });
+        await finalize(previous);
+        await finalize(next);
+        const unpaid = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        ctx.repo.rates[0].hourly_rate = 50;
+        ctx.repo.rates[0].rate_unit = 'day';
+        ctx.repo.rates[0].currency = 'USD';
+        ctx.repo.addRate({
+          instructorId: ADA_ID,
+          hourlyRate: 70,
+          from: '2025-12-01',
+          to: '2025-12-31',
+        });
+        expect(
+          (await detailOf(current)).lines.map((l) => [
+            l.classId,
+            l.amount,
+            l.currency,
+            l.flags,
+          ]),
+        ).toEqual([[unpaid.id, 50, 'USD', []]]);
+        ctx.repo.rates[0].effective_from = '2026-02-01';
+        ctx.repo.rates.splice(2, 1);
+        expect(
+          (await detailOf(current)).lines.map((l) => [l.classId, l.flags]),
+        ).toEqual([[unpaid.id, ['needs_rate']]]);
+        await finalize(current, { acceptZeroRate: true });
+        expect([netPaid(past.id), netPaid(future.id)]).toEqual([60, 60]);
+        expect((await detailOf(later)).lines).toEqual([]);
+      });
+
+      it('keeps the first paid rate when a paid lesson moves to a date with another rate', async () => {
+        ctx.repo.rates[0].effective_to = '2025-12-31';
+        ctx.repo.addRate({ hourlyRate: 50, from: '2026-01-01' });
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        cls.starts_at = '2026-01-05T15:00:00.000Z';
+        resize(cls, 120);
+        expect(adjusted(await detailOf(current))).toEqual([
+          ['2026-01-05', 20, 30, 40, ['adjusted', 'changed_length']],
+        ]);
+      });
+
+      it('pays a new lesson type at its rate on the lesson date, then ignores edits to that rate', async () => {
+        ctx.repo.rates[1].effective_to = '2025-12-31';
+        ctx.repo.addRate({
+          lessonTypeId: GROUP_60,
+          hourlyRate: 60,
+          from: '2026-01-01',
+        });
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        retype(cls, GROUP_60, 90);
+        expect(adjusted(await detailOf(current))).toEqual([
+          ['2025-12-20', -15, 0, 30, ['adjusted', 'changed_lesson_type']],
+        ]);
+        await finalize(current);
+        ctx.repo.rates[1].hourly_rate = 99;
+        expect((await detailOf(next)).lines).toEqual([]);
+        retype(cls, PRIVATE_90, 90);
+        ctx.repo.rates[0].hourly_rate = 99;
+        expect(adjusted(await detailOf(next))).toEqual([
+          ['2025-12-20', 15, 0, 40, ['adjusted', 'changed_lesson_type']],
+        ]);
+      });
+
+      it('takes the pay back as needs rate when a paid lesson moves to a lesson type without a rate, and refuses to finalize without acceptZeroRate', async () => {
+        ctx.repo.rates.splice(1, 1);
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        retype(cls, GROUP_60, 60);
+        const live = await detailOf(current);
+        expect(adjusted(live)).toEqual([
+          [
+            '2025-12-20',
+            -60,
+            -30,
+            null,
+            ['adjusted', 'changed_length', 'changed_lesson_type', 'needs_rate'],
+          ],
+        ]);
+        expect(live.needsRateCount).toBe(1);
+        await post(`/admin/payroll/periods/${current.id}/finalize`).expect(409);
+        await finalize(current, { acceptZeroRate: true });
+        expect(netPaid(cls.id)).toBe(0);
+        ctx.repo.addRate({
+          lessonTypeId: GROUP_60,
+          hourlyRate: 30,
+          from: '2025-01-01',
+        });
+        expect((await detailOf(next)).lines).toEqual([]);
+      });
+
+      it('moves the pay into the new currency when the new lesson type is paid in another currency', async () => {
+        ctx.repo.rates[1].currency = 'USD';
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        retype(cls, GROUP_60, 60);
+        const live = await detailOf(current);
+        expect(
+          live.lines.map((l) => [
+            l.currency,
+            l.description,
+            l.amount,
+            l.minutes,
+            l.flags,
+          ]),
+        ).toEqual([
+          [
+            'USD',
+            'Group 60',
+            30,
+            60,
+            ['adjusted', 'changed_length', 'changed_lesson_type'],
+          ],
+          [
+            'CAD',
+            'Private 90',
+            -60,
+            -90,
+            ['adjusted', 'changed_length', 'changed_lesson_type'],
+          ],
+        ]);
+        expect(
+          live.totals.map((t) => [t.currency, t.lessons, t.minutes, t.amount]),
+        ).toEqual([
+          ['CAD', 0, -90, -60],
+          ['USD', 0, 60, 30],
+        ]);
+        await finalize(current);
+        expect((await detailOf(next)).lines).toEqual([]);
+        cls.status = 'cancelled';
+        expect(
+          (await detailOf(next)).lines.map((l) => [
+            l.currency,
+            l.amount,
+            l.flags,
+          ]),
+        ).toEqual([['USD', -30, ['late_cancel']]]);
+      });
+
+      it('reverses the changed amount when a lesson is cancelled after an adjustment', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2025-12-20T15:00:00Z' });
+        await finalize(previous);
+        resize(cls, 120);
+        await finalize(current);
+        cls.status = 'cancelled';
+        const live = await detailOf(next);
+        expect(adjusted(live)).toEqual([
+          ['2025-12-20', -80, 120, 40, ['late_cancel']],
+        ]);
+        expect(counts(live)).toEqual([[-1, -120, -80]]);
+      });
+
+      it('gives a lesson changed while its own period is open its normal line and no adjustment', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        resize(cls, 120);
+        retype(cls, GROUP_60, 60);
+        expect(adjusted(await detailOf(current))).toEqual([
+          ['2026-01-05', 30, 60, 30, []],
+        ]);
+        await finalize(current);
+        expect(netPaid(cls.id)).toBe(30);
+      });
+
+      it('repays a changed lesson in full on its own period when that period is reopened', async () => {
+        const cls = ctx.repo.addClass({ startsAt: '2026-01-05T15:00:00Z' });
+        await finalize(current);
+        resize(cls, 120);
+        expect(adjusted(await detailOf(next))).toHaveLength(1);
+        await reopen(current);
+        expect(adjusted(await detailOf(current))).toEqual([
+          ['2026-01-05', 80, 120, 40, []],
+        ]);
+        expect((await detailOf(next)).lines).toEqual([]);
+      });
     });
   });
 

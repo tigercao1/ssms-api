@@ -1,6 +1,9 @@
 import {
+  ADJUSTED,
   ALREADY_PAID,
   amountCents,
+  CHANGED_LENGTH,
+  CHANGED_LESSON_TYPE,
   type ClassLine,
   classLine,
   CORRECTION,
@@ -117,17 +120,10 @@ describe('lateLines', () => {
     ]);
   });
 
-  it('ignores a rate change, a zero-rate payment and an already-paid move', () => {
-    const rates = [rate(50, 'hour')];
+  it('leaves a paid lesson alone while nothing about it changes', () => {
+    const rates = [rate(40, 'hour')];
     expect(lateLines(lesson(90), [paid(60)], rates, true)).toEqual([]);
-    expect(
-      lateLines(
-        lesson(90),
-        [paid(0, { flags: [NEEDS_RATE], hourlyRate: null })],
-        rates,
-        true,
-      ),
-    ).toEqual([]);
+    expect(lateLines(lesson(90), [paid(60)], rates, false)).toEqual([]);
     expect(
       lateLines(
         lesson(90),
@@ -136,8 +132,153 @@ describe('lateLines', () => {
         true,
       ),
     ).toEqual([]);
+    expect(
+      lateLines(
+        lesson(90),
+        [paid(0, { flags: [NEEDS_RATE], hourlyRate: null })],
+        [],
+        true,
+      ),
+    ).toEqual([]);
   });
 
+  it('keeps a paid lesson at the rate it was first paid when the rate table changes', () => {
+    const rates = [{ ...rate(50, 'day'), currency: 'USD' }];
+    expect(lateLines(lesson(90), [paid(60)], rates, true)).toEqual([]);
+    expect(lateLines(lesson(90), [paid(60)], [], false)).toEqual([]);
+    expect(
+      lateLines(lesson(120), [paid(60)], [rate(50, 'hour')], true),
+    ).toEqual([
+      expect.objectContaining({
+        amount: 20,
+        minutes: 30,
+        hourlyRate: 40,
+        flags: [ADJUSTED, CHANGED_LENGTH],
+      }),
+    ]);
+  });
+  it('keeps a lesson paid at zero for a missing rate at zero once a rate is set', () => {
+    expect(
+      lateLines(
+        lesson(90),
+        [paid(0, { flags: [NEEDS_RATE], hourlyRate: null })],
+        [rate(50, 'hour')],
+        true,
+      ),
+    ).toEqual([]);
+  });
+  it('settles a length change on a paid lesson by its minute delta', () => {
+    const rates = [rate(40, 'hour')];
+    expect(lateLines(lesson(120), [paid(60)], rates, true)).toEqual([
+      expect.objectContaining({
+        amount: 20,
+        minutes: 30,
+        flags: [ADJUSTED, CHANGED_LENGTH],
+      }),
+    ]);
+    expect(lateLines(lesson(60), [paid(60)], rates, false)).toEqual([
+      expect.objectContaining({
+        amount: -20,
+        minutes: -30,
+        flags: [ADJUSTED, CHANGED_LENGTH],
+      }),
+    ]);
+    expect(
+      lateLines(
+        lesson(120),
+        [paid(60), paid(20, { minutes: 30, flags: [ADJUSTED] })],
+        rates,
+        true,
+      ),
+    ).toEqual([]);
+  });
+
+  it('settles a lesson type change on a paid lesson at the new type’s rate and length', () => {
+    const group = { ...lesson(60), lessonTypeId: 'type-other' };
+    const rates = [
+      rate(40, 'hour'),
+      { ...rate(200, 'day'), lessonTypeId: 'type-other' },
+    ];
+    expect(lateLines(group, [paid(60)], rates, true)).toEqual([
+      expect.objectContaining({
+        lessonTypeId: 'type-other',
+        amount: 140,
+        minutes: -30,
+        hourlyRate: 200,
+        rateUnit: 'day',
+        flags: [ADJUSTED, CHANGED_LENGTH, CHANGED_LESSON_TYPE],
+      }),
+    ]);
+  });
+
+  it('takes the pay back with needs rate when a paid lesson moves to a lesson type without a rate', () => {
+    const unpriced = { ...lesson(90), lessonTypeId: 'type-unpriced' };
+    expect(lateLines(unpriced, [paid(60)], [rate(40, 'hour')], true)).toEqual([
+      expect.objectContaining({
+        lessonTypeId: 'type-unpriced',
+        amount: -60,
+        hourlyRate: null,
+        flags: [ADJUSTED, CHANGED_LESSON_TYPE, NEEDS_RATE],
+      }),
+    ]);
+  });
+
+  it('pays the rate on the lesson date for a new lesson type, and the first paid rate again when it changes back', () => {
+    const other = { ...lesson(90), lessonTypeId: 'type-other' };
+    const rates = [
+      rate(50, 'hour'),
+      { ...rate(30, 'hour'), lessonTypeId: 'type-other' },
+    ];
+    expect(lateLines(other, [paid(60)], rates, true)).toEqual([
+      expect.objectContaining({
+        amount: -15,
+        hourlyRate: 30,
+        flags: [ADJUSTED, CHANGED_LESSON_TYPE],
+      }),
+    ]);
+    const lines = [
+      paid(60),
+      paid(-15, {
+        lessonTypeId: 'type-other',
+        hourlyRate: 30,
+        minutes: 0,
+        flags: [ADJUSTED, CHANGED_LESSON_TYPE],
+      }),
+    ];
+    expect(lateLines(other, lines, [], true)).toEqual([]);
+    expect(lateLines(lesson(90), lines, rates, true)).toEqual([
+      expect.objectContaining({
+        amount: 15,
+        hourlyRate: 40,
+        flags: [ADJUSTED, CHANGED_LESSON_TYPE],
+      }),
+    ]);
+  });
+  it('moves the pay to the new currency when a paid lesson’s new lesson type is paid in another currency', () => {
+    const other = { ...lesson(90), lessonTypeId: 'type-other' };
+    expect(
+      lateLines(
+        other,
+        [paid(60)],
+        [{ ...rate(50, 'hour'), lessonTypeId: 'type-other', currency: 'USD' }],
+        true,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        currency: 'USD',
+        amount: 75,
+        minutes: 90,
+        flags: [ADJUSTED, CHANGED_LESSON_TYPE],
+      }),
+      expect.objectContaining({
+        currency: 'CAD',
+        amount: -60,
+        minutes: -90,
+        lessonTypeId: TYPE,
+        flags: [ADJUSTED, CHANGED_LESSON_TYPE],
+      }),
+    ]);
+  });
   it('leaves a cancelled lesson that was never paid alone', () => {
     expect(
       lateLines(cancelled(lesson(90)), [], [rate(40, 'hour')], true),
@@ -164,7 +305,7 @@ describe('lateLines', () => {
 
   it('labels a take-back on a lesson that still stands as a late correction (S9)', () => {
     const lines = [paid(60), paid(60, { flags: [LATE] })];
-    expect(lateLines(lesson(90), lines, [], true)).toEqual([
+    expect(lateLines(lesson(90), lines, [rate(40, 'hour')], true)).toEqual([
       expect.objectContaining({
         amount: -60,
         classStatus: 'completed',
@@ -181,7 +322,6 @@ describe('lateLines', () => {
     ];
     expect(lateLines(lesson(90), lines, [rate(50, 'hour')], true)).toEqual([]);
   });
-
   it('repays a restored lesson after the period that first paid it is reopened and finalized again', () => {
     const lines = [
       paid(-60, { flags: [LATE_CANCEL] }),
@@ -260,6 +400,19 @@ describe('lateLines', () => {
         instructorId: 'bo',
         amount: -120,
         flags: [LATE_CANCEL, REASSIGNED],
+      }),
+    ]);
+  });
+
+  it('never reverses a lesson with negative minutes when only a shortening is left', () => {
+    const lines = [
+      paid(-20, { minutes: -30, flags: [ADJUSTED, CHANGED_LENGTH] }),
+    ];
+    expect(lateLines(cancelled(lesson(60)), lines, [], true)).toEqual([
+      expect.objectContaining({
+        amount: 20,
+        minutes: 0,
+        flags: [LATE_CANCEL, CORRECTION],
       }),
     ]);
   });
@@ -353,5 +506,18 @@ describe('instructorTotals', () => {
       [],
     );
     expect(total).toMatchObject({ lessons: 1, minutes: 90, lessonAmount: 60 });
+  });
+
+  it('counts an adjustment as its minute delta and no lesson', () => {
+    const line = classLine(lesson(90), [rate(40, 'hour')]);
+    const [total] = instructorTotals(
+      [
+        { ...line, amount: 20, minutes: 30, flags: [ADJUSTED, CHANGED_LENGTH] },
+        { ...line, amount: -10, minutes: -15, flags: [ADJUSTED] },
+        { ...line, amount: 5, minutes: 0, flags: [ADJUSTED] },
+      ],
+      [],
+    );
+    expect(total).toMatchObject({ lessons: 0, minutes: 15, lessonAmount: 15 });
   });
 });

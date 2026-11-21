@@ -1,5 +1,8 @@
 import {
+  ADJUSTED,
   ALREADY_PAID,
+  CHANGED_LENGTH,
+  CHANGED_LESSON_TYPE,
   CORRECTION,
   LATE,
   LATE_CANCEL,
@@ -99,16 +102,27 @@ export function payrollSheetCsv(detail: PayrollPeriodDetail): string {
   );
 }
 
+const CHANGE_LABELS: [string, string][] = [
+  [CHANGED_LENGTH, 'length'],
+  [CHANGED_LESSON_TYPE, 'lesson type'],
+];
+
 function lineType(flags: readonly string[]): string {
+  const changed = CHANGE_LABELS.filter(([flag]) => flags.includes(flag)).map(
+    ([, label]) => label,
+  );
   const base = flags.includes(LATE_CANCEL)
     ? 'late cancel'
     : flags.includes(LATE)
       ? 'late lesson'
-      : 'lesson';
+      : flags.includes(ADJUSTED)
+        ? 'adjusted lesson'
+        : 'lesson';
   return [
     base,
     ...(flags.includes(CORRECTION) ? ['correction'] : []),
     ...(flags.includes(REASSIGNED) ? ['(reassigned)'] : []),
+    ...(changed.length > 0 ? [`(${changed.join('; ')})`] : []),
   ].join(' ');
 }
 

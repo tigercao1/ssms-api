@@ -5,7 +5,6 @@ import {
 import type { ClassStatus } from '../../src/lessons/lessons.types';
 import type { RateUnit } from '../../src/lessons/pay-rates';
 import type { PayRateRow } from '../../src/lessons/pay-rates.repository';
-import { rateAmountCents } from '../../src/payroll/payroll-lines';
 import { daysBetween, localDate } from '../../src/payroll/payroll-time';
 import {
   type AdjustmentInsert,
@@ -234,41 +233,87 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     return Promise.resolve(period ? { ...period } : null);
   }
 
+  owedFor(
+    c: PayrollClassRow,
+    lines: PayrollLineRow[],
+  ): { currency: string; cents: number; needsRate: boolean } {
+    const minutes = Math.max(
+      0,
+      Math.round((Date.parse(c.ends_at) - Date.parse(c.starts_at)) / 60_000),
+    );
+    const paidAt = lines.find(
+      (l) =>
+        l.instructor_id === c.instructor_id &&
+        l.lesson_type_id === c.lesson_type_id &&
+        !l.flags.includes('already_paid'),
+    );
+    const date = localDate(c.starts_at);
+    const effective = this.rates.filter(
+      (r) =>
+        r.lesson_type_id === c.lesson_type_id &&
+        r.effective_from <= date &&
+        (r.effective_to === null || date <= r.effective_to),
+    );
+    const rate = paidAt
+      ? {
+          hourly_rate: paidAt.hourly_rate,
+          rate_unit: paidAt.rate_unit,
+          currency: paidAt.currency,
+        }
+      : (effective.find((r) => r.instructor_id === c.instructor_id) ??
+        effective.find((r) => r.instructor_id === null));
+    if (!rate) return { currency: 'CAD', cents: 0, needsRate: true };
+    if (rate.hourly_rate === null) {
+      return { currency: rate.currency, cents: 0, needsRate: false };
+    }
+    const rateCents = Math.round(Number(rate.hourly_rate) * 100);
+    return {
+      currency: rate.currency,
+      needsRate: false,
+      cents:
+        rate.rate_unit === 'day'
+          ? rateCents
+          : Math.round((rateCents * minutes) / 60),
+    };
+  }
+
   unsettledClassIds(): Promise<string[]> {
     const cents = (amount: string | number) => Math.round(Number(amount) * 100);
-    const net = (lines: PayrollLineRow[]) =>
-      lines.reduce((sum, l) => sum + cents(l.amount), 0);
-    const owed = (lines: PayrollLineRow[]) => {
-      const terms = lines.find((l) => !l.flags.includes('already_paid'));
-      if (!terms) return null;
-      return terms.hourly_rate === null
-        ? 0
-        : rateAmountCents(
-            terms.hourly_rate,
-            terms.rate_unit,
-            terms.minutes ?? 0,
-          );
-    };
     const ids = this.classes
       .filter((c) => {
-        const byInstructor = new Map<string, PayrollLineRow[]>();
-        for (const l of this.lineRows) {
-          if (l.kind !== 'class' || l.class_id !== c.id) continue;
-          byInstructor.set(l.instructor_id, [
-            ...(byInstructor.get(l.instructor_id) ?? []),
-            l,
-          ]);
+        const lines = this.lineRows.filter(
+          (l) => l.kind === 'class' && l.class_id === c.id,
+        );
+        const net = new Map<string, number>();
+        for (const l of lines) {
+          const key = `${l.instructor_id}|${l.currency}`;
+          net.set(key, (net.get(key) ?? 0) + cents(l.amount));
         }
-        const reversals = [...byInstructor].some(
-          ([id, lines]) =>
-            (c.status === 'cancelled' || id !== c.instructor_id) &&
-            net(lines) !== 0,
+        const active = c.status !== 'cancelled';
+        const reversals = [...net].some(
+          ([key, amount]) =>
+            amount !== 0 && (!active || !key.startsWith(`${c.instructor_id}|`)),
         );
         if (reversals) return true;
-        if (c.status === 'cancelled') return false;
-        const mine = byInstructor.get(c.instructor_id) ?? [];
-        const due = owed(mine);
-        if (due !== null) return net(mine) !== due;
+        if (!active) return false;
+        const paid = lines.some(
+          (l) =>
+            l.instructor_id === c.instructor_id &&
+            !l.flags.includes('already_paid'),
+        );
+        if (paid) {
+          const owed = this.owedFor(c, lines);
+          return (
+            owed.needsRate ||
+            [...net].some(
+              ([key, amount]) =>
+                key.startsWith(`${c.instructor_id}|`) &&
+                key !== `${c.instructor_id}|${owed.currency}` &&
+                amount !== 0,
+            ) ||
+            (net.get(`${c.instructor_id}|${owed.currency}`) ?? 0) !== owed.cents
+          );
+        }
         const date = localDate(c.starts_at);
         return this.periods.some(
           (p) =>
@@ -366,12 +411,21 @@ export class InMemoryPayrollRepository extends PayrollRepository {
     if (period.status !== 'open') {
       throw prerequisite('payroll period is finalized');
     }
-    const keys = lines.map((l) => `${l.class_id}|${l.instructor_id}`);
+    const keys = lines.map(
+      (l) => `${l.class_id}|${l.instructor_id}|${l.currency}`,
+    );
     if (new Set(keys).size !== keys.length) {
       throw new DatabaseError(
         'finalize',
         '23505',
         'duplicate payroll line for a class and instructor',
+      );
+    }
+    if (lines.some((l) => l.minutes < 0 && !l.flags.includes('adjusted'))) {
+      throw new DatabaseError(
+        'finalize',
+        '23514',
+        'payroll_lines_minutes_check',
       );
     }
     this.lineRows = this.lineRows.filter(

@@ -70,6 +70,10 @@ describe('MailerConfig', () => {
     expect(config.senderAddressFor('booking.cancelled.instructor')).toBe(
       'bookings@contact.ssnow.club',
     );
+    expect(config.mailboxFor('booking.updated.instructor')).toEqual({
+      from: 'Bookings <bookings@contact.ssnow.club>',
+      replyTo: 'bookings@ssnow.club',
+    });
     expect(config.mailboxFor('approved')).toEqual({});
     expect(config.senderAddressFor('approved')).toBe(
       'noreply@contact.ssnow.club',

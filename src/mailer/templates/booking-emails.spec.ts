@@ -108,6 +108,53 @@ describe('booking emails', () => {
     expect(email.text).not.toContain('Previously:');
   });
 
+  it('says what changed and keeps the unchanged time on an update', () => {
+    const email = renderer.render('booking.updated.instructor', 'en', {
+      ...vars,
+      location: 'Mount St. Louis',
+      changes: {
+        addedCustomers: ['Leo Chen'],
+        removedCustomers: ['Ann Li'],
+        location: { previous: 'Blue Mountain' },
+        lessonType: { previousEn: 'Group 90', previousZh: null },
+      },
+    });
+    expect(email.subject).toBe('Lesson updated: Private 1h');
+    expect(email.text).not.toMatch(/reschedul/i);
+    expect(email.text).not.toContain('Previously:');
+    expect(email.text).toContain(
+      'Your Private 1h was updated. The time has not changed:',
+    );
+    expect(email.text).toContain(
+      `• ${bookingTime(LESSON, 'en')} (Toronto time)`,
+    );
+    expect(email.text).toContain('Added: Leo Chen');
+    expect(email.text).toContain('Removed: Ann Li');
+    expect(email.text).toContain(
+      'Location changed (previously Blue Mountain).',
+    );
+    expect(email.text).toContain('Lesson type changed (previously Group 90).');
+    expect(email.text).toContain('Location: Mount St. Louis');
+  });
+
+  it('renders the update in zh-CN and leaves out empty change lines', () => {
+    const email = renderer.render('booking.updated.instructor', 'zh-CN', {
+      ...vars,
+      changes: {
+        addedCustomers: [],
+        removedCustomers: ['Ann Li'],
+        location: { previous: null },
+      },
+    });
+    expect(email.subject).toBe('课程已更新：私教1小时');
+    expect(email.text).not.toContain('改期');
+    expect(email.text).toContain('您的私教1小时信息已更新，上课时间不变：');
+    expect(email.text).toContain('移除学员：Ann Li');
+    expect(email.text).not.toContain('新增学员');
+    expect(email.text).toContain('地点已更改（原地点：未设置）。');
+    expect(email.text).not.toContain('课程类型已更改');
+  });
+
   it('renders zh-CN with the Chinese lesson and instructor names', () => {
     const email = renderer.render('booking.confirmed.customer', 'zh-CN', vars);
     expect(email.subject).toBe('课程已预约：私教1小时');

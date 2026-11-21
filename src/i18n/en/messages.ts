@@ -534,6 +534,25 @@ export const en: MessageCatalog = {
             "The attached calendar file updates the lesson in your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
         },
       },
+      updated: {
+        instructor: {
+          subject: 'Lesson updated: {lesson}',
+          preheader:
+            'One of your lessons was updated. The time has not changed.',
+          heading: 'Lesson updated',
+          paragraphs: [
+            'Your {lesson} was updated. The time has not changed:',
+            'Your schedule in the instructor portal is up to date.',
+          ],
+          finePrint:
+            "The attached calendar file updates the lesson in your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+          added: 'Added: {names}',
+          removed: 'Removed: {names}',
+          location: 'Location changed (previously {previous}).',
+          lessonType: 'Lesson type changed (previously {previous}).',
+          notSet: 'not set',
+        },
+      },
       cancelled: {
         customer: {
           subject: 'Your lesson is cancelled: {lesson}',

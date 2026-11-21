@@ -48,6 +48,7 @@ const ALL_TEMPLATES: EmailTemplate[] = [
   'booking.confirmed.instructor',
   'booking.rescheduled.customer',
   'booking.rescheduled.instructor',
+  'booking.updated.instructor',
   'booking.cancelled.customer',
   'booking.cancelled.instructor',
   'booking.reminder.customer',

@@ -10,6 +10,7 @@ import type { Vars } from '../../i18n';
 import type {
   BookingEmailVars,
   BookingLessonTime,
+  BookingUpdatedVars,
   EmailDocumentTitle,
   EmailTemplate,
   EmailTemplateVars,
@@ -243,13 +244,14 @@ export function bookingTime(
 
 function bookingBlocks(
   catalog: MessageCatalog,
-  kind: BookingKind,
+  copy: EmailCopy,
   audience: BookingAudience,
   vars: BookingEmailVars & { previous?: BookingLessonTime[] },
   language: SupportedLanguage,
+  changes: string[] = [],
 ): EmailBlocks {
   const labels = catalog.email.booking.labels;
-  const blocks = fill(catalog.email.booking[kind][audience], {
+  const blocks = fill(copy, {
     lesson: localized(vars.lessonNameEn, vars.lessonNameZh, language),
     instructor: localized(
       vars.instructorNameEn,
@@ -271,6 +273,7 @@ function bookingBlocks(
       ...(vars.previous?.length
         ? [labels.previously, ...vars.previous.map(line)]
         : []),
+      ...changes,
       ...(audience === 'instructor' && students
         ? [`${labels.students} ${students}`]
         : []),
@@ -294,13 +297,53 @@ function bookingTemplate<T extends EmailTemplate>(
     build: (catalog, vars, language) =>
       bookingBlocks(
         catalog,
-        kind,
+        catalog.email.booking[kind][audience],
         audience,
         vars as BookingEmailVars & { previous?: BookingLessonTime[] },
         language,
       ),
     sample,
   };
+}
+
+function bookingUpdatedBlocks(
+  catalog: MessageCatalog,
+  vars: BookingUpdatedVars,
+  language: SupportedLanguage,
+): EmailBlocks {
+  const copy = catalog.email.booking.updated.instructor;
+  const { addedCustomers, removedCustomers, location, lessonType } =
+    vars.changes;
+  const names = (list: string[]) =>
+    list
+      .map((n) => n.trim())
+      .filter((n) => n)
+      .join(', ');
+  const added = names(addedCustomers);
+  const removed = names(removedCustomers);
+  const changes = [
+    ...(added ? [interpolate(copy.added, { names: added })] : []),
+    ...(removed ? [interpolate(copy.removed, { names: removed })] : []),
+    ...(location
+      ? [
+          interpolate(copy.location, {
+            previous: location.previous?.trim() || copy.notSet,
+          }),
+        ]
+      : []),
+    ...(lessonType
+      ? [
+          interpolate(copy.lessonType, {
+            previous: localized(
+              lessonType.previousEn,
+              lessonType.previousZh,
+              language,
+            ),
+          }),
+        ]
+      : []),
+  ];
+  return bookingBlocks(catalog, copy, 'instructor', vars, language, changes);
 }
 
 function sampleBooking(audience: BookingAudience): BookingEmailVars {
@@ -322,6 +365,19 @@ function sampleBooking(audience: BookingAudience): BookingEmailVars {
         endsAt: '2026-12-19T16:00:00.000Z',
       },
     ],
+  };
+}
+
+function sampleUpdate(): BookingUpdatedVars {
+  const booking = sampleBooking('instructor');
+  return {
+    ...booking,
+    lessons: booking.lessons.slice(0, 1),
+    changes: {
+      addedCustomers: ['Leo Chen'],
+      removedCustomers: ['Ann Li'],
+      location: { previous: 'Mount St. Louis Moonstone' },
+    },
   };
 }
 
@@ -723,6 +779,10 @@ export const EMAIL_TEMPLATES: TemplateRegistry = {
     'instructor',
     () => sampleReschedule('instructor'),
   ),
+  'booking.updated.instructor': {
+    build: bookingUpdatedBlocks,
+    sample: sampleUpdate,
+  },
   'booking.cancelled.customer': bookingTemplate('cancelled', 'customer', () =>
     sampleBooking('customer'),
   ),

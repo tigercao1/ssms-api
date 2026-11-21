@@ -10,6 +10,7 @@ import { MailerService } from '../mailer/mailer.service';
 import type {
   BookingEmailVars,
   BookingLessonTime,
+  BookingUpdateChanges,
   EmailLanguage,
   EmailTemplate,
   SendEmailRequest,
@@ -41,7 +42,7 @@ export const CUSTOMER_EMAIL_MISSING =
 export const INSTRUCTOR_EMAIL_MISSING =
   'The instructor has no email address, so no booking email was sent';
 
-type BookingEmailKind = 'confirmed' | 'rescheduled' | 'cancelled';
+type BookingEmailKind = 'confirmed' | 'rescheduled' | 'updated' | 'cancelled';
 export type Audience = 'customer' | 'instructor';
 
 export interface Recipient {
@@ -59,6 +60,7 @@ interface Delivery {
   notices: ClassNoticeRow[];
   sequence?: number;
   previous?: ClassNoticeRow;
+  changes?: BookingUpdateChanges;
 }
 
 interface PendingEmail {
@@ -143,7 +145,18 @@ export class BookingEmailsService implements OnModuleDestroy {
     for (const [key, recipient] of current) {
       if (!previous.has(key)) {
         deliveries.push({ kind: 'confirmed', recipient, notices: [after] });
-      } else if (moved || (regrouped && recipient.audience === 'instructor')) {
+      } else if (
+        recipient.audience === 'instructor' &&
+        sameTime(before, after) &&
+        (moved || regrouped)
+      ) {
+        deliveries.push({
+          kind: 'updated',
+          recipient,
+          notices: [after],
+          changes: changesOf(before, after),
+        });
+      } else if (moved) {
         deliveries.push({
           kind: 'rescheduled',
           recipient,
@@ -338,10 +351,14 @@ function attendeesOf(
 function emailVars(
   recipient: Recipient,
   delivery: Delivery,
-): BookingEmailVars & { previous?: BookingLessonTime[] } {
+): BookingEmailVars & {
+  previous?: BookingLessonTime[];
+  changes?: BookingUpdateChanges;
+} {
   return {
     ...lessonVars(recipient, delivery.notices),
     ...(delivery.previous ? { previous: [timeOf(delivery.previous)] } : {}),
+    ...(delivery.changes ? { changes: delivery.changes } : {}),
   };
 }
 
@@ -372,10 +389,36 @@ function summaryFor(audience: Audience, notice: ClassNoticeRow): string {
   return other ? `${lesson} · ${other}` : lesson;
 }
 
-function customerNames(notice: ClassNoticeRow): string[] {
+function customerNames(
+  notice: ClassNoticeRow,
+  excluding: ClassNoticeRow | null = null,
+): string[] {
+  const skip = new Set(excluding ? customerIdsOf(excluding) : []);
   return (notice.participants ?? [])
+    .filter((p) => !skip.has(p.customer_id))
     .map((p) => (p.customer ? fullName(p.customer) : null))
     .filter((n): n is string => Boolean(n));
+}
+
+function changesOf(
+  before: ClassNoticeRow,
+  after: ClassNoticeRow,
+): BookingUpdateChanges {
+  return {
+    addedCustomers: customerNames(after, before),
+    removedCustomers: customerNames(before, after),
+    ...(before.location?.name !== after.location?.name
+      ? { location: { previous: before.location?.name ?? null } }
+      : {}),
+    ...(before.lesson_type?.name_en !== after.lesson_type?.name_en
+      ? {
+          lessonType: {
+            previousEn: before.lesson_type?.name_en ?? DEFAULT_LESSON_NAME,
+            previousZh: before.lesson_type?.name_zh ?? null,
+          },
+        }
+      : {}),
+  };
 }
 
 function timeOf(notice: ClassNoticeRow): BookingLessonTime {
@@ -444,5 +487,7 @@ function messageOf(err: unknown): string {
 }
 
 function templateOf({ kind, recipient }: Delivery): EmailTemplate {
-  return `booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate;
+  return kind === 'updated'
+    ? 'booking.updated.instructor'
+    : (`booking.${kind}.${recipient.audience}` as const satisfies EmailTemplate);
 }

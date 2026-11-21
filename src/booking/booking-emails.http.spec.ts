@@ -58,6 +58,7 @@ import { BookingSettingsService } from './booking-settings.service';
 const NOW = Date.parse('2026-12-10T17:00:00.000Z');
 const CLASS_A = 'c0000000-0000-4000-8000-000000000001';
 const BATCH = 'b0000000-0000-4000-8000-000000000001';
+const PARK_1H = 'd0000000-0000-4000-8000-000000000001';
 
 async function build(
   google = fakeBookingGoogle(),
@@ -493,8 +494,14 @@ describe('booking emails HTTP', () => {
       expect(sent(ctx.mailer)).toEqual([
         ['booking.cancelled.customer', 'mei@example.com', 'en'],
         ['booking.confirmed.customer', 'ann@example.com', 'en'],
-        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
+        ['booking.updated.instructor', 'amy@example.com', 'zh-CN'],
       ]);
+      expect(ctx.mailer.sent[2].vars).toMatchObject({
+        changes: {
+          addedCustomers: ['Ann', 'Leo Chen'],
+          removedCustomers: ['Mei Wang'],
+        },
+      });
       expect(ics(ctx.mailer.sent[0])).toContain('METHOD:CANCEL');
       expect(ics(ctx.mailer.sent[0])).toContain('SEQUENCE:2');
       expect(one(res).warnings).toEqual([
@@ -507,7 +514,7 @@ describe('booking emails HTTP', () => {
 
     const instructorInvite = () => {
       const amy = ctx.mailer.sent.find((m) => m.to === 'amy@example.com')!;
-      expect(amy.template).toBe('booking.rescheduled.instructor');
+      expect(amy.template).toBe('booking.updated.instructor');
       expect(amy.vars).not.toHaveProperty('previous');
       const calendar = ics(amy);
       expect(calendar).toContain('METHOD:REQUEST');
@@ -523,10 +530,25 @@ describe('booking emails HTTP', () => {
       await patch(CLASS_A, { customerIds: [MEI_ID, LEO_ID] }).expect(200);
       expect(sent(ctx.mailer)).toEqual([
         ['booking.confirmed.customer', 'leo@example.com', 'en'],
-        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
+        ['booking.updated.instructor', 'amy@example.com', 'zh-CN'],
       ]);
       const { vars, calendar } = instructorInvite();
-      expect(vars).toMatchObject({ customerNames: ['Mei Wang', 'Leo Chen'] });
+      expect(vars).toEqual(
+        expect.objectContaining({
+          customerNames: ['Mei Wang', 'Leo Chen'],
+          lessons: [
+            {
+              startsAt: '2026-12-12T15:00:00.000Z',
+              endsAt: '2026-12-12T16:00:00.000Z',
+            },
+          ],
+          changes: { addedCustomers: ['Leo Chen'], removedCustomers: [] },
+        }),
+      );
+      const leo = ctx.mailer.sent.find((m) => m.to === 'leo@example.com')!;
+      expect(JSON.stringify(leo.vars)).not.toContain('Mei');
+      expect(ics(leo)).not.toContain('Mei');
+      expect(ics(leo)).not.toContain('mei@example.com');
       expect(calendar).toContain('mailto:mei@example.com');
       expect(calendar).toContain('mailto:leo@example.com');
     });
@@ -541,12 +563,67 @@ describe('booking emails HTTP', () => {
       await patch(CLASS_A, { customerIds: [MEI_ID] }).expect(200);
       expect(sent(ctx.mailer)).toEqual([
         ['booking.cancelled.customer', 'leo@example.com', 'en'],
-        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
+        ['booking.updated.instructor', 'amy@example.com', 'zh-CN'],
       ]);
       const { vars, calendar } = instructorInvite();
-      expect(vars).toMatchObject({ customerNames: ['Mei Wang'] });
+      expect(vars).toMatchObject({
+        customerNames: ['Mei Wang'],
+        changes: { addedCustomers: [], removedCustomers: ['Leo Chen'] },
+      });
+      const leo = ctx.mailer.sent.find((m) => m.to === 'leo@example.com')!;
+      expect(JSON.stringify(leo.vars)).not.toContain('Mei');
       expect(calendar).toContain('mailto:mei@example.com');
       expect(calendar).not.toContain('leo@example.com');
+    });
+
+    it('sends the instructor the updated template naming the old lesson type when only the lesson type changes', async () => {
+      ctx.repo.lessonTypes.push({
+        id: PARK_1H,
+        name_en: 'Park 1h',
+        name_zh: '公园1小时',
+        duration_min: 60,
+        active: true,
+      });
+      await patch(CLASS_A, { lessonTypeId: PARK_1H }).expect(200);
+      expect(sent(ctx.mailer)).toEqual([
+        ['booking.rescheduled.customer', 'mei@example.com', 'en'],
+        ['booking.updated.instructor', 'amy@example.com', 'zh-CN'],
+      ]);
+      const amy = ctx.mailer.sent[1];
+      expect(amy.vars).not.toHaveProperty('previous');
+      expect(amy.vars).toMatchObject({
+        lessonNameEn: 'Park 1h',
+        lessons: [{ startsAt: '2026-12-12T15:00:00.000Z' }],
+        changes: {
+          addedCustomers: [],
+          removedCustomers: [],
+          lessonType: { previousEn: 'Private 1h', previousZh: '私教1小时' },
+        },
+      });
+    });
+
+    it('keeps the rescheduled template for the instructor when the time and the customers change', async () => {
+      ctx.repo.customers.find((c) => c.id === LEO_ID)!.email =
+        'leo@example.com';
+      await patch(CLASS_A, {
+        startsAt: '2026-12-13T18:00:00.000Z',
+        customerIds: [MEI_ID, LEO_ID],
+      }).expect(200);
+      expect(sent(ctx.mailer)).toEqual([
+        ['booking.rescheduled.customer', 'mei@example.com', 'en'],
+        ['booking.confirmed.customer', 'leo@example.com', 'en'],
+        ['booking.rescheduled.instructor', 'amy@example.com', 'zh-CN'],
+      ]);
+      expect(ctx.mailer.sent[2].vars).toMatchObject({
+        lessons: [{ startsAt: '2026-12-13T18:00:00.000Z' }],
+        previous: [{ startsAt: '2026-12-12T15:00:00.000Z' }],
+      });
+      expect(ctx.mailer.sent[2].vars).not.toHaveProperty('changes');
+      for (const customer of ctx.mailer.sent.slice(0, 2)) {
+        const other = customer.to === 'mei@example.com' ? 'Leo' : 'Mei';
+        expect(JSON.stringify(customer.vars)).not.toContain(other);
+        expect(ics(customer)).not.toContain(other);
+      }
     });
 
     it('sends nothing when a patch only changes customers with sendEmails false', async () => {

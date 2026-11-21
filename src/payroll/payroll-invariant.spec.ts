@@ -652,4 +652,132 @@ describe('payroll settlement invariant', () => {
     expect(failures.slice(0, 5)).toEqual([]);
     expect(failures).toHaveLength(0);
   });
+
+  describe('scripted', () => {
+    let model: Model;
+    const periodOn = (startsOn: string) => {
+      const period = model.repo.periods.find((p) => p.starts_on === startsOn);
+      if (!period) throw new Error(`no period ${startsOn}`);
+      return period;
+    };
+    const retype = (cls: ModelClass, lessonTypeId: string) => {
+      cls.lesson_type_id = lessonTypeId;
+      cls.lesson_type = model.repo.lessonTypes.get(lessonTypeId) ?? null;
+      cls.ends_at = new Date(
+        Date.parse(cls.starts_at) +
+          (TYPE_MINUTES.get(lessonTypeId) ?? 90) * 60_000,
+      ).toISOString();
+    };
+    const net = (cls: ModelClass) =>
+      [...model.finalizedNet()]
+        .filter(([key]) => key.startsWith(`${cls.id}|`))
+        .map(([key, cents]) => [key.split('|').slice(1).join('|'), cents]);
+    const editEveryRate = (hourlyRate: number) =>
+      model.editRates(() => {
+        for (const row of model.repo.rates) {
+          row.hourly_rate = hourlyRate;
+          row.rate_unit = 'day';
+        }
+        model.repo.addRate({
+          instructorId: ADA_ID,
+          lessonTypeId: GROUP_60,
+          hourlyRate: hourlyRate + 1,
+          from: '2025-12-01',
+          to: '2025-12-31',
+        });
+      });
+
+    beforeEach(async () => {
+      model = new Model(() => 0);
+      await model.ensurePeriods();
+    });
+
+    it('never moves a paid lesson when any rate is edited', async () => {
+      const cls = model.repo.addClass({
+        instructorId: ADA_ID,
+        startsAt: '2025-12-20T15:00:00Z',
+      });
+      await model.finalize(periodOn('2025-12-15'));
+      await editEveryRate(99);
+      expect(await model.check()).toEqual([]);
+      expect(
+        (await model.service.detail(periodOn('2025-12-29').id)).lines,
+      ).toEqual([]);
+      expect(net(cls)).toEqual([[`${ADA_ID}|CAD`, 6000]]);
+    });
+
+    it('returns to the first type’s original terms after A → B → A are all finalized, whatever either rate does later', async () => {
+      const cls = model.repo.addClass({
+        instructorId: ADA_ID,
+        startsAt: '2025-12-20T15:00:00Z',
+      });
+      await model.finalize(periodOn('2025-12-15'));
+      expect(net(cls)).toEqual([[`${ADA_ID}|CAD`, 6000]]);
+      retype(cls, GROUP_60);
+      expect(await model.check()).toEqual([]);
+      await model.finalize(periodOn('2025-12-29'));
+      expect(net(cls)).toEqual([[`${ADA_ID}|CAD`, 3000]]);
+      retype(cls, PRIVATE_90);
+      expect(await model.check()).toEqual([]);
+      await model.finalize(periodOn('2026-01-12'));
+      expect(net(cls)).toEqual([[`${ADA_ID}|CAD`, 6000]]);
+      await editEveryRate(99);
+      expect(await model.check()).toEqual([]);
+      expect(
+        (await model.service.detail(periodOn('2026-01-26').id)).lines,
+      ).toEqual([]);
+      retype(cls, GROUP_60);
+      expect(
+        (await model.service.detail(periodOn('2026-01-26').id)).lines.map(
+          (l) => [l.amount, l.hourlyRate, l.flags],
+        ),
+      ).toEqual([
+        [-30, 30, ['adjusted', 'changed_length', 'changed_lesson_type']],
+      ]);
+      expect(await model.check()).toEqual([]);
+    });
+
+    it('tags a reversal with the lesson type it takes back, so a later return is priced at the new type', async () => {
+      const cls = model.repo.addClass({
+        instructorId: ADA_ID,
+        startsAt: '2025-12-20T15:00:00Z',
+      });
+      await model.finalize(periodOn('2025-12-15'));
+      retype(cls, GROUP_60);
+      cls.instructor_id = BO_ID;
+      await model.finalize(periodOn('2025-12-29'));
+      const reversal = model.repo.lineRows.find(
+        (l) => l.instructor_id === ADA_ID && l.flags.includes(LATE_CANCEL),
+      );
+      expect(reversal?.lesson_type_id).toBe(PRIVATE_90);
+      cls.instructor_id = ADA_ID;
+      expect(
+        (await model.service.detail(periodOn('2026-01-12').id)).lines.map(
+          (l) => [l.instructorId, l.amount],
+        ),
+      ).toEqual([
+        [ADA_ID, 30],
+        [BO_ID, -30],
+      ]);
+      expect(await model.check()).toEqual([]);
+    });
+
+    it('lets a lesson type change that is not finalized yet follow the new type’s current rate', async () => {
+      const cls = model.repo.addClass({
+        instructorId: ADA_ID,
+        startsAt: '2025-12-20T15:00:00Z',
+      });
+      await model.finalize(periodOn('2025-12-15'));
+      retype(cls, GROUP_60);
+      const amounts = async () =>
+        (await model.service.detail(periodOn('2025-12-29').id)).lines.map(
+          (l) => l.amount,
+        );
+      expect(await amounts()).toEqual([-30]);
+      model.repo.rates.find((r) => r.lesson_type_id === GROUP_60)!.hourly_rate =
+        45;
+      expect(await amounts()).toEqual([-15]);
+      expect(await model.check()).toEqual([]);
+    });
+  });
 });

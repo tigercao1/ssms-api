@@ -140,7 +140,9 @@ export class BookingEmailsService implements OnModuleDestroy {
         deliveries.push({
           kind: 'cancelled',
           recipient,
-          notices: [before],
+          notices: [
+            { ...before, google_sync_status: after.google_sync_status },
+          ],
           sequence: Math.max(after.ics_sequence, before.ics_sequence + 1),
         });
       }
@@ -315,7 +317,7 @@ export class BookingEmailsService implements OnModuleDestroy {
 function onGoogleCalendar({ recipient, notices }: Delivery): boolean {
   return (
     recipient.audience === 'instructor' &&
-    notices.every((n) => n.google_calendar_id)
+    notices.every((n) => n.google_calendar_id && n.google_sync_status === 'ok')
   );
 }
 

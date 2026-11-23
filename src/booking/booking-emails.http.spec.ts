@@ -23,6 +23,7 @@ import {
 } from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { GoogleApiError } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
 import { MailerConfig } from '../mailer/mailer.config';
 import { MailerService } from '../mailer/mailer.service';
@@ -1029,6 +1030,52 @@ describe('booking emails HTTP', () => {
       const mails = byTemplate(ctx.mailer);
       expectNotice(mails['booking.cancelled.instructor']);
       expectInvite(mails['booking.confirmed.instructor'], 'REQUEST');
+    });
+
+    const googleDown = () => new GoogleApiError(503, 'backendError', 'down');
+
+    it('sends the ICS and the default fine print when the Google insert fails', async () => {
+      ctx.google.insertEvent.mockRejectedValueOnce(googleDown());
+      const [lesson] = created(await post(booking()).expect(201));
+      expect(lesson.calendarSync).toBe('failed');
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.confirmed.instructor'],
+        'REQUEST',
+      );
+    });
+
+    it('sends the ICS when the Google patch fails on a reschedule', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      ctx.google.patchEvent.mockRejectedValueOnce(googleDown());
+      await patch(lesson.id, { startsAt: '2026-12-13T18:00:00.000Z' }).expect(
+        200,
+      );
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.rescheduled.instructor'],
+        'REQUEST',
+      );
+    });
+
+    it('sends the CANCEL ICS when the Google delete fails on a cancellation', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      ctx.google.deleteEvent.mockRejectedValueOnce(googleDown());
+      await cancel(lesson.id).expect(200);
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.cancelled.instructor'],
+        'CANCEL',
+      );
+    });
+
+    it('sends the old instructor the CANCEL ICS when the Google delete fails on an instructor change', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      ctx.google.deleteEvent.mockRejectedValueOnce(googleDown());
+      await patch(lesson.id, { instructorId: BEN_ID }).expect(200);
+      const mails = byTemplate(ctx.mailer);
+      expectInvite(mails['booking.cancelled.instructor'], 'CANCEL');
+      expect(mails['booking.cancelled.instructor'].to).toBe('amy@example.com');
     });
 
     it('uses the calendar state of the lesson when the email is sent', async () => {

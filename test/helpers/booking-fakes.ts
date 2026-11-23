@@ -791,6 +791,7 @@ export class InMemoryBookingRepository extends BookingRepository {
       ends_at: row.ends_at,
       ics_sequence: row.ics_sequence,
       google_calendar_id: row.google_calendar_id,
+      google_sync_status: row.google_sync_status,
       instructor: instructor
         ? {
             display_name_en: instructor.display_name_en,

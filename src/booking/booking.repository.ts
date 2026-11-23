@@ -7,7 +7,7 @@ import {
   CLASSES_TABLE,
   type ClassRow,
 } from '../lessons/classes.repository';
-import type { ClassStatus } from '../lessons/lessons.types';
+import type { ClassStatus, GoogleSyncStatus } from '../lessons/lessons.types';
 
 export const BOOKING_SETTINGS_TABLE = 'booking_settings';
 export const EVENT_DELETIONS_TABLE = 'google_event_deletions';
@@ -17,7 +17,7 @@ const DELETION_COLUMNS =
 const SETTINGS_COLUMNS =
   'day_start_time, day_end_time, slot_minutes, weekday_overrides, updated_at';
 export const CLASS_NOTICE_COLUMNS = [
-  'id, instructor_id, starts_at, ends_at, ics_sequence',
+  'id, instructor_id, starts_at, ends_at, ics_sequence, google_calendar_id, google_sync_status',
   'instructor:instructors(display_name_en, display_name_zh, email, preferred_language)',
   'location:teaching_locations(name)',
   'lesson_type:lesson_types(name_en, name_zh)',
@@ -87,6 +87,8 @@ export interface ClassNoticeRow {
   starts_at: string;
   ends_at: string;
   ics_sequence: number;
+  google_calendar_id: string | null;
+  google_sync_status: GoogleSyncStatus;
   instructor: {
     display_name_en: string;
     display_name_zh: string | null;

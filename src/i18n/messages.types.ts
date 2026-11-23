@@ -194,13 +194,19 @@ export interface EmailMessages {
       instructor: EmailBookingUpdatedCopy;
     };
     cancelled: EmailBookingAudienceCopy;
-    reminder: EmailBookingAudienceCopy;
+    reminder: EmailBookingAudienceCopy<EmailCopy>;
   };
 }
 
-export interface EmailBookingAudienceCopy {
+export interface EmailBookingAudienceCopy<
+  Instructor extends EmailCopy = EmailBookingInstructorCopy,
+> {
   customer: EmailCopy;
-  instructor: EmailCopy;
+  instructor: Instructor;
+}
+
+export interface EmailBookingInstructorCopy extends EmailCopy {
+  googleCalendarFinePrint: string;
 }
 
 /** Change lines use `{names}` (added, removed) and `{previous}` (lessonType, instructor). */
@@ -208,7 +214,8 @@ export interface EmailBookingDetailChangeCopy extends EmailCopy {
   lessonType: string;
 }
 
-export interface EmailBookingUpdatedCopy extends EmailBookingDetailChangeCopy {
+export interface EmailBookingUpdatedCopy
+  extends EmailBookingDetailChangeCopy, EmailBookingInstructorCopy {
   added: string;
   removed: string;
 }

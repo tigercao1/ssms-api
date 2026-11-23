@@ -247,21 +247,26 @@ export function bookingTime(
 
 function bookingBlocks(
   catalog: MessageCatalog,
-  copy: EmailCopy,
+  copy: EmailCopy & { googleCalendarFinePrint?: string },
   audience: BookingAudience,
   vars: BookingEmailVars & { previous?: BookingLessonTime[] },
   language: SupportedLanguage,
   changes: string[] = [],
 ): EmailBlocks {
   const labels = catalog.email.booking.labels;
-  const blocks = fill(copy, {
-    lesson: localized(vars.lessonNameEn, vars.lessonNameZh, language),
-    instructor: localized(
-      vars.instructorNameEn,
-      vars.instructorNameZh,
-      language,
-    ),
-  });
+  const finePrint =
+    (vars.onGoogleCalendar && copy.googleCalendarFinePrint) || copy.finePrint;
+  const blocks = fill(
+    { ...copy, finePrint },
+    {
+      lesson: localized(vars.lessonNameEn, vars.lessonNameZh, language),
+      instructor: localized(
+        vars.instructorNameEn,
+        vars.instructorNameZh,
+        language,
+      ),
+    },
+  );
   const line = (lesson: BookingLessonTime) =>
     `• ${interpolate(labels.when, { time: bookingTime(lesson, language) })}`;
   const location = vars.location?.trim();

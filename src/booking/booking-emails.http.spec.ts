@@ -23,6 +23,7 @@ import {
 } from '../../test/helpers/mailer-fakes';
 import { recordingAudit } from '../../test/helpers/public-pages-fakes';
 import { AuditService } from '../audit/audit.service';
+import { GoogleApiError } from '../google/google.errors';
 import { GoogleCalendarClient } from '../google/google-calendar.client';
 import { MailerConfig } from '../mailer/mailer.config';
 import { MailerService } from '../mailer/mailer.service';
@@ -218,7 +219,6 @@ describe('booking emails HTTP', () => {
       expect(calendar).toContain('CN="Mei Wang"');
       expect(calendar).toContain('mailto:mei@example.com');
       expect(calendar).not.toContain('mailto:amy@example.com');
-      expect(ics(instructor)).toContain('SUMMARY:Private 1h · Mei Wang');
       expect(customer.idempotencyKey).not.toBe(instructor.idempotencyKey);
     });
 
@@ -360,6 +360,7 @@ describe('booking emails HTTP', () => {
     beforeEach(() => {
       ctx.repo.customers.find((c) => c.id === LEO_ID)!.email =
         'leo@example.com';
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== AMY_ID);
     });
 
     const expectPrivate = (mails: Record<string, SendEmailRequest>) => {
@@ -941,6 +942,166 @@ describe('booking emails HTTP', () => {
     });
   });
 
+  describe("ICS invites and the instructor's Google Calendar", () => {
+    const byTemplate = (mailer: RecordingMailer) =>
+      Object.fromEntries(mailer.sent.map((m) => [m.template, m]));
+    const expectNotice = (mail: SendEmailRequest) => {
+      expect(mail.attachments).toBeUndefined();
+      expect(mail.vars).toMatchObject({ onGoogleCalendar: true });
+    };
+    const expectInvite = (mail: SendEmailRequest, method: string) => {
+      expect(ics(mail)).toContain(`METHOD:${method}`);
+      expect(mail.vars).not.toHaveProperty('onGoogleCalendar');
+    };
+
+    it('books a calendared lesson without an ICS for the instructor', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      expect(lesson.googleCalendarId).toBe(AMY_CAL);
+      const mails = byTemplate(ctx.mailer);
+      expectNotice(mails['booking.confirmed.instructor']);
+      expectInvite(mails['booking.confirmed.customer'], 'REQUEST');
+    });
+
+    it('sends a calendared series without an ICS for the instructor', async () => {
+      await post(booking({ repeat: { weekly: true, count: 3 } })).expect(201);
+      const mails = byTemplate(ctx.mailer);
+      expectNotice(mails['booking.confirmed.instructor']);
+      expect(mails['booking.confirmed.instructor'].vars).toMatchObject({
+        lessons: [{}, {}, {}],
+      });
+      expect(
+        ics(mails['booking.confirmed.customer']).match(/BEGIN:VEVENT/g),
+      ).toHaveLength(3);
+    });
+
+    it('reschedules, updates and cancels a calendared lesson without an ICS for the instructor', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      await patch(lesson.id, { startsAt: '2026-12-13T18:00:00.000Z' }).expect(
+        200,
+      );
+      await patch(lesson.id, { customerIds: [MEI_ID, LEO_ID] }).expect(200);
+      await cancel(lesson.id).expect(200);
+      const mails = byTemplate(ctx.mailer);
+      expectNotice(mails['booking.rescheduled.instructor']);
+      expectNotice(mails['booking.updated.instructor']);
+      expectNotice(mails['booking.cancelled.instructor']);
+      expectInvite(mails['booking.rescheduled.customer'], 'REQUEST');
+      expectInvite(mails['booking.cancelled.customer'], 'CANCEL');
+      expect(ics(mails['booking.cancelled.customer'])).toContain('SEQUENCE:3');
+    });
+
+    it('keeps the ICS for an instructor without a Google calendar', async () => {
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== AMY_ID);
+      const [lesson] = created(
+        await post(booking({ repeat: { weekly: true, count: 2 } })).expect(201),
+      );
+      await patch(lesson.id, { startsAt: '2026-12-13T18:00:00.000Z' }).expect(
+        200,
+      );
+      await patch(lesson.id, { customerIds: [MEI_ID, LEO_ID] }).expect(200);
+      await cancel(lesson.id).expect(200);
+      const mails = byTemplate(ctx.mailer);
+      const confirmed = mails['booking.confirmed.instructor'];
+      expectInvite(confirmed, 'REQUEST');
+      expect(confirmed.attachments![0].filename).toBe('lessons.ics');
+      expect(ics(confirmed)).toContain('SUMMARY:Private 1h · Mei Wang');
+      expectInvite(mails['booking.rescheduled.instructor'], 'REQUEST');
+      expectInvite(mails['booking.updated.instructor'], 'REQUEST');
+      expectInvite(mails['booking.cancelled.instructor'], 'CANCEL');
+      expect(ics(mails['booking.cancelled.instructor'])).toContain(
+        'SEQUENCE:3',
+      );
+    });
+
+    it('keeps the ICS when the lesson is not added to the calendar', async () => {
+      await post(booking({ addToCalendar: false })).expect(201);
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.confirmed.instructor'],
+        'REQUEST',
+      );
+    });
+
+    it('follows the calendar the lesson is on when the instructor changes', async () => {
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== BEN_ID);
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      await patch(lesson.id, { instructorId: BEN_ID }).expect(200);
+      const mails = byTemplate(ctx.mailer);
+      expectNotice(mails['booking.cancelled.instructor']);
+      expectInvite(mails['booking.confirmed.instructor'], 'REQUEST');
+    });
+
+    const googleDown = () => new GoogleApiError(503, 'backendError', 'down');
+
+    it('sends the ICS and the default fine print when the Google insert fails', async () => {
+      ctx.google.insertEvent.mockRejectedValueOnce(googleDown());
+      const [lesson] = created(await post(booking()).expect(201));
+      expect(lesson.calendarSync).toBe('failed');
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.confirmed.instructor'],
+        'REQUEST',
+      );
+    });
+
+    it('sends the ICS when the Google patch fails on a reschedule', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      ctx.google.patchEvent.mockRejectedValueOnce(googleDown());
+      await patch(lesson.id, { startsAt: '2026-12-13T18:00:00.000Z' }).expect(
+        200,
+      );
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.rescheduled.instructor'],
+        'REQUEST',
+      );
+    });
+
+    it('sends the CANCEL ICS when the Google delete fails on a cancellation', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      ctx.google.deleteEvent.mockRejectedValueOnce(googleDown());
+      await cancel(lesson.id).expect(200);
+      expectInvite(
+        byTemplate(ctx.mailer)['booking.cancelled.instructor'],
+        'CANCEL',
+      );
+    });
+
+    it('sends the old instructor the CANCEL ICS when the Google delete fails on an instructor change', async () => {
+      const [lesson] = created(await post(booking()).expect(201));
+      ctx.mailer.sent.length = 0;
+      ctx.google.deleteEvent.mockRejectedValueOnce(googleDown());
+      await patch(lesson.id, { instructorId: BEN_ID }).expect(200);
+      const mails = byTemplate(ctx.mailer);
+      expectInvite(mails['booking.cancelled.instructor'], 'CANCEL');
+      expect(mails['booking.cancelled.instructor'].to).toBe('amy@example.com');
+    });
+
+    it('uses the calendar state of the lesson when the email is sent', async () => {
+      const [calendared] = created(await post(booking()).expect(201));
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== AMY_ID);
+      const [plain] = created(
+        await post(booking({ startsAt: '2026-12-14T15:00:00.000Z' })).expect(
+          201,
+        ),
+      );
+      ctx.repo.links.push({
+        instructor_id: AMY_ID,
+        google_calendar_id: AMY_CAL,
+      });
+      ctx.mailer.sent.length = 0;
+      await cancel(plain.id).expect(200);
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== AMY_ID);
+      await cancel(calendared.id).expect(200);
+      const [plainCancel, calendaredCancel] = ctx.mailer.sent.filter(
+        (m) => m.template === 'booking.cancelled.instructor',
+      );
+      expectInvite(plainCancel, 'CANCEL');
+      expectNotice(calendaredCancel);
+    });
+  });
+
   describe('sender address', () => {
     const MAIL_FROM = 'Serendipity Snow <noreply@contact.ssnow.club>';
     const BOOKINGS_FROM =
@@ -950,7 +1111,7 @@ describe('booking emails HTTP', () => {
       const mailer = realMailer(env);
       await ctx.app.close();
       ctx = await build(fakeBookingGoogle(), mailer.service);
-      await post(booking()).expect(201);
+      await post(booking({ addToCalendar: false })).expect(201);
       await ctx.app.get(BookingEmailQueue).idle();
       return mailer.messages;
     };

@@ -508,6 +508,8 @@ export const en: MessageCatalog = {
           ],
           finePrint:
             "The attached calendar file adds the lesson to your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+          googleCalendarFinePrint:
+            "This lesson is on your Google Calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
         },
       },
       rescheduled: {
@@ -532,6 +534,8 @@ export const en: MessageCatalog = {
           ],
           finePrint:
             "The attached calendar file updates the lesson in your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+          googleCalendarFinePrint:
+            "Your Google Calendar is updated with this change. You're receiving this because you're an instructor with Serendipity Snow Club.",
         },
       },
       updated: {
@@ -561,6 +565,8 @@ export const en: MessageCatalog = {
           ],
           finePrint:
             "The attached calendar file updates the lesson in your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+          googleCalendarFinePrint:
+            "Your Google Calendar is updated with this change. You're receiving this because you're an instructor with Serendipity Snow Club.",
           added: 'Added: {names}',
           removed: 'Removed: {names}',
           lessonType: 'Lesson type changed (previously {previous}).',
@@ -588,6 +594,8 @@ export const en: MessageCatalog = {
           ],
           finePrint:
             "The attached calendar file removes the lesson from your calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
+          googleCalendarFinePrint:
+            "The lesson is removed from your Google Calendar. You're receiving this because you're an instructor with Serendipity Snow Club.",
         },
       },
       reminder: {

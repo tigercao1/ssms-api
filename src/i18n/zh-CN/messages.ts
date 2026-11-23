@@ -485,6 +485,8 @@ export const zhCN: MessageCatalog = {
           ],
           finePrint:
             '附件中的日历文件可将课程添加到您的日历。您收到这封邮件，是因为您是 SSnow 的教练。',
+          googleCalendarFinePrint:
+            '这节课程已在您的 Google 日历中。您收到这封邮件，是因为您是 SSnow 的教练。',
         },
       },
       rescheduled: {
@@ -509,6 +511,8 @@ export const zhCN: MessageCatalog = {
           ],
           finePrint:
             '附件中的日历文件会更新您日历中的课程。您收到这封邮件，是因为您是 SSnow 的教练。',
+          googleCalendarFinePrint:
+            '您的 Google 日历已同步这次更改。您收到这封邮件，是因为您是 SSnow 的教练。',
         },
       },
       updated: {
@@ -536,6 +540,8 @@ export const zhCN: MessageCatalog = {
           ],
           finePrint:
             '附件中的日历文件会更新您日历中的课程。您收到这封邮件，是因为您是 SSnow 的教练。',
+          googleCalendarFinePrint:
+            '您的 Google 日历已同步这次更改。您收到这封邮件，是因为您是 SSnow 的教练。',
           added: '新增学员：{names}',
           removed: '移除学员：{names}',
           lessonType: '课程类型已更改（原课程：{previous}）。',
@@ -563,6 +569,8 @@ export const zhCN: MessageCatalog = {
           ],
           finePrint:
             '附件中的日历文件会从您的日历中移除这节课程。您收到这封邮件，是因为您是 SSnow 的教练。',
+          googleCalendarFinePrint:
+            '这节课程已从您的 Google 日历中移除。您收到这封邮件，是因为您是 SSnow 的教练。',
         },
       },
       reminder: {

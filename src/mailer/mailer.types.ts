@@ -109,6 +109,7 @@ export interface BookingEmailVars extends GreetingVars {
   customerNames: string[];
   location?: string | null;
   lessons: BookingLessonTime[];
+  onGoogleCalendar?: boolean;
 }
 
 export interface BookingRescheduledVars extends BookingEmailVars {

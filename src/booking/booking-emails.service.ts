@@ -13,6 +13,7 @@ import type {
   BookingDetailChanges,
   BookingLessonTime,
   BookingUpdateChanges,
+  EmailAttachment,
   EmailLanguage,
   EmailTemplate,
   SendEmailRequest,
@@ -256,14 +257,8 @@ export class BookingEmailsService implements OnModuleDestroy {
 
   private request(delivery: Delivery, to: string): SendEmailRequest {
     const { kind, recipient, notices } = delivery;
-    const method: IcsMethod = kind === 'cancelled' ? 'CANCEL' : 'REQUEST';
     const vars = emailVars(recipient, delivery);
     const template = templateOf(delivery);
-    const stamp = new Date(this.clock.now());
-    const organizer: IcsPerson = {
-      email: this.mailer.senderAddress(template),
-      name: ORGANIZER_NAME,
-    };
     return {
       template,
       to,
@@ -279,31 +274,49 @@ export class BookingEmailsService implements OnModuleDestroy {
           : {}),
       },
       idempotencyKey: idempotencyKey(delivery),
-      attachments: [
-        {
-          filename: notices.length > 1 ? 'lessons.ics' : 'lesson.ics',
-          contentType: icsContentType(method),
-          content: Buffer.from(
-            buildIcs({
-              method,
-              stamp,
-              organizer,
-              events: notices.map((notice) => ({
-                uid: classUid(notice.id),
-                sequence: sequenceOf(delivery, notice),
-                start: new Date(notice.starts_at),
-                end: new Date(notice.ends_at),
-                summary: summaryFor(recipient.audience, notice),
-                location: notice.location?.name ?? null,
-                attendees: attendeesOf(notice, recipient),
-              })),
-            }),
-            'utf8',
-          ),
-        },
-      ],
+      ...(onGoogleCalendar(delivery)
+        ? {}
+        : { attachments: [this.ics(delivery, template)] }),
     };
   }
+
+  private ics(delivery: Delivery, template: EmailTemplate): EmailAttachment {
+    const { kind, recipient, notices } = delivery;
+    const method: IcsMethod = kind === 'cancelled' ? 'CANCEL' : 'REQUEST';
+    const stamp = new Date(this.clock.now());
+    const organizer: IcsPerson = {
+      email: this.mailer.senderAddress(template),
+      name: ORGANIZER_NAME,
+    };
+    return {
+      filename: notices.length > 1 ? 'lessons.ics' : 'lesson.ics',
+      contentType: icsContentType(method),
+      content: Buffer.from(
+        buildIcs({
+          method,
+          stamp,
+          organizer,
+          events: notices.map((notice) => ({
+            uid: classUid(notice.id),
+            sequence: sequenceOf(delivery, notice),
+            start: new Date(notice.starts_at),
+            end: new Date(notice.ends_at),
+            summary: summaryFor(recipient.audience, notice),
+            location: notice.location?.name ?? null,
+            attendees: attendeesOf(notice, recipient),
+          })),
+        }),
+        'utf8',
+      ),
+    };
+  }
+}
+
+function onGoogleCalendar({ recipient, notices }: Delivery): boolean {
+  return (
+    recipient.audience === 'instructor' &&
+    notices.every((n) => n.google_calendar_id)
+  );
 }
 
 function sequenceOf(delivery: Delivery, notice: ClassNoticeRow): number {
@@ -368,6 +381,7 @@ function emailVars(
     ...lessonVars(recipient, delivery.notices),
     ...(delivery.previous ? { previous: [timeOf(delivery.previous)] } : {}),
     ...(delivery.changes ? { changes: delivery.changes } : {}),
+    ...(onGoogleCalendar(delivery) ? { onGoogleCalendar: true } : {}),
   };
 }
 

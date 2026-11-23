@@ -233,6 +233,76 @@ describe('booking emails', () => {
     expect(instructor.text).not.toContain('日历文件');
   });
 
+  it.each([
+    ['booking.confirmed.instructor', 'This lesson is on your Google Calendar.'],
+    [
+      'booking.rescheduled.instructor',
+      'Your Google Calendar is updated with this change.',
+    ],
+    [
+      'booking.cancelled.instructor',
+      'The lesson is removed from your Google Calendar.',
+    ],
+  ] as const)(
+    '%s points to the Google Calendar instead of an attached file',
+    (template, note) => {
+      const calendared = renderer.render(template, 'en', {
+        ...vars,
+        previous: [PREVIOUS],
+        onGoogleCalendar: true,
+      });
+      expect(calendared.text).toContain(note);
+      expect(calendared.text).not.toContain('attached calendar file');
+      const invited = renderer.render(template, 'en', {
+        ...vars,
+        previous: [PREVIOUS],
+      });
+      expect(invited.text).toContain('The attached calendar file');
+      expect(invited.text).not.toContain('Google Calendar');
+    },
+  );
+
+  it('points to the Google Calendar on an update, in en and zh-CN', () => {
+    const update = {
+      ...vars,
+      changes: { addedCustomers: ['Leo Chen'], removedCustomers: [] },
+      onGoogleCalendar: true,
+    };
+    const en = renderer.render('booking.updated.instructor', 'en', update);
+    expect(en.text).toContain(
+      'Your Google Calendar is updated with this change.',
+    );
+    expect(en.text).not.toContain('attached calendar file');
+    const zh = renderer.render('booking.updated.instructor', 'zh-CN', update);
+    expect(zh.text).toContain('您的 Google 日历已同步这次更改。');
+    expect(zh.text).not.toContain('附件');
+  });
+
+  it.each([
+    ['booking.confirmed.instructor', '这节课程已在您的 Google 日历中。'],
+    ['booking.rescheduled.instructor', '您的 Google 日历已同步这次更改。'],
+    ['booking.cancelled.instructor', '这节课程已从您的 Google 日历中移除。'],
+  ] as const)(
+    '%s renders the Google Calendar note in zh-CN',
+    (template, note) => {
+      const email = renderer.render(template, 'zh-CN', {
+        ...vars,
+        previous: [PREVIOUS],
+        onGoogleCalendar: true,
+      });
+      expect(email.text).toContain(note);
+      expect(email.text).not.toContain('附件');
+    },
+  );
+
+  it('keeps the attached file note for customers', () => {
+    const email = renderer.render('booking.confirmed.customer', 'en', {
+      ...vars,
+      onGoogleCalendar: true,
+    });
+    expect(email.text).toContain('The attached calendar file');
+  });
+
   it('renders bilingual with both blocks', () => {
     const email = renderer.render(
       'booking.rescheduled.instructor',

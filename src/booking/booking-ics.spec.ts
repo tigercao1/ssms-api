@@ -70,6 +70,23 @@ describe('buildIcs', () => {
     ]);
   });
 
+  it('writes an attendee marked as accepted without asking for a reply', () => {
+    const ics = lines(
+      buildIcs(
+        calendar({
+          attendees: [
+            { email: 'mei@example.com', name: 'Mei Wang' },
+            { email: 'amy@example.com', name: 'Amy', partstat: 'ACCEPTED' },
+          ],
+        }),
+      ),
+    );
+    expect(ics.filter((l) => l.startsWith('ATTENDEE'))).toEqual([
+      'ATTENDEE;CN="Mei Wang";ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:mei@example.com',
+      'ATTENDEE;CN="Amy";ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:amy@example.com',
+    ]);
+  });
+
   it('writes a CANCEL with the same UID and a higher SEQUENCE', () => {
     const ics = lines(
       buildIcs(calendar({ sequence: 3 }, { method: 'CANCEL' })),

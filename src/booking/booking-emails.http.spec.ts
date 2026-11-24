@@ -784,6 +784,120 @@ describe('booking emails HTTP', () => {
     });
   });
 
+  describe('replies asked of each recipient', () => {
+    const attendeeLines = (mail: SendEmailRequest): string[] =>
+      ics(mail).match(/^ATTENDEE.*$/gm) ?? [];
+    const ACCEPTED =
+      /^ATTENDEE;CN="Amy";ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:amy@example\.com$/;
+
+    const expectNoReplyAsked = (mails: SendEmailRequest[]) => {
+      const amy = mails.find((m) => m.to === 'amy@example.com')!;
+      const customers = mails.filter((m) => m.to !== 'amy@example.com');
+      const lines = attendeeLines(amy);
+      expect(lines.filter((l) => ACCEPTED.test(l))).toHaveLength(
+        ics(amy).match(/BEGIN:VEVENT/g)!.length,
+      );
+      expect(
+        lines
+          .filter((l) => !ACCEPTED.test(l))
+          .every((l) => /;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:/.test(l)),
+      ).toBe(true);
+      expect(ics(amy)).not.toContain('RSVP=TRUE');
+      for (const customer of customers) {
+        expect(attendeeLines(customer).length).toBeGreaterThan(0);
+        expect(
+          attendeeLines(customer).every((l) =>
+            l.endsWith(
+              `;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:${customer.to}`,
+            ),
+          ),
+        ).toBe(true);
+      }
+    };
+
+    beforeEach(() => {
+      ctx.repo.customers.find((c) => c.id === LEO_ID)!.email =
+        'leo@example.com';
+      ctx.repo.links = ctx.repo.links.filter((l) => l.instructor_id !== AMY_ID);
+    });
+
+    it('marks the instructor as accepted when a lesson is booked', async () => {
+      await post(booking({ customerIds: [MEI_ID, LEO_ID] })).expect(201);
+      expect(ctx.mailer.sent).toHaveLength(3);
+      expectNoReplyAsked(ctx.mailer.sent);
+    });
+
+    it('marks the instructor as accepted on every lesson of a series', async () => {
+      await post(booking({ repeat: { weekly: true, count: 3 } })).expect(201);
+      const amy = ctx.mailer.sent.find((m) => m.to === 'amy@example.com')!;
+      expect(attendeeLines(amy).filter((l) => ACCEPTED.test(l))).toHaveLength(
+        3,
+      );
+      expectNoReplyAsked(ctx.mailer.sent);
+    });
+
+    describe('on an existing lesson', () => {
+      beforeEach(() => {
+        ctx.repo.add({
+          id: CLASS_A,
+          starts_at: '2026-12-12T15:00:00.000Z',
+          ends_at: '2026-12-12T16:00:00.000Z',
+          customer_ids: [MEI_ID],
+        });
+      });
+
+      const expectSameEvent = (method: string, sequence: number) => {
+        const amy = ctx.mailer.sent.find((m) => m.to === 'amy@example.com')!;
+        expect(ics(amy)).toContain(`METHOD:${method}`);
+        expect(ics(amy)).toContain(`UID:class-${CLASS_A}@ssnow.club`);
+        expect(ics(amy)).toContain(`SEQUENCE:${sequence}`);
+      };
+
+      it('keeps the instructor accepted on a reschedule', async () => {
+        await patch(CLASS_A, { startsAt: '2026-12-13T18:00:00.000Z' }).expect(
+          200,
+        );
+        expect(ctx.mailer.sent.map((m) => m.template)).toContain(
+          'booking.rescheduled.instructor',
+        );
+        expectSameEvent('REQUEST', 1);
+        expectNoReplyAsked(ctx.mailer.sent);
+      });
+
+      it('keeps the instructor accepted on an update', async () => {
+        await patch(CLASS_A, { customerIds: [MEI_ID, LEO_ID] }).expect(200);
+        expect(ctx.mailer.sent.map((m) => m.template)).toContain(
+          'booking.updated.instructor',
+        );
+        expectSameEvent('REQUEST', 1);
+        expectNoReplyAsked(ctx.mailer.sent);
+      });
+
+      it('keeps the instructor accepted on a cancellation', async () => {
+        await cancel(CLASS_A).expect(200);
+        expect(ctx.mailer.sent.map((m) => m.template)).toContain(
+          'booking.cancelled.instructor',
+        );
+        expectSameEvent('CANCEL', 1);
+        expectNoReplyAsked(ctx.mailer.sent);
+      });
+
+      it('keeps the old instructor accepted on the cancellation sent when the instructor changes', async () => {
+        await patch(CLASS_A, { instructorId: BEN_ID }).expect(200);
+        expectSameEvent('CANCEL', 1);
+        expectNoReplyAsked(
+          ctx.mailer.sent.filter((m) => m.to !== 'ben@example.com'),
+        );
+        const ben = ctx.mailer.sent.find((m) => m.to === 'ben@example.com')!;
+        expect(attendeeLines(ben)).toContainEqual(
+          expect.stringMatching(
+            /;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:ben@example\.com$/,
+          ),
+        );
+      });
+    });
+  });
+
   describe('lessons in the past', () => {
     const PAST = '2026-12-01T15:00:00.000Z';
 

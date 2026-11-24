@@ -22,6 +22,7 @@ import { BOOKING_CLOCK, type BookingClock } from './booking-calendars.service';
 import { BookingEmailQueue } from './booking-email-queue';
 import {
   buildIcs,
+  type IcsAttendee,
   classUid,
   type IcsMethod,
   type IcsPerson,
@@ -364,12 +365,18 @@ export function recipientsOf(notice: ClassNoticeRow): Recipient[] {
 function attendeesOf(
   notice: ClassNoticeRow,
   recipient: Recipient,
-): IcsPerson[] {
+): IcsAttendee[] {
   const attendees =
     recipient.audience === 'instructor' ? recipientsOf(notice) : [recipient];
   return attendees
     .filter((r): r is Recipient & { email: string } => Boolean(r.email))
-    .map((r) => ({ email: r.email, name: r.fullName }));
+    .map((r) => ({
+      email: r.email,
+      name: r.fullName,
+      ...(recipient.audience === 'instructor' && r.audience === 'instructor'
+        ? { partstat: 'ACCEPTED' as const }
+        : {}),
+    }));
 }
 
 function emailVars(

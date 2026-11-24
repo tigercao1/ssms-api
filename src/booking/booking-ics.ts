@@ -5,6 +5,12 @@ export interface IcsPerson {
   name?: string | null;
 }
 
+export type IcsPartstat = 'NEEDS-ACTION' | 'ACCEPTED';
+
+export interface IcsAttendee extends IcsPerson {
+  partstat?: IcsPartstat;
+}
+
 export interface IcsEvent {
   uid: string;
   sequence: number;
@@ -12,7 +18,7 @@ export interface IcsEvent {
   end: Date;
   summary: string;
   location?: string | null;
-  attendees: IcsPerson[];
+  attendees: IcsAttendee[];
 }
 
 export interface IcsCalendar {
@@ -63,7 +69,7 @@ function eventLines(calendar: IcsCalendar, event: IcsEvent): string[] {
     `ORGANIZER${nameParam(calendar.organizer)}:mailto:${calendar.organizer.email}`,
     ...event.attendees.map(
       (a) =>
-        `ATTENDEE${nameParam(a)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:${a.email}`,
+        `ATTENDEE${nameParam(a)};ROLE=REQ-PARTICIPANT;PARTSTAT=${a.partstat ?? 'NEEDS-ACTION'};RSVP=FALSE:mailto:${a.email}`,
     ),
     'END:VEVENT',
   ];

@@ -20,6 +20,7 @@ export const ASSIGNMENT_STATUSES = [
 export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
 
 export type SubjectType = 'instructor' | 'customer';
+export type AssignmentSource = 'ssms' | 'jotform';
 
 export const TEMPLATE_STATUSES = ['draft', 'live', 'retired'] as const;
 export type TemplateStatus = (typeof TEMPLATE_STATUSES)[number];

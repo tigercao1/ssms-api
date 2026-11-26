@@ -170,6 +170,7 @@ POST /admin/reference/:type
 POST /admin/reference/seasons
 POST /admin/shopify-sync/run
 POST /admin/signatures/:assignmentId/link
+POST /admin/signatures/jotform
 POST /hooks/auth/send-email
 POST /internal/documents/reminders
 POST /internal/shopify-sync/reconcile

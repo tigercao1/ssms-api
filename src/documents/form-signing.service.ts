@@ -61,7 +61,7 @@ interface SignedForm {
   sha256: string;
 }
 
-function splitName(full: string): [string, string | null] {
+export function splitName(full: string): [string, string | null] {
   const at = full.lastIndexOf(' ');
   return at > 0 ? [full.slice(0, at), full.slice(at + 1)] : [full, null];
 }

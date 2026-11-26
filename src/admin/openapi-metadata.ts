@@ -537,6 +537,31 @@ export default async () => {
           },
         ],
         [
+          require('../documents/dto/jotform-import.dto'),
+          {
+            ImportJotformSignatureDto: {
+              submissionId: {
+                required: true,
+                type: () => String,
+                pattern: '^[0-9]{1,30}$',
+              },
+              formId: { required: true, type: () => String },
+              submittedAt: {
+                required: true,
+                type: () => String,
+                pattern: '(Z|[+-]\\d{2}:\\d{2})$',
+              },
+              email: { required: true, type: () => String, format: 'email' },
+              participantName: { required: true, type: () => String },
+              ip: { required: false, type: () => String },
+              typedDate: { required: false, type: () => String },
+              idNumber: { required: false, type: () => String },
+              guardianName: { required: false, type: () => String },
+              witnessName: { required: false, type: () => String },
+            },
+          },
+        ],
+        [
           require('../documents/dto/complete-form.dto'),
           {
             CompleteFormDto: {

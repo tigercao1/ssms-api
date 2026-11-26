@@ -1,4 +1,8 @@
-import type { DocumentLanguage, PageGeometry } from './documents.types';
+import type {
+  AssignmentSource,
+  DocumentLanguage,
+  PageGeometry,
+} from './documents.types';
 import type { Waiver, WaiverStatus } from './waiver-year';
 
 export const FORM_FIELD_TYPES = [
@@ -164,6 +168,7 @@ export interface SignatureLookupRow {
   form_version: number | null;
   signed_at: string | null;
   has_signed_copy: boolean | null;
+  source: AssignmentSource | null;
 }
 
 export type SignedDocumentRow = Omit<
@@ -188,6 +193,7 @@ export interface SignedDocumentEntry {
   signedAt: string;
   hasSignedCopy: boolean;
   validThisYear: boolean;
+  source: AssignmentSource;
 }
 
 /** `GET /admin/signatures`: one instructor or customer and what they completed. */

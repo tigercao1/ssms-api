@@ -75,11 +75,11 @@ begin
 
   perform upsert_customer_if_newer(49100, 'New', 'Signer', 'new.signer@EXAMPLE.com', null, now());
   select id into v_shopify from customers where shopify_customer_id = 49100;
-  if v_shopify is null or v_shopify = v_waiver then
-    raise exception 'the probe expected Shopify to create a second customer row later';
+  if v_shopify is distinct from v_waiver then
+    raise exception 'Shopify did not link the waiver-only customer with the same email';
   end if;
   if (select signed_at from customer_latest_signatures(array[v_shopify])) is distinct from '2026-10-01Z' then
-    raise exception 'a Shopify customer created later with the same email did not count the earlier signature';
+    raise exception 'a customer linked to Shopify lost its earlier signature';
   end if;
 
   update document_assignments set subject_id = v_shopify

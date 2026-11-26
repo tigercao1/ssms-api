@@ -259,10 +259,10 @@ describe('SupabaseCustomersRepository', () => {
     ]);
   });
 
-  it('upserts on shopify_customer_id and skips empty batches', async () => {
+  it('saves bulk and single customers through upsert_shopify_customers and skips empty batches', async () => {
     const { client, queries } = recordingSupabase({
-      customers: [
-        { data: null, error: null },
+      'rpc:upsert_shopify_customers': [
+        { data: [{ id: 'c1' }], error: null },
         { data: { id: 'c1', ...row }, error: null },
       ],
     });
@@ -270,16 +270,18 @@ describe('SupabaseCustomersRepository', () => {
     await repo.upsertMany([]);
     await repo.upsertMany([row]);
     await expect(repo.upsertOne(row)).resolves.toMatchObject({ id: 'c1' });
-    expect(queries).toHaveLength(2);
-    expect(queries[0].ops[0]).toEqual([
-      'upsert',
-      [row],
-      { onConflict: 'shopify_customer_id' },
-    ]);
-    expect(queries[1].ops[0]).toEqual([
-      'upsert',
-      row,
-      { onConflict: 'shopify_customer_id' },
+    expect(queries.map((q) => [q.table, ...q.ops])).toEqual([
+      [
+        'rpc:upsert_shopify_customers',
+        ['rpc', { p_customers: [row] }],
+        ['select', 'id'],
+      ],
+      [
+        'rpc:upsert_shopify_customers',
+        ['rpc', { p_customers: [row] }],
+        ['select', CUSTOMER_COLUMNS],
+        ['single'],
+      ],
     ]);
   });
 
@@ -319,6 +321,7 @@ describe('SupabaseCustomersRepository', () => {
     const { client } = recordingSupabase({
       customers: fail,
       'rpc:upsert_customer_if_newer': fail,
+      'rpc:upsert_shopify_customers': fail,
       'rpc:mark_customer_deleted_in_shopify': fail,
       'rpc:reconcile_customer_deletions': fail,
     });

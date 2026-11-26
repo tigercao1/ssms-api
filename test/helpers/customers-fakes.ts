@@ -158,7 +158,7 @@ export class InMemoryCustomersRepository extends CustomersRepository {
   }
 
   upsertIfNewer(row: CustomerUpsert): Promise<CustomerUpsertOutcome> {
-    const existing = this.find(row.shopify_customer_id);
+    const existing = this.matching(row);
     const updatedAt = time(row.shopify_updated_at);
     if (!existing) {
       this.write(row);
@@ -291,8 +291,29 @@ export class InMemoryCustomersRepository extends CustomersRepository {
     );
   }
 
+  private matching(row: CustomerUpsert): CustomerRow | undefined {
+    const email = row.email?.trim().toLowerCase();
+    return (
+      this.find(row.shopify_customer_id) ??
+      (email
+        ? this.rows
+            .filter(
+              (r) =>
+                r.shopify_customer_id === null &&
+                r.shopify_deleted_at === null &&
+                r.email?.trim().toLowerCase() === email,
+            )
+            .sort(
+              (a, b) =>
+                time(a.created_at) - time(b.created_at) ||
+                (a.id < b.id ? -1 : 1),
+            )[0]
+        : undefined)
+    );
+  }
+
   private write(row: CustomerUpsert): CustomerRow {
-    const existing = this.find(row.shopify_customer_id);
+    const existing = this.matching(row);
     if (existing) {
       Object.assign(existing, row, { updated_at: '2026-10-11T00:00:00Z' });
       return existing;

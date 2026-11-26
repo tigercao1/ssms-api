@@ -118,7 +118,7 @@ export function recordingSupabase(
         ops: [['rpc', args]],
       };
       queries.push(query);
-      return Promise.resolve(next(`rpc:${name}`));
+      return builderFor(`rpc:${name}`, query);
     },
   };
   return { client: client as never, queries };

@@ -528,7 +528,7 @@ describe('customers admin HTTP', () => {
       });
     });
 
-    it('finds a waiver-only customer and later counts its waiver for a Shopify customer with the same email', async () => {
+    it('finds a waiver-only customer and links it when Shopify syncs the same email', async () => {
       const [mei] = ctx.repo.rows;
       ctx.repo.rows.push({
         ...mei,
@@ -576,16 +576,18 @@ describe('customers admin HTTP', () => {
         },
       ]);
       const after = (await search('?q=zhou')) as unknown as {
+        id: string;
         shopifyCustomerId: number | null;
         waiver: unknown;
       }[];
-      expect(after).toHaveLength(2);
-      expect(after).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ shopifyCustomerId: 9, waiver: signed }),
-          expect.objectContaining({ shopifyCustomerId: null, waiver: signed }),
-        ]),
-      );
+      expect(after).toEqual([
+        expect.objectContaining({
+          id: 'waiver-only-ada',
+          shopifyCustomerId: 9,
+          email: 'Ada.Zhou@Example.com',
+          waiver: signed,
+        }),
+      ]);
     });
 
     it('hides customers deleted in Shopify unless includeDeleted=true', async () => {
@@ -937,6 +939,45 @@ describe('customers admin HTTP', () => {
           targetId: (res.body as { id: string }).id,
           metadata: { shopifyCustomerId: 9001, hasEmail: true, hasPhone: true },
         }),
+      ]);
+    });
+
+    it('links a waiver-only customer with the same email instead of adding a row', async () => {
+      ctx = await build({
+        responses: [
+          customerCreated({
+            id: 9002,
+            firstName: 'Wen',
+            lastName: 'Li',
+            email: 'Wen.Li@example.com',
+            updatedAt: '2026-10-11T22:00:00Z',
+          }),
+        ],
+      });
+      ctx.repo.rows.push({
+        id: 'waiver-only-wen',
+        shopify_customer_id: null,
+        first_name: 'Wen',
+        last_name: 'Li',
+        email: 'wen.li@example.com',
+        phone: null,
+        shopify_updated_at: null,
+        shopify_deleted_at: null,
+        created_at: '2026-10-01T00:00:00Z',
+        updated_at: '2026-10-01T00:00:00Z',
+      });
+      const res = await create({
+        firstName: 'Wen',
+        lastName: 'Li',
+        email: 'Wen.Li@example.com',
+      }).expect(201);
+      expect(res.body).toMatchObject({
+        id: 'waiver-only-wen',
+        shopifyCustomerId: 9002,
+      });
+      expect(ctx.repo.rows).toHaveLength(1);
+      expect(ctx.audit.entries).toEqual([
+        expect.objectContaining({ targetId: 'waiver-only-wen' }),
       ]);
     });
 

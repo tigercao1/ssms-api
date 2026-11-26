@@ -701,6 +701,7 @@ describe('form templates and signature lookups', () => {
       form_version: null,
       signed_at: null,
       has_signed_copy: null,
+      source: null,
       ...overrides,
     });
 
@@ -727,6 +728,7 @@ describe('form templates and signature lookups', () => {
           form_version: 3,
           signed_at: '2026-11-02T00:00:00Z',
           has_signed_copy: true,
+          source: 'jotform',
         }),
         row({
           assignment_id: 'a3',
@@ -756,8 +758,9 @@ describe('form templates and signature lookups', () => {
           kind: 'form',
           formVersion: 3,
           signedAt: '2026-11-02T00:00:00Z',
+          source: 'jotform',
         }),
-        expect.objectContaining({ assignmentId: 'a3' }),
+        expect.objectContaining({ assignmentId: 'a3', source: 'ssms' }),
       ]);
       expect(signers[2].signatures).toEqual([]);
     });
@@ -923,6 +926,7 @@ describe('form templates and signature lookups', () => {
         form_version: 2,
         signed_at: '2026-11-01T12:00:00Z',
         has_signed_copy: true,
+        source: 'ssms',
       });
       customers.signatures = [
         {
@@ -969,6 +973,7 @@ describe('form templates and signature lookups', () => {
             signedAt: '2026-11-01T12:00:00Z',
             hasSignedCopy: true,
             validThisYear: true,
+            source: 'ssms',
           },
         ],
       });
@@ -1209,6 +1214,7 @@ describe('form templates and signature lookups', () => {
         signed_at: null,
         has_signed_copy: null,
         assignment_id: null,
+        source: null,
       };
       repo.lookupRows = [
         {

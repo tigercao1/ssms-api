@@ -4,7 +4,7 @@ import { check, type DbResult } from '../database/db-result';
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 import { DOCUMENT_ASSIGNMENTS_TABLE } from './document-assignments.repository';
 import { DOCUMENT_TEMPLATES_TABLE } from './document-templates.repository';
-import type { DocumentLanguage } from './documents.types';
+import type { AssignmentSource, DocumentLanguage } from './documents.types';
 import {
   DOCUMENT_FORM_VERSIONS_TABLE,
   FORM_VERSION_COLUMNS,
@@ -28,6 +28,7 @@ interface CustomerSignatureRow {
   form_version: number | null;
   completed_at: string | null;
   signed_key: string | null;
+  source: AssignmentSource;
   template: { title_en: string; title_zh: string | null; kind: string } | null;
 }
 
@@ -321,7 +322,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
     const { data, error } = (await this.supabase
       .from(DOCUMENT_ASSIGNMENTS_TABLE)
       .select(
-        `id, template_id, language, form_version, completed_at, signed_key, template:${DOCUMENT_TEMPLATES_TABLE}(title_en, title_zh, kind)`,
+        `id, template_id, language, form_version, completed_at, signed_key, source, template:${DOCUMENT_TEMPLATES_TABLE}(title_en, title_zh, kind)`,
       )
       .eq('subject_type', 'customer')
       .eq('subject_id', customerId)
@@ -340,6 +341,7 @@ export class SupabaseFormAdminRepository extends FormAdminRepository {
       form_version: row.form_version,
       signed_at: row.completed_at,
       has_signed_copy: row.signed_key !== null,
+      source: row.source,
     }));
   }
 }

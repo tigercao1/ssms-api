@@ -46,6 +46,7 @@ function toEntry(
     signedAt: row.signed_at,
     hasSignedCopy: row.has_signed_copy ?? false,
     validThisYear: signedThisWaiverYear(row.signed_at, now),
+    source: row.source ?? 'ssms',
   };
 }
 

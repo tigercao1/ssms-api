@@ -26,6 +26,7 @@ import {
   DocumentAssignmentsRepository,
   SupabaseDocumentAssignmentsRepository,
 } from './document-assignments.repository';
+import { AdminJotformImportsController } from './admin-jotform-imports.controller';
 import { DocumentAssignmentsService } from './document-assignments.service';
 import { DocumentCompletedEmailHandler } from './document-completed-email.handler';
 import { DocumentCompletedHandler } from './document-completed.handler';
@@ -54,6 +55,11 @@ import {
 } from './form-admin.repository';
 import { FormSigningModule } from './form-signing.module';
 import { InternalDocumentsController } from './internal-documents.controller';
+import {
+  JotformImportsRepository,
+  SupabaseJotformImportsRepository,
+} from './jotform-imports.repository';
+import { JotformImportsService } from './jotform-imports.service';
 import { MeCertificationUploadsController } from './me-certification-uploads.controller';
 import { MeCertificationUploadsService } from './me-certification-uploads.service';
 import { MeDocumentsController } from './me-documents.controller';
@@ -85,6 +91,7 @@ import { SignatureLookupsService } from './signature-lookups.service';
     AdminDocumentReviewsController,
     AdminFormsController,
     AdminSignaturesController,
+    AdminJotformImportsController,
     MeStudentSignaturesController,
   ],
   providers: [
@@ -130,6 +137,11 @@ import { SignatureLookupsService } from './signature-lookups.service';
     { provide: FormAdminRepository, useClass: SupabaseFormAdminRepository },
     AdminFormsService,
     SignatureLookupsService,
+    {
+      provide: JotformImportsRepository,
+      useClass: SupabaseJotformImportsRepository,
+    },
+    JotformImportsService,
     SignFormsThrottlerGuard,
   ],
   exports: [

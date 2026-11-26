@@ -1,7 +1,7 @@
 export const PAGE_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const PAGE_SLUG_MAX_LENGTH = 80;
 export const PAGE_TITLE_MAX_LENGTH = 200;
-export const PAGE_CONTENT_MAX_BYTES = 2_097_152;
+export const PAGE_CONTENT_MAX_BYTES = 10 * 1024 * 1024;
 
 export type PublicPageStatus = 'draft' | 'published';
 

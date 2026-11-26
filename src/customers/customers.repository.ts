@@ -10,6 +10,7 @@ import {
 import { SUPABASE_CLIENT } from '../database/supabase-client.token';
 
 export const CUSTOMERS_TABLE = 'customers';
+const UPSERT_SHOPIFY_CUSTOMERS = 'upsert_shopify_customers';
 export const CUSTOMER_COLUMNS =
   'id, shopify_customer_id, first_name, last_name, email, phone, shopify_updated_at, shopify_deleted_at, created_at, updated_at';
 
@@ -145,15 +146,14 @@ export class SupabaseCustomersRepository extends CustomersRepository {
       return;
     }
     const { error } = (await this.supabase
-      .from(CUSTOMERS_TABLE)
-      .upsert(rows, { onConflict: 'shopify_customer_id' })) as DbResult<null>;
+      .rpc(UPSERT_SHOPIFY_CUSTOMERS, { p_customers: rows })
+      .select('id')) as DbResult<null>;
     check(error, 'save customers');
   }
 
   async upsertOne(row: CustomerUpsert): Promise<CustomerRow> {
     const { data, error } = (await this.supabase
-      .from(CUSTOMERS_TABLE)
-      .upsert(row, { onConflict: 'shopify_customer_id' })
+      .rpc(UPSERT_SHOPIFY_CUSTOMERS, { p_customers: [row] })
       .select(CUSTOMER_COLUMNS)
       .single()) as DbResult<CustomerRow>;
     check(error, 'save customer');

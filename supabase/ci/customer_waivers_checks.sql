@@ -201,8 +201,8 @@ begin
   values ('33333333-3333-4333-8333-333333333801', 'customer', v_waiver, 'completed', 1, '2026-11-03Z');
   perform upsert_customer_if_newer(4805, 'Prepurchase', 'Signer', 'PrePurchase@example.com', null, now());
   select id into v_shopify from customers where shopify_customer_id = 4805;
-  if v_shopify = v_waiver then
-    raise exception 'the probe expected Shopify to create a second customer row';
+  if v_shopify is distinct from v_waiver then
+    raise exception 'Shopify did not link the waiver-only customer with the same email';
   end if;
   insert into class_participants (class_id, customer_id)
   values ('44444444-4444-4444-8444-444444444803', v_shopify);
